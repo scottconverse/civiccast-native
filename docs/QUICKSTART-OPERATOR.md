@@ -1,6 +1,6 @@
 # CivicCast Beta 17 Candidate - Field-Test Quick Start
 
-Beta 17 adds subscriber delivery, Podcast publication, SMTP paywall links, and
+Beta 17 adds subscriber delivery, Podcast publication, and
 underwriting daypart selection to the native Windows station. This quick start
 covers the candidate kit, first setup, recovery, and closed field testing.
 Beta 17 is unpublished. The [candidate verification record](releases/v1.0.0-beta.17-verification.md)
@@ -75,8 +75,6 @@ steps. Keep these checks on the assigned test station:
   Open its RSS feed and play the MP3 enclosure.
 - Confirm a resident subscription and publish a recording. Check the Publish
   card's delivered, queued and failed counts, then retry an eligible failure.
-- Request a paywall magic link through configured mail and follow it from the
-  resident portal; check that an unavailable mail provider reports failure.
 - In Underwriting, select a saved daypart for a flight and verify the selected
   schedule window is shown to the operator.
 

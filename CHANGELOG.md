@@ -4,7 +4,8 @@
 
 Candidate `v1.0.0-beta.17` contains the completed Sprint 5 publication and
 underwriting changes below. Remote-guest composition, bulletin-board media,
-station import UI, and native viewer completion remain separate open work.
+station import UI, native viewer completion, and protected paywall media remain
+separate open work.
 
 - The optional Podcast surface converts a local recording to MP3, stores an
   episode in the channel RSS feed, serves its audio enclosure, and reports
@@ -13,8 +14,6 @@ station import UI, and native viewer completion remain separate open work.
   mail and webhook providers, retain per-recipient outcomes, retry failures,
   and show delivery status to operators. Public subscription RSS now uses
   published records.
-- Paywall magic links use configured SMTP and report delivery failures instead
-  of claiming an unsent link was sent.
 - Underwriting flights select an existing scheduling daypart instead of
   requiring operators to type a block ID.
 

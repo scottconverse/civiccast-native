@@ -263,7 +263,7 @@ The **Alerts** screen can hold destinations of three kinds: email, text message 
 
 `POST /api/webhooks/stripe` accepts a payment provider's notification. It requires a `Stripe-Signature` header, rejects a body over 1 MiB, and answers 401 for a bad signature. It is not reachable from the internet unless you build a path to it.
 
-> **Known issue (beta.11):** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and the sign-in link emails are not sent in this build. See [Publishing](#ch-publishing).
+> **Beta 17 status:** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), sign-in link emails are not sent, and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
 
 ## External agenda import
 

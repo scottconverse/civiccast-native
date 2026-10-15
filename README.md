@@ -9,7 +9,7 @@ has no per-minute software fee.
 ## Current release
 
 The source also contains the `v1.0.0-beta.17` unpublished candidate with
-subscriber delivery, Podcast publication, SMTP paywall links, and underwriting
+subscriber delivery, Podcast publication, and underwriting
 daypart selection. The signed Beta 16 package below remains the current public
 download until that candidate is built, verified, and published.
 

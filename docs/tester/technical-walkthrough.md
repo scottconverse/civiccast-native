@@ -1,6 +1,6 @@
 # Beta 17 Candidate Technical Tester Walkthrough
 
-Beta 17 adds subscriber delivery, Podcast publication, SMTP paywall links, and
+Beta 17 adds subscriber delivery, Podcast publication, and
 underwriting daypart selection to CivicCast for native Windows. This walkthrough
 covers package acquisition, installation, the candidate feature paths, upgrade,
 and uninstall.
@@ -55,11 +55,9 @@ screen names and settings.
    its channel RSS entry, audio enclosure, and retryable failure status.
 2. Confirm a resident subscription, publish a recording, and inspect the
    delivery receipts and retry status. Exercise unsubscribe before another send.
-3. Configure the mail provider, request a paywall magic link, and follow it in
-   the resident portal. Confirm an unavailable provider reports failure.
-4. Select a saved scheduling daypart in an underwriting flight and verify that
+3. Select a saved scheduling daypart in an underwriting flight and verify that
    its channel and window appear correctly in the operator console.
-5. Keep external delivery limited to the assigned test configuration and
+4. Keep external delivery limited to the assigned test configuration and
    record the exact candidate version and package identity.
 
 ## Optional advanced evidence

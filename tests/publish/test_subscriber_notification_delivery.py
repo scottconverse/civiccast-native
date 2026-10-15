@@ -42,6 +42,7 @@ from civiccast.publish.service import (
     build_publish_asset_status,
     build_publish_preflight,
     retry_publish_surface,
+    send_pending_notifications_after_publication,
 )
 from civiccast.publish.store import InMemoryPublishStore
 from civiccast.publish.targets import (
@@ -285,21 +286,36 @@ class TestRealDeliveryHappens:
         subscribe_store = InMemorySubscribeStore()
         _confirmed_email(subscribe_store, RESIDENT_EMAIL)
         mailbox = LocalMailbox()
+        publish_store = InMemoryPublishStore()
+        delivery_store = InMemoryNotificationDeliveryStore()
+        asset = _asset().model_copy(update={"published_at": None})
         record = approve_publish(
-            asset=_asset().model_copy(update={"published_at": None}),
+            asset=asset,
             request=PublishApprovalRequest(
                 operator_id="staff-1",
                 operator_display_name="Avery Operator",
                 approved_surface_ids=["subscriber-notifications"],
             ),
-            store=InMemoryPublishStore(),
+            store=publish_store,
             subscribe_store=subscribe_store,
-            delivery_store=InMemoryNotificationDeliveryStore(),
+            delivery_store=delivery_store,
             registry=_registry(mailbox=mailbox),
             target_lookup=StaticChannelAssociationLookup(),
         )
         assert mailbox.messages == []
         assert _surface(record).state == "pending"
+        published = asset.model_copy(update={"published_at": datetime(2026, 6, 10, tzinfo=UTC)})
+        sent = send_pending_notifications_after_publication(
+            asset=published,
+            record=record,
+            store=publish_store,
+            subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            registry=_registry(mailbox=mailbox),
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+        assert len(mailbox.messages) == 1
+        assert _surface(sent).state == "succeeded"
 
     def test_a_real_smtp_sink_observes_the_notice(self, smtp_server: _LoopbackSmtpServer) -> None:
         subscribe_store = InMemorySubscribeStore()

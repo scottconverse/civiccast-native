@@ -265,6 +265,24 @@ def test_attempts_are_numbered_beneath_one_logical_delivery(
     assert len(store.list_for_publication("pub:meeting-42")) == 1
 
 
+def test_durable_webhook_retry_result_updates_only_its_queued_receipt(
+    store: PostgresNotificationDeliveryStore,
+) -> None:
+    claimed = store.claim(**_CLAIM)
+    key = claimed.record.delivery_key
+    store.record_attempt(delivery_key=key, outcome="queued", retry_id="swr_1")
+    assert (
+        store.record_webhook_retry_result(retry_id="swr_other", outcome="sent", detail="accepted")
+        is None
+    )
+    delivered = store.record_webhook_retry_result(
+        retry_id="swr_1", outcome="sent", detail="accepted"
+    )
+    assert delivered is not None and delivered.outcome == "sent"
+    assert store.claim(**_CLAIM, allow_reattempt=True).granted is False
+    assert [attempt.outcome for attempt in store.list_attempts(key)] == ["queued", "sent"]
+
+
 def test_in_memory_store_matches_the_durable_store_semantics() -> None:
     """The ephemeral fallback must not have looser rules than the real store."""
 
