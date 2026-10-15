@@ -281,7 +281,7 @@ The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-
 
 ## Package status and verification
 
-This chapter describes the Beta 18 source. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package verification. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed. The intended signing boundary is recorded as a Beta 17 follow-up; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+This chapter describes the Beta 19 source candidate. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 ### Report a security problem
 

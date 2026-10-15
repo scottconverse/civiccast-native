@@ -8,7 +8,7 @@ has no per-minute software fee.
 
 ## Current release
 
-Signed `v1.0.0-beta.18` is the current [downloadable release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18). It adds a Setup-admin Cablecast station-import screen to Beta 17's subscriber delivery, Podcast publication, and underwriting daypart workflows. The [roadmap](docs/ROADMAP.md) links the implementation records; the [package verification record](docs/releases/v1.0.0-beta.18-verification.md) identifies this signed installer and its scoped checks.
+`v1.0.0-beta.19` is an unpublished candidate completing Sprint 5. It adds remote guests in channel output, bulletin-board video and audio, and fuller native viewer apps to the publication, import and underwriting features already shipped in Beta 17 and 18. The [roadmap](docs/ROADMAP.md) tracks the scope. Beta 18 remains the current downloadable package until Beta 19 is published.
 
 ## Current published package
 
@@ -18,7 +18,7 @@ checksums. The [Beta 18 verification record](docs/releases/v1.0.0-beta.18-verifi
 identifies the exact package and its scoped verification results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
 for Beta 18 operation, use the manual bundled on that release page. The
-[source manual](docs/USER-MANUAL.md) describes the same edition.
+[source manual](docs/USER-MANUAL.md) describes the Beta 19 candidate.
 
 Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
 captions, with supported NVIDIA CUDA applying to Whisper only. The native

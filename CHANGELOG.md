@@ -2,12 +2,17 @@
 
 ## [Unreleased]
 
-The CG Board Designer can select an uploaded audio track and set its level for
-between-program board output. The board filler includes that audio in its
-video segments, normalizes it, and airs the board silently if the track fails.
-
-Remote-guest composition, live video in a bulletin-board zone, native viewer
-completion, and protected paywall media remain separate open work.
+Unpublished candidate `v1.0.0-beta.19` completes the remaining Sprint 5
+software scope. Remote guests now enter the channel program through a
+composed video/audio mix with take and handback controls; the install screen
+can fetch pinned VDO.Ninja source and a verified local MediaMTX relay. The
+CG Board Designer can put live video in a zone and select an uploaded audio
+track with level control for between-program board output. Native viewer
+apps add station selection, catalog search, artwork, replay playback, deep
+links, and platform playback options. Beta 17 and 18 already delivered
+subscriber notices, Podcast publishing, magic-link delivery, Cablecast
+import and underwriting dayparts. Protected paid media remains outside this
+Sprint 5 scope.
 
 ## [1.0.0-beta.18] - 2026-10-15
 

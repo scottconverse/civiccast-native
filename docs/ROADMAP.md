@@ -3,9 +3,20 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
+## Beta 19 candidate (unpublished)
+
+Sprint 5 source now connects remote guests to channel output, adds live
+video and an audio bed to the bulletin board, and completes the native
+viewer app controls for channel/replay browsing, artwork, search, deep
+links and playback options. The earlier Beta 17 and 18 packages delivered
+subscriber notices, Podcast episodes, magic-link delivery, underwriting
+dayparts and Cablecast station import. Beta 19 package evidence will be
+recorded against its exact candidate; source completion is not a package
+result.
+
 ## Beta 18 release
 
-The [Beta 18 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18) adds the Setup-admin Cablecast station-import workflow: connect, preview proposed show and schedule metadata with conflicts and skips, explicitly apply, inspect the batch, and confirm rollback. The [package record](releases/v1.0.0-beta.18-verification.md) identifies the signed candidate and its checks. Remote-guest output, bulletin-board media, protected paywall access, and native viewer completion remain separate open work.
+The [Beta 18 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18) adds the Setup-admin Cablecast station-import workflow: connect, preview proposed show and schedule metadata with conflicts and skips, explicitly apply, inspect the batch, and confirm rollback. The [package record](releases/v1.0.0-beta.18-verification.md) identifies the signed candidate and its checks. This package predates Beta 19's remote-guest, bulletin-board and native-viewer additions.
 
 ## Beta 17 release
 

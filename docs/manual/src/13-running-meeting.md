@@ -47,7 +47,7 @@ The most important idea in this chapter: CivicCast has several separate controls
 | **Channels** > **Start**, **Stop**, **Restart feed**, **Finish current item, then stop** | Sends a command to the channel's feed program. This is what starts and stops the channel's actual video. |
 | **Channels** > **Take live** | Switches the channel from its schedule to a camera or encoder source right now. |
 | **Channels** > **Approve & put on air** | Approves one scheduled program so it plays at its scheduled time. It does not play it at the moment you click. |
-| **Remote Contribution** > **Take channel live** | Switches the channel to its configured live source after confirmation. It does not route a contribution guest into that source. |
+| **Remote Contribution** > **Take channel live** | Switches the channel to its configured live source after confirmation. **Put on air** routes the admitted guest mix into that channel; **Off air** hands it back. |
 | **Remote Contribution** > **Put on air** | Adds an admitted guest to the composed picture and sound, and routes that mix to the channel. |
 | **Remote Contribution** > **Off air** | Removes a guest from the mix; the last guest returns the channel to its schedule. |
 | **Control Room** > **Fire cue** | Sends a command to your production gear (OBS, vMix, a camera, a router). It does not put anything on a channel. |
@@ -423,13 +423,13 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 4. To add a zone, click **Add zone**, fill in **Region**, **Zone kind** and **Content source**, then click **Add zone** again. To delete a zone, click **Delete**, then **Confirm delete?**.
 5. To bring in an outside source such as a news feed or a calendar, click **Add feed**, fill in **Feed kind**, **Trust tier**, **Feed label**, **Source URL** and **Refresh (minutes)**, and click **Register feed**.
 6. To vet individual feed items, click **Review items** on a feed and click **Approve** on each item you want to allow.
-7. In post-Beta 18 builds, use **Board background audio** to choose an uploaded track with a measured duration and reduce its level if needed. The track plays across board slides while the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
+7. Use **Board background audio** to choose an uploaded track with a measured duration and reduce its level if needed. The track plays across board slides while the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
 8. To place a configured camera or other live feed in a board zone, choose **Live video** as the zone's **Content source**, then choose a live source belonging to this channel. The video appears in that zone while the board is on air. The preview shows the layout without playing the live feed. Configure the source under **Live Sources** first; NDI sources are not offered for board zones.
 9. Check the **Live preview** and read **Board history** to see who changed what.
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Beta 18 note:** Board audio and live-video zones are unavailable in the published Beta 18 package. Post-Beta 18 source adds these controls and their on-air paths. Support admins can view the designer but cannot edit it.
+> **Package note:** Board audio and live-video zones are part of the Beta 19 candidate, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
 
 ## Bring in remote guests (Remote Contribution)
 
