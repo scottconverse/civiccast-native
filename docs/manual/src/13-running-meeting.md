@@ -421,7 +421,7 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 4. To add a zone, click **Add zone**, fill in **Region**, **Zone kind** and **Content source**, then click **Add zone** again. To delete a zone, click **Delete**, then **Confirm delete?**.
 5. To bring in an outside source such as a news feed or a calendar, click **Add feed**, fill in **Feed kind**, **Trust tier**, **Feed label**, **Source URL** and **Refresh (minutes)**, and click **Register feed**.
 6. To vet individual feed items, click **Review items** on a feed and click **Approve** on each item you want to allow.
-7. In post-Beta 18 builds, use **Board background audio** to choose an uploaded track with audio and reduce its level if needed. The track plays when the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
+7. In post-Beta 18 builds, use **Board background audio** to choose an uploaded track with a measured duration and reduce its level if needed. The track plays across board slides while the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
 8. Check the **Live preview** and read **Board history** to see who changed what.
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".

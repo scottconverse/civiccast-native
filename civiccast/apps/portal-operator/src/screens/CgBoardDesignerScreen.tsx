@@ -142,7 +142,7 @@ export function BoardAudioForm({ initial, assets, submitting, onSubmit }: {
 }) {
   const [assetRef, setAssetRef] = useState(initial?.asset_ref ?? '')
   const [gainDb, setGainDb] = useState(initial?.gain_db ?? 0)
-  const audioAssets = assets.filter((asset) => asset.file_path && asset.codec_audio)
+  const audioAssets = assets.filter((asset) => asset.file_path && asset.codec_audio && (asset.duration_seconds ?? 0) > 0)
   const currentMissing = initial && !audioAssets.some((asset) => asset.asset_id === initial.asset_ref)
 
   return (

@@ -36,13 +36,15 @@ describe('BoardAudioForm', () => {
   it('selects an audio asset and sends the chosen level', () => {
     const onSubmit = vi.fn()
     const assets = [
-      { asset_id: 'music-1', title: 'Station music', file_path: 'music.wav', codec_audio: 'pcm_s16le' },
+      { asset_id: 'music-1', title: 'Station music', file_path: 'music.wav', codec_audio: 'pcm_s16le', duration_seconds: 180 },
       { asset_id: 'silent-1', title: 'Silent video', file_path: 'video.mp4', codec_audio: null },
+      { asset_id: 'unmeasured-1', title: 'Unmeasured track', file_path: 'track.wav', codec_audio: 'pcm_s16le' },
     ] as AssetRow[]
     const { getByLabelText, getByText, queryByText } = render(
       <BoardAudioForm initial={null} assets={assets} submitting={false} onSubmit={onSubmit} />,
     )
     expect(queryByText('Silent video')).toBeNull()
+    expect(queryByText('Unmeasured track')).toBeNull()
     fireEvent.change(getByLabelText('Board audio track'), { target: { value: 'music-1' } })
     fireEvent.change(getByLabelText('Board audio level'), { target: { value: '-9' } })
     fireEvent.click(getByText('Set board audio'))

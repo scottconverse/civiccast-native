@@ -358,7 +358,7 @@ def set_board_audio(
     if audio_resolver is None or audio_resolver(body.asset_ref) is None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Choose an uploaded CivicCast asset with an audio track.",
+            detail="Choose an uploaded CivicCast asset with an audio track and measured duration.",
         )
     audio_id = "channel-board-" + hashlib.sha256(channel_id.encode("utf-8")).hexdigest()[:24]
     existing = resolved.list_audio(scope="channel", target_id=channel_id)

@@ -44,6 +44,7 @@ def build_board_segment_args(
     image_resolver: ImageResolver,
     codec_args: list[str] | tuple[str, ...] | None = None,
     audio_path: Path | None = None,
+    audio_offset_seconds: float = 0.0,
     audio_gain_db: float = 0.0,
     audio_sample_rate: int = 48000,
     audio_channels: int = 2,
@@ -67,7 +68,7 @@ def build_board_segment_args(
     )
     audio_index = args.count("-i")
     audio_input = (
-        ["-stream_loop", "-1", "-i", str(audio_path)]
+        ["-stream_loop", "-1", "-ss", str(audio_offset_seconds), "-i", str(audio_path)]
         if audio_path is not None
         else ["-f", "lavfi", "-i", f"anullsrc=r={audio_sample_rate}:cl=stereo"]
     )
@@ -166,6 +167,7 @@ def board_segment_cache_key(
     audio_asset_ref: str | None = None,
     audio_gain_db: float = 0.0,
     audio_source_version: str | None = None,
+    audio_offset_seconds: float = 0.0,
 ) -> str:
     """Return the stable content-addressed cache key for one board segment."""
 
@@ -192,6 +194,7 @@ def board_segment_cache_key(
             "asset_ref": audio_asset_ref,
             "gain_db": audio_gain_db,
             "source_version": audio_source_version,
+            "offset_seconds": audio_offset_seconds,
         },
     }
     if _has_clock_zone(board):

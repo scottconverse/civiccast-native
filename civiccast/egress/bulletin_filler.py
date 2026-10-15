@@ -14,10 +14,11 @@ import hashlib
 import logging
 import os
 import textwrap
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,15 @@ class BoardAudioBed:
     path: Path
     gain_db: float
     source_version: str
+    duration_seconds: int
+
+
+@dataclass(frozen=True)
+class _BoardAudioPhase:
+    identity: str
+    anchor: datetime
+    plan_start: datetime
+    plan_end: datetime
 
 
 __all__ = [
@@ -104,6 +114,7 @@ class BulletinFillerSourceGenerator:
         self._branding_provider = branding_provider
         self._board_provider = board_provider
         self._board_audio_provider = board_audio_provider
+        self._board_audio_phase: dict[str, _BoardAudioPhase] = {}
         self._ffmpeg_runner = ffmpeg_runner
         self._slate_generator = slate_generator or SlateSourceGenerator(
             work_dir=work_dir, ffmpeg_runner=ffmpeg_runner
@@ -117,6 +128,7 @@ class BulletinFillerSourceGenerator:
         now = self._clock()
         board = self._board_provider(config.channel_id, now) if self._board_provider else None
         if board is None:
+            self._board_audio_phase.pop(config.channel_id, None)
             return self._render_slide_plan(config, now=now)
         return self._render_board_plan(config, board, now=now)
 
@@ -145,6 +157,21 @@ class BulletinFillerSourceGenerator:
             )
         return self._plan_with_cycle(config, segments)
 
+    def _prune_board_audio_cache(
+        self, board_dir: Path, segments: list[EgressSourceSegment]
+    ) -> None:
+        """Bound generated audio segments without touching an active board plan."""
+        protected = {Path(segment.path) for segment in segments}
+        cutoff = time.time() - max(600, self._slide_seconds * len(segments) * 2)
+        for path in board_dir.glob("audio-*.ts"):
+            if path in protected:
+                continue
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError as exc:
+                _LOG.warning("could not clear stale generated board audio %s: %s", path, exc)
+
     def _render_board_plan(
         self,
         config: EgressConfig,
@@ -162,8 +189,39 @@ class BulletinFillerSourceGenerator:
         board_dir = self._work_dir / config.channel_id / "board"
         board_dir.mkdir(parents=True, exist_ok=True)
 
+        if audio_bed is not None:
+            identity = f"{audio_bed.asset_ref}:{audio_bed.source_version}:{audio_bed.gain_db}"
+            previous = self._board_audio_phase.get(config.channel_id)
+            if previous is None or previous.identity != identity or now < previous.anchor:
+                anchor = now
+                plan_start = now
+            else:
+                anchor = previous.anchor
+                plan_start = (
+                    previous.plan_start
+                    if now < previous.plan_start
+                    else max(now, previous.plan_end)
+                )
+            phase_seconds = int((plan_start - anchor).total_seconds()) % audio_bed.duration_seconds
+            slide_count = max(
+                len(board_bulletins),
+                min(MAX_PLAYLIST_SUBCHAINS, -(-self._target_fill_seconds // self._slide_seconds)),
+            )
+            board_bulletins = [
+                board_bulletins[index % len(board_bulletins)] for index in range(slide_count)
+            ]
+        else:
+            self._board_audio_phase.pop(config.channel_id, None)
+            identity = None
+            phase_seconds = 0
+
         segments: list[EgressSourceSegment] = []
-        for bulletin in board_bulletins:
+        for index, bulletin in enumerate(board_bulletins):
+            audio_offset = (
+                (phase_seconds + index * self._slide_seconds) % audio_bed.duration_seconds
+                if audio_bed is not None
+                else 0
+            )
             key = board_segment_cache_key(
                 board=board,
                 bulletin=bulletin,
@@ -177,8 +235,9 @@ class BulletinFillerSourceGenerator:
                 audio_asset_ref=audio_bed.asset_ref if audio_bed else None,
                 audio_gain_db=audio_bed.gain_db if audio_bed else 0.0,
                 audio_source_version=audio_bed.source_version if audio_bed else None,
+                audio_offset_seconds=audio_offset,
             )
-            segment_path = board_dir / f"{key}.ts"
+            segment_path = board_dir / f"{'audio-' if audio_bed else ''}{key}.ts"
             if not segment_path.exists():
                 # Render to a temp path and atomically publish: writing ffmpeg
                 # output straight to the cache path lets a concurrent renderer
@@ -193,9 +252,13 @@ class BulletinFillerSourceGenerator:
                     branding=branding,
                     now=now,
                     audio_bed=audio_bed,
+                    audio_offset_seconds=audio_offset,
                 )
                 if audio_bed is not None and not rendered_with_audio:
-                    segment_path = board_dir / f"{key}.silent.ts"
+                    segment_path = board_dir / f"audio-{key}.silent.ts"
+                    # A broken track should be retried on the next plan, not
+                    # on every remaining slide in this one.
+                    audio_bed = None
                 staging.replace(segment_path)
             segments.append(
                 EgressSourceSegment(
@@ -208,7 +271,17 @@ class BulletinFillerSourceGenerator:
                     ),
                 )
             )
-        return self._plan_with_cycle(config, segments)
+        plan = self._plan_with_cycle(config, segments)
+        if identity is not None:
+            self._board_audio_phase[config.channel_id] = _BoardAudioPhase(
+                identity=identity,
+                anchor=anchor,
+                plan_start=plan_start,
+                plan_end=plan_start
+                + timedelta(seconds=sum(segment.duration_seconds for segment in plan.segments)),
+            )
+        self._prune_board_audio_cache(board_dir, segments)
+        return plan
 
     def _plan_with_cycle(
         self, config: EgressConfig, segments: list[EgressSourceSegment]
@@ -287,6 +360,7 @@ class BulletinFillerSourceGenerator:
         branding: ChannelBranding | None,
         now: datetime,
         audio_bed: BoardAudioBed | None,
+        audio_offset_seconds: float = 0.0,
     ) -> bool:
         profile = config.canonical_profile
 
@@ -306,6 +380,7 @@ class BulletinFillerSourceGenerator:
                 image_resolver=self._board_image_resolver or (lambda _: None),
                 codec_args=self._board_codec_args(profile),
                 audio_path=bed.path if bed else None,
+                audio_offset_seconds=audio_offset_seconds if bed else 0.0,
                 audio_gain_db=bed.gain_db if bed else 0.0,
                 audio_sample_rate=profile.audio_sample_rate,
                 audio_channels=profile.audio_channels,
@@ -519,7 +594,7 @@ def _default_audio_resolver(session_factory: Any) -> ImageResolver:
 
     def resolve(ref: str) -> Path | None:
         row = asset_store.get_staff_row(ref)
-        if row is None or not row.codec_audio:
+        if row is None or not row.codec_audio or not row.duration_seconds or row.duration_seconds <= 0:
             return None
         return confined_path(ref)
 
@@ -540,6 +615,7 @@ def build_filler_source_provider(
     bulletin_store = PostgresCgBulletinStore(session_factory)
     board_store = CgBoardStore(session_factory)
     audio_store = CgDepthStore(session_factory)
+    asset_store = PostgresAssetStore(session_factory)
     feed_cache = FeedCache()
     asset_resolver = _default_image_resolver(session_factory)
     audio_resolver = _default_audio_resolver(session_factory)
@@ -563,8 +639,9 @@ def build_filler_source_provider(
         if not configured:
             return None
         audio = configured[-1]
+        asset = asset_store.get_staff_row(audio.asset_ref)
         path = audio_resolver(audio.asset_ref)
-        if path is None:
+        if path is None or asset is None or not asset.duration_seconds or asset.duration_seconds <= 0:
             _LOG.warning(
                 "channel %s: configured board audio asset %s is unavailable; airing silence",
                 channel_id,
@@ -585,6 +662,7 @@ def build_filler_source_provider(
             path=path,
             gain_db=audio.gain_db,
             source_version=f"{stat.st_size}:{stat.st_mtime_ns}",
+            duration_seconds=asset.duration_seconds,
         )
 
     slate_generator = SlateSourceGenerator(work_dir=work_dir)
