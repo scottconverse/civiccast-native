@@ -3,13 +3,13 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
-## Beta 17 source candidate
+## Beta 17 release
 
-The unpublished candidate adds three completed Sprint 5 workflows: subscriber
+The [published Beta 17 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17) adds three completed Sprint 5 workflows: subscriber
 publication notices with delivery outcomes and retries; Podcast MP3 episodes,
 enclosures and RSS; and selection of saved
-underwriting dayparts. The [candidate record](releases/v1.0.0-beta.17-verification.md)
-will identify the signed package and its checks when available. Remote-guest
+underwriting dayparts. The [package record](releases/v1.0.0-beta.17-verification.md)
+identifies the signed package and its scoped checks. Remote-guest
 composition, bulletin-board media, station-import UI and native viewer
 completion and protected paywall media remain open work outside this candidate.
 
@@ -41,8 +41,8 @@ is not a Beta 15 field result or Beta 16 package qualification.
 
 ## Roadmap ownership and evidence
 
-The owner sets implementation and release scope. The [Beta 16 verification
-record](releases/v1.0.0-beta.16-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
+The owner sets implementation and release scope. The [Beta 17 verification
+record](releases/v1.0.0-beta.17-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
 identity and installation observations. The [Beta 17 deferred
 backlog](ops/beta17-deferred.md) cites the separate Beta 15 R9 field report and
 describes what that host evaluation did and did not establish. No release date

@@ -176,7 +176,7 @@ tokens, passwords, private keys, resident data, or private meeting content.
 
 ## Release status and evidence
 
-Beta 16 is the [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16); its [verification record](docs/releases/v1.0.0-beta.16-verification.md) identifies the tested package and installation results.
+Beta 17 is the [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17); its [verification record](docs/releases/v1.0.0-beta.17-verification.md) identifies the signed package and scoped installation results.
 
 Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
 

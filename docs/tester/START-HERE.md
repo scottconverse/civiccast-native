@@ -1,10 +1,10 @@
-# Beta16 tester quickstart
+# Beta17 tester quickstart
 
-**`v1.0.0-beta.16` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). Check the [package verification record](../releases/v1.0.0-beta.16-verification.md) for the exact signed installer and scoped results.
+**`v1.0.0-beta.17` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17). Check the [package verification record](../releases/v1.0.0-beta.17-verification.md) for the exact signed installer and scoped results.
 
 ## Install, open, and check
 
-1. **Confirm package identity.** Use the published Beta 16 release and compare its installer with the verification record before testing.
+1. **Confirm package identity.** Use the published Beta 17 release and compare its installer with the verification record before testing.
 2. **Prepare the complete kit.** Keep `setup.exe`, `packs\\`, and `station\\`
    together. Compare its manifest, installer hash, and signature with the active
    handoff using [Windows release trust](../install/windows-release-trust.md).
@@ -23,8 +23,9 @@
    name it, create the first administrator, and save the recovery kit. Open
    **System Health** and confirm the station and configured services report
    their current state.
-5. **Run the assigned feature checks.** The Beta16 source work covers station
-   operations, unattended scheduling, broadcast outputs, and recorded captions.
+5. **Run the assigned feature checks.** Beta 17 adds subscriber delivery,
+   Podcast publication and underwriting dayparts to the station operations,
+   unattended scheduling, broadcast outputs and recorded captions in Beta 16.
    Follow the handoff's scenarios, and record what you actually observed,
    including any incomplete or blocked step.
 6. **Send useful evidence.** Record the candidate version, package hash, station,
@@ -50,7 +51,7 @@ manual](../USER-MANUAL.md) describes operator features.
 
 The previous `v1.0.0-beta.15` release has [package-specific verification](../releases/v1.0.0-beta.15-verification.md). Its R9 field findings and follow-up work are listed in the
 [Beta17 deferred backlog](../ops/beta17-deferred.md). Those observations do not
-establish Beta16 runtime behavior.
+establish Beta17 runtime behavior.
 
 Historical Beta11 evidence is separate from current package checks. A Beta11
 host ran Public, Government, and Education together for 72 hours, with 99.78%
@@ -59,7 +60,7 @@ live caption-input coverage and 216 healthy scheduled checkpoints. See the
 
 Older Beta10 and earlier verification records are retained in
 [`docs/releases`](../releases/). They describe their specific packages and do
-not establish Beta15 or Beta16 results. Current native Windows source is in
+not establish Beta17 results. Current native Windows source is in
 [civiccast-native](https://github.com/scottconverse/civiccast-native). The
 retired WSL2 product line and its `rc` releases belong to a separate repository
 and are not current tester instructions.

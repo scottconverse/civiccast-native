@@ -1,15 +1,12 @@
-# Beta 17 Candidate Technical Tester Walkthrough
+# Beta 17 Technical Tester Walkthrough
 
 Beta 17 adds subscriber delivery, Podcast publication, and
 underwriting daypart selection to CivicCast for native Windows. This walkthrough
-covers package acquisition, installation, the candidate feature paths, upgrade,
+covers package acquisition, installation, the release feature paths, upgrade,
 and uninstall.
 
-Beta 17 is unpublished. The [candidate verification record](../releases/v1.0.0-beta.17-verification.md)
-tracks its current status. Do not start until the active owner-authorized
-handoff identifies the exact candidate artifacts. Beta 16 remains the latest
-published download; its [verification record](../releases/v1.0.0-beta.16-verification.md)
-does not qualify Beta 17.
+Beta 17 is published. The [package verification record](../releases/v1.0.0-beta.17-verification.md)
+identifies the signed kit and its scoped checks.
 
 For the broader station acceptance path, use the
 [Public Station Implementation Walkthrough](station-implementation-walkthrough.md)
@@ -17,8 +14,7 @@ when the handoff assigns it.
 
 ## Package acquisition
 
-1. Acquire the exact candidate kit through the active handoff. Do not assume
-   an unpublished candidate is available from the public release page.
+1. Acquire the complete kit from the [Beta 17 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17).
 2. If the handoff names `download_windows_release_artifacts.ps1`, pass its
    exact `-Tag` and `-Version` values with the requested asset options. Do not
    rely on a generic latest download or mix packages from different builds.

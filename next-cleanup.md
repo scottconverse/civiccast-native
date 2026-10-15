@@ -2,8 +2,8 @@
 
 # Next Cleanup
 
-> Carried-forward engineering notes, not the Beta 16 release-completion list.
-> Current release status and recorded checks are in [verification](docs/releases/v1.0.0-beta.16-verification.md).
+> Carried-forward engineering notes, not the Beta 17 release-completion list.
+> Current release status and recorded checks are in [verification](docs/releases/v1.0.0-beta.17-verification.md).
 
 Deferred, non-blocking work stays out of `civiccast/` source per
 `scripts/policy/check_no_todos.py` (no TODO/FIXME/HACK markers are allowed in

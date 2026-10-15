@@ -1214,8 +1214,8 @@ probe succeeded; it does not restore the station database, media, or configurati
 
 `GET /health` is public and needs no authentication. It answers two different
 questions, and monitoring setups should not confuse them. This illustrative
-response uses the current source version string for the unpublished Beta 16
-candidate; it is not evidence of package installation or health. Read the
+response uses a release version string for illustration; it is not evidence of
+package installation or health. Read the
 version from the station you are monitoring.
 
 ```bash
@@ -1337,14 +1337,11 @@ This reference is maintained in `docs/technical-ops-reference.md`. The user-faci
 
 ## Published package evidence and historical release identity
 
-This working-tree reference follows `CivicCast 1.0.0-beta.17`, an unpublished
-candidate. Beta 15 remains the latest published package until a later candidate
-is authorized and published. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
-identifies the original signed candidate and the limits of its package
-observations; those observations do not transfer to the refreshed Help bytes
-in this source edition. One fresh offline Sandbox installation passed. No
-normal cross-version upgrade or extended soak is claimed. Beta 14 and Beta 13
-results remain tied to their own release records. Consult
+This working-tree reference follows the published `CivicCast 1.0.0-beta.17`.
+The [Beta 17 verification record](releases/v1.0.0-beta.17-verification.md)
+identifies the signed package and its scoped installation checks. No Beta 17
+cross-version upgrade or extended soak is claimed. Earlier results remain tied
+to their own release records. Consult
 `docs/releases/release-truth.yaml` for the authored release state; this
 reference does not claim an extended soak or general service-uptime result.
 

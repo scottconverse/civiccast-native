@@ -1,25 +1,27 @@
-# Current handoff: Beta 16 published (2026-10-14)
+# Current handoff: Beta 17 published (2026-10-15)
 
-## Beta 17 source candidate (2026-10-15)
+## Beta 17 release (2026-10-15)
 
-Current branch: `codex/sprint5-podcast`. Candidate preparation commit:
-`8848f1ef`. Draft [PR #251](https://github.com/scottconverse/civiccast-native/pull/251)
-targets `main`. Beta 16 remains the published package and tag; Beta 17 has
-no signed or installed candidate yet.
+[PR #251](https://github.com/scottconverse/civiccast-native/pull/251) merged as
+`4a5804608c38774bc04b4c2a5c6f34f56ebdea26`, the Beta 17 tag target.
+The signed installer was built from `597b97fd21ad1e9e5fd52bb399f81214ffdb88f0`.
+The [Beta 17 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17)
+and [package record](docs/releases/v1.0.0-beta.17-verification.md) identify
+its assets and scoped checks.
 
 Completed Sprint 5 source work covers subscriber notices with receipts and
-retries, Podcast MP3 enclosures and RSS, SMTP paywall magic links, and saved
+retries, Podcast MP3 enclosures and RSS, and saved
 underwriting daypart selection. Sprint 5 remote-guest composition,
 bulletin-board media, station-import UI, and native viewer completion remain
-open. The Beta 17 candidate version, manual, Help, API reference and front-door
-candidate notices are prepared in source. Focused checks passed; PR CI and
-package verification still govern merge and publication. Historical Beta 16
-results below belong only to Beta 16.
+open. Protected paywall media remains deferred. The signed package's
+installation checks passed; its Windows Sandbox product-engine stream capture
+did not. The exact result is in the package record. Historical Beta 16 results
+below belong only to Beta 16.
 
 The current source brings together station operations, unattended scheduling,
 broadcast output, programme transitions, HLS retention, and recorded-caption
-work. Signed `v1.0.0-beta.16` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16); the
-[package verification record](docs/releases/v1.0.0-beta.16-verification.md)
+work. Signed `v1.0.0-beta.17` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17); the
+[package verification record](docs/releases/v1.0.0-beta.17-verification.md)
 identifies its installer and checks.
 
 PR #249 merged to `main` as `efcab4c1f618e4a46bf62491ee410a9fcd9e7618`, the Beta 16 tag target.

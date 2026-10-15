@@ -1,13 +1,11 @@
-# CivicCast Beta 17 Candidate - Field-Test Quick Start
+# CivicCast Beta 17 - Field-Test Quick Start
 
 Beta 17 adds subscriber delivery, Podcast publication, and
 underwriting daypart selection to the native Windows station. This quick start
-covers the candidate kit, first setup, recovery, and closed field testing.
-Beta 17 is unpublished. The [candidate verification record](releases/v1.0.0-beta.17-verification.md)
-tracks its current build and test state; use this guide only after the active
-owner-authorized handoff names the exact candidate artifacts. Beta 16 remains
-the latest published download; its [verification record](releases/v1.0.0-beta.16-verification.md)
-applies only to that signed package.
+covers the published kit, first setup, recovery, and closed field testing.
+The [Beta 17 verification record](releases/v1.0.0-beta.17-verification.md)
+identifies its signed build and scoped checks. Use the complete kit from the
+[Beta 17 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17).
 
 ## Before you begin
 

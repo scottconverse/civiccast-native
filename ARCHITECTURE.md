@@ -2,11 +2,10 @@
 
 CivicCast combines native Windows playout, local AI captions, station backup,
 staff administration, and resident publication in one installation. This
-architecture describes the current Beta 17 candidate source.
+architecture describes the current Beta 17 source.
 
-The current published download remains signed `v1.0.0-beta.16` ([release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16));
-Beta 17 is an unpublished candidate.
+The current published download is signed `v1.0.0-beta.17` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17)).
 
 This document orients engineers and integrators to the current CivicCast
 system. The binding product contract is
@@ -284,6 +283,7 @@ These describe current source behavior and test coverage. The [Beta 17 candidate
 
 ## Release evidence and history
 
-Beta 17 is an unpublished candidate. Beta 16 remains the published download.
+Beta 17 is the published download. Its package-specific checks are in the
+[Beta 17 record](docs/releases/v1.0.0-beta.17-verification.md).
 Historical package results are retained in the [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md);
 [Beta 17 follow-up](docs/ops/beta17-deferred.md) records the owner-deferred field findings.

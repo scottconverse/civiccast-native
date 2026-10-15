@@ -1,10 +1,10 @@
 # Install CivicCast on Windows
 
-CivicCast Beta 16 is a complete native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
+CivicCast Beta 17 is a complete native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
 
-[Beta 16 manual PDF](https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.16/USER-MANUAL.pdf) · [Beta 16 package verification](docs/releases/v1.0.0-beta.16-verification.md) · [Beta 17 source manual](docs/USER-MANUAL.md)
+[Beta 17 manual PDF](https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.17/USER-MANUAL.pdf) · [Beta 17 package verification](docs/releases/v1.0.0-beta.17-verification.md) · [Beta 17 source manual](docs/USER-MANUAL.md)
 
-`v1.0.0-beta.16` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). Run its `setup.exe` with the adjacent `packs` and `station` folders intact, or use the download command below.
+`v1.0.0-beta.17` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17). Run its `setup.exe` with the adjacent `packs` and `station` folders intact, or use the download command below.
 
 ## Download and install the complete station
 
@@ -13,9 +13,9 @@ Use Windows 11 x64, internet for the download, and a Windows administrator accou
 Open **Windows PowerShell** and paste:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta16.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.16/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta16"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta17.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.17/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta17"
 ```
 
 The helper downloads the installer, all five runtime packs and all six signed station packs. It verifies SHA-256 hashes and the installer's valid **Scott Converse** Authenticode signature, and creates the `packs` and `station` folders setup needs. Windows requests administrator approval if needed. Setup uses supported silent mode with the complete kit, without the separate optional raw-model acquisition screen. Wait for it to finish; any actual nonzero exit is reported as failure.
@@ -27,7 +27,7 @@ names the step in progress.
 
 For download only, replace `-Install` with `-IncludePacks`. Keep the resulting folder together when copying it to USB. The complete folder supplies the dependencies for offline installation.
 
-[Beta 16 downloader source](scripts/download_windows_release_artifacts.ps1). Its defaults target the published Beta 16 release.
+[Beta 17 downloader source](scripts/download_windows_release_artifacts.ps1). Its defaults target the published Beta 17 release.
 
 ## First start
 
@@ -57,10 +57,10 @@ It prompts privately, preserves station data and revokes that administrator's ex
 
 The release's `station-models.zip.001`, `.002` and subsequent parts form one ZIP64 archive. **Use the helper to verify and extract them.** Individual parts are not runtime packs.
 
-The layout below is the Beta 16 kit created by the published-download command.
+The layout below is the Beta 17 kit created by the published-download command.
 
 ```text
-CivicCast-Beta16/
+CivicCast-Beta17/
   setup.exe
   packs/
     native-app-payload.ccpack
@@ -91,7 +91,7 @@ See [Windows release trust](docs/install/windows-release-trust.md) and [Support]
 
 ## Package evidence and historical results
 
-[Beta 16 package checks](docs/releases/v1.0.0-beta.16-verification.md) document the
+[Beta 17 package checks](docs/releases/v1.0.0-beta.17-verification.md) document the
 published package. [Beta 17 follow-up](docs/ops/beta17-deferred.md) records deferred
 field findings.
 
