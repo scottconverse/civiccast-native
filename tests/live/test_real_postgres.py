@@ -635,12 +635,12 @@ class TestRealPostgresPodcastSubscribePersistence:
 
     def test_podcast_episode_upsert_lists_against_real_postgres(self, postgres_url) -> None:
         from contextlib import contextmanager
+        from datetime import UTC, datetime
         from uuid import uuid4
 
         from sqlalchemy.orm import Session
 
-        from civiccast.podcast.models import PodcastChapter, PodcastEpisodeCreate
-        from civiccast.podcast.service import create_podcast_episode
+        from civiccast.podcast.models import PodcastChapter, PodcastEpisode
         from civiccast.podcast.store import PostgresPodcastStore
 
         cfg = _make_cfg(postgres_url)
@@ -655,17 +655,18 @@ class TestRealPostgresPodcastSubscribePersistence:
                     yield sess
 
             store = PostgresPodcastStore(_factory)
-            episode = create_podcast_episode(
-                PodcastEpisodeCreate(
-                    asset_id=asset_id,
-                    channel_id="gov-ch12",
-                    title="Council Meeting",
-                    portal_url=f"https://portal.example/watch/{asset_id}",
-                    source_media_url=f"https://cdn.example/{asset_id}.m3u8",
-                    signed_transcript_url=f"https://portal.example/records/{asset_id}.pdf",
-                    summary="Budget hearing and public comment.",
-                    chapters=[PodcastChapter(t=15, title="Call to order")],
-                )
+            episode = PodcastEpisode(
+                episode_id=f"pod-{asset_id}",
+                asset_id=asset_id,
+                channel_id="gov-ch12",
+                title="Council Meeting",
+                audio_url=f"https://portal.example/api/public/podcast/audio/{asset_id}.mp3",
+                rss_guid=f"civiccast:podcast:{asset_id}",
+                loudness_lufs=-16.0,
+                transcript_url=f"https://portal.example/records/{asset_id}.pdf",
+                summary="Budget hearing and public comment.",
+                chapters=[PodcastChapter(t=15, title="Call to order")],
+                published_at=datetime.now(UTC),
             )
 
             store.upsert_episode(episode)
