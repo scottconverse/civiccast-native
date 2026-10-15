@@ -259,13 +259,12 @@ def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
     assert surfaces["youtube-live"]["url"].startswith("rtmps://youtube.example/live/")
     assert surfaces["youtube-vod"]["url"].startswith("https://youtube.example/watch")
     assert surfaces["podcast"]["url"] == "https://portal.example/podcast/government.xml"
-    # Owner decision 2026-09-02: real subscriber notification sends are
-    # deferred to a future release. This surface must never claim "succeeded"
-    # -- civiccast.publish.service no longer builds or dispatches any
-    # notification payload for it.
-    assert surfaces["subscriber-notifications"]["state"] == "coming_soon"
-    assert surfaces["subscriber-notifications"]["health"] == "unknown"
-    assert "coming in a future release" in surfaces["subscriber-notifications"]["message"].lower()
+    # WP-05: this asset has no confirmed subscribers, so the surface reports
+    # "not_configured" -- nothing was intended and nothing is claimed. It used
+    # to report "succeeded" after merely building a payload that was never
+    # dispatched to anyone.
+    assert surfaces["subscriber-notifications"]["state"] == "not_configured"
+    assert surfaces["subscriber-notifications"]["notification_summary"] is None
     assert surfaces["internet-archive"]["verification_hash"].startswith("sha256:")
 
 

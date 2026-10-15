@@ -212,7 +212,21 @@ class WebhookRetryWorker:
             subscription.encrypted_webhook_secret,
             aad=f"{subscription.subscription_id}:secret",
         )
-        payload = NotificationPayload.model_validate(row.payload)
+        # The queued payload deliberately holds no unsubscribe link (a durable
+        # queue row should not store a capability token it can rebuild), so the
+        # retried notice re-attaches this subscription's own one here. A retry
+        # that dropped the unsubscribe link would deliver a notice a resident
+        # cannot opt out of.
+        from civiccast.publish.targets import resolve_public_base_url
+        from civiccast.subscribe.service import unsubscribe_url_for
+
+        payload = NotificationPayload.model_validate(row.payload).model_copy(
+            update={
+                "unsubscribe_url": unsubscribe_url_for(
+                    subscription, base_url=resolve_public_base_url()
+                )
+            }
+        )
         try:
             self._client.post(url=url, payload=payload, secret=secret)
             status_code = 200

@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- Publishing can deliver notices to confirmed subscribers through configured
+  mail and webhook providers, retain per-recipient outcomes, retry failures,
+  and show delivery status to operators. Public subscription RSS now uses
+  published records.
+- Paywall magic links use configured SMTP and report delivery failures instead
+  of claiming an unsent link was sent.
+- Underwriting flights select an existing scheduling daypart instead of
+  requiring operators to type a block ID.
+
 ## [1.0.0-beta.16] - 2026-10-14
 
 ### Station operations and broadcast reliability

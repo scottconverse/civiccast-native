@@ -82,6 +82,12 @@ const READINESS_BY_ENUM: Readonly<Record<string, ReadinessPhrase>> = {
   warn: READINESS_CHECK_BEFORE_MEETING,
   degraded: READINESS_CHECK_BEFORE_MEETING,
   yellow: READINESS_CHECK_BEFORE_MEETING,
+  // WP-05 publish-surface states. `partial` means some of the fan-out landed
+  // and some did not; `unverified` means the run claims success it kept no
+  // receipt for. Both need a human to look before the meeting is called done,
+  // and neither is a failure of the broadcast itself.
+  partial: READINESS_CHECK_BEFORE_MEETING,
+  unverified: READINESS_CHECK_BEFORE_MEETING,
 
   // Do not broadcast yet — a required check failed for tonight's broadcast.
   blocked: READINESS_DO_NOT_BROADCAST_YET,
@@ -221,6 +227,10 @@ const LIFECYCLE_OVERRIDES: Readonly<Record<string, string>> = {
   under_review: 'Under review',
   not_configured: 'Not set up yet',
   not_set_up: 'Not set up yet',
+  // Publish surface states (WP-05). "Partial"/"Unverified" are raw enum
+  // words; say what actually happened instead.
+  partial: 'Some did not go out',
+  unverified: 'Cannot show it was sent',
   credential_or_secret_required: 'Not set up yet',
   needs_it_help: 'Needs IT help',
   hardware_required: 'Needs IT help',

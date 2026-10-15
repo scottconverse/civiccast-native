@@ -19,22 +19,14 @@ same registry and cannot disagree about configuration readiness (plan item
 documented side-effect-free, and this module only adds read-only lookups on
 top of it.
 
-One exception as of owner decision 2026-09-02: real subscriber notification
-sends (mail/webhook fan-out on publish) are deferred to a future release
-(implementation parked on ``feat/publish-real-subscriber-delivery``, not
-merged). ``describe_surface_readiness("subscriber-notifications", ...)``
-below still returns :func:`_subscriber_readiness`'s real per-channel
-verdict and is still directly unit-tested
-(``tests/publish/test_provider_readiness.py``), but
-``civiccast.publish.service`` no longer calls it for that surface --
-service.py answers a fixed "coming soon" readiness instead so preflight,
-approval, and the dashboard always agree that nothing is sent yet,
-regardless of provider configuration. This function stays correct and ready
-for the parked branch to route back through it.
+Subscriber notification readiness checks the same resolved publication
+targets and provider registry used by delivery. A selected surface with
+missing configuration reports that condition rather than claiming a send.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from civiccast.platform.providers import (
@@ -46,6 +38,7 @@ from civiccast.platform.providers import (
     ProviderRegistry,
     describe_provider,
 )
+from civiccast.subscribe.models import SubscriptionRecord
 from civiccast.subscribe.store import SubscribeStore
 
 __all__ = [
@@ -76,11 +69,13 @@ _SUBSCRIBER_CHANNEL_KIND: dict[str, str] = {
 # module inventing a readiness source that does not exist yet.
 FUTURE_SURFACE_IDS = frozenset({"podcast"})
 
-# The publish surfaces are always evaluated against the station's single
-# government notification channel (matching the hardcoded target already
-# used by approve_publish's subscriber-notifications and podcast branches).
-SUBSCRIBER_TARGET_TYPE = "channel"
-SUBSCRIBER_TARGET_ID = "government"
+# WP-05: readiness used to evaluate one hardcoded ``channel/government``
+# target while delivery fanned out to the asset's REAL resolved targets, so
+# preflight could report "no confirmed subscribers" for a meeting-body
+# recording that then mailed a dozen residents (or vice versa). Callers now
+# pass the same targets ``civiccast.publish.targets
+# .resolve_publication_targets`` gives the delivery path; there is no default,
+# because a default is exactly how the two drifted apart.
 
 
 @dataclass(frozen=True)
@@ -143,13 +138,33 @@ def _provider_readiness(kind: str, *, label: str, registry: ProviderRegistry) ->
     )
 
 
+def _confirmed_across_targets(
+    store: SubscribeStore, targets: Sequence[tuple[str, str]]
+) -> list[SubscriptionRecord]:
+    """Confirmed subscriptions across every target, deduplicated by subscription.
+
+    Mirrors the delivery path's own dedupe rule
+    (``civiccast.subscribe.service._intended_deliveries``) so readiness counts
+    the same recipient set the send would.
+    """
+
+    seen: set[str] = set()
+    found: list[SubscriptionRecord] = []
+    for target_type, target_id in targets:
+        for record in store.list_confirmed_for_target(target_type=target_type, target_id=target_id):
+            if record.subscription_id in seen:
+                continue
+            seen.add(record.subscription_id)
+            found.append(record)
+    return found
+
+
 def _subscriber_readiness(
     *,
     label: str,
     registry: ProviderRegistry,
     store: SubscribeStore | None,
-    target_type: str,
-    target_id: str,
+    targets: Sequence[tuple[str, str]],
 ) -> SurfaceReadiness:
     if store is None:
         # No subscribe store was wired for this call (e.g. an ephemeral app
@@ -163,7 +178,7 @@ def _subscriber_readiness(
             message=f"{label}: the subscriber store is unavailable; there are no recipients to check.",
             next_step="No action required.",
         )
-    confirmed = store.list_confirmed_for_target(target_type=target_type, target_id=target_id)
+    confirmed = _confirmed_across_targets(store, targets)
     channels_used = sorted({subscription.channel for subscription in confirmed})
     if not channels_used:
         return SurfaceReadiness(
@@ -222,8 +237,7 @@ def describe_surface_readiness(
     label: str,
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None = None,
-    subscribe_target_type: str = SUBSCRIBER_TARGET_TYPE,
-    subscribe_target_id: str = SUBSCRIBER_TARGET_ID,
+    subscribe_targets: Sequence[tuple[str, str]] = (),
 ) -> SurfaceReadiness | None:
     """Return ``surface_id``'s real readiness, or ``None`` if it has none to check.
 
@@ -243,8 +257,7 @@ def describe_surface_readiness(
             label=label,
             registry=registry,
             store=subscribe_store,
-            target_type=subscribe_target_type,
-            target_id=subscribe_target_id,
+            targets=subscribe_targets,
         )
     kind = _SURFACE_PROVIDER_KIND.get(surface_id)
     if kind is None:

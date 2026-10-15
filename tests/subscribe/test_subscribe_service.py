@@ -144,11 +144,36 @@ def test_subscription_rss_is_valid_no_pii_feed() -> None:
         "channel",
         "government",
         [],
+        public_base_url="https://records.example-city.gov",
     )
 
     assert validate_rss(xml) == []
     assert "subscriber" not in xml.lower()
     assert "email" not in xml.lower()
+
+
+def test_subscription_rss_uses_the_configured_base_and_never_portal_example() -> None:
+    """WP-05: the feed's own link comes from the station's configured base URL.
+
+    The removed placeholder (``https://portal.example/{target_type}/{id}``) was
+    a production-looking link to a host nobody owns; it shipped on every
+    station's public feed.
+    """
+
+    xml = subscription_rss(
+        "meeting_body",
+        "planning-commission",
+        [],
+        public_base_url="https://records.example-city.gov/",
+        station_name="Example City",
+    )
+
+    assert "portal.example" not in xml
+    assert "<link>https://records.example-city.gov/</link>" in xml
+    assert "Example City — Meeting body planning-commission" in xml
+    # An empty feed is a real, valid state -- not a reason to invent an item.
+    assert "<item>" not in xml
+    assert validate_rss(xml) == []
 
 
 def test_subscription_secrets_generate_durable_file(
