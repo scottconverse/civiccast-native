@@ -40,6 +40,7 @@ from collections import deque
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.encoders import jsonable_encoder
@@ -71,6 +72,8 @@ from civiccast.paywall.store import (
     PaywallStationConfigConflictError,
     PaywallStore,
 )
+from civiccast.platform.providers import PROVIDER_KIND_MAIL, default_registry
+from civiccast.subscribe.smtp import SmtpMailbox
 
 logger = logging.getLogger(__name__)
 
@@ -221,11 +224,8 @@ def _require_service(svc: PaywallService | None) -> PaywallService:
 class MagicLinkEmailSender(Protocol):
     """Hook for delivering the magic-link to the viewer's inbox.
 
-    Slice 3 wires a no-op default (the router accepts mint requests and
-    returns ``{"sent": True}`` so the contract is exercised) and leaves
-    the SMTP integration for the same slice that wires the real B5
-    provider. Tests inject a recording stub; production wiring will plug
-    in the SMTP delivery client behind the same protocol.
+    Tests may inject a recording stub. Production resolves the existing real
+    SMTP provider and refuses to report delivery when it is unavailable.
     """
 
     def __call__(
@@ -247,17 +247,49 @@ def _default_email_sender(
     scope_kind: str,
     scope_id: str,
 ) -> None:
-    """No-op sender. Production wiring replaces this with an SMTP-backed
-    implementation (slice 5 — same B5 real-provider pattern the contribute
-    + records modules use). Leaving as a no-op here keeps the magic-link
-    endpoint exercised in tests without coupling slice 3 to SMTP."""
+    raise RuntimeError("Magic-link mail delivery is not configured")
+
+
+def _configured_magic_link_base() -> str | None:
+    for setting in ("CIVICCAST_RESIDENT_PORTAL_URL", "CIVICCAST_PUBLIC_BASE_URL"):
+        raw = os.environ.get(setting, "").strip().rstrip("/")
+        if not raw or any(character.isspace() for character in raw):
+            continue
+        try:
+            parsed = urlsplit(raw)
+        except ValueError:
+            continue
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            continue
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            continue
+        if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+            continue
+        return raw
+    return None
 
 
 def get_magic_link_email_sender() -> MagicLinkEmailSender:
-    """DI seam for the magic-link email sender. The app factory overrides
-    this with an SMTP-backed sender in production; tests inject a stub
-    that records the (email, token) pair so the test can assert on it."""
-    return _default_email_sender
+    """Resolve real SMTP and a trusted public URL before minting a token."""
+    if os.environ.get("CIVICCAST_PROVIDER_MAIL", "").strip().lower() != "real":
+        return _default_email_sender
+    base = _configured_magic_link_base()
+    if base is None:
+        return _default_email_sender
+    try:
+        mailbox = default_registry().resolve(PROVIDER_KIND_MAIL)
+    except (ValueError, RuntimeError):
+        logger.warning("paywall.magic_link.mail_configuration_invalid")
+        return _default_email_sender
+    if not isinstance(mailbox, SmtpMailbox):
+        return _default_email_sender
+
+    def send(*, email: str, token: str, station_id: str, scope_kind: str, scope_id: str) -> None:
+        route = f"watch/{quote(scope_id, safe='')}" if scope_kind == "asset" else "redeem"
+        link = f"{base}/#/{route}?token={quote(token, safe='')}"
+        mailbox.send_magic_link(email=email, link_url=link)
+
+    return send
 
 
 # --- routers -----------------------------------------------------------------
@@ -621,14 +653,20 @@ class MagicLinkResponse(BaseModel):
     We deliberately do NOT echo the token here — the viewer receives it
     via email; surfacing it on the response would defeat the channel-
     separation that makes magic-links a defense against credential
-    stuffing. Returning the same shape on success + "no config yet" would
-    also surface a tiny configuration probe; we return 409 from the
-    handler in that case so the client gets a distinct status.
+    stuffing. The delivery boolean reports whether the configured relay
+    accepted the message.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    sent: bool = True
+    sent: bool
+
+
+class MagicLinkVerificationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allowed: Literal[True] = True
+    email: str
 
 
 @public_router.post(
@@ -636,7 +674,7 @@ class MagicLinkResponse(BaseModel):
     response_model=MagicLinkResponse,
     summary="Email a single-use magic-link to the viewer",
     responses={
-        200: {"description": "Magic-link mint accepted (always sent=True for shape-valid input)"},
+        200: {"description": "Magic-link delivery status"},
         422: {"description": "Public mint requires an asset/series scope_id (no catch-all)"},
         429: {"description": "Rate limit exceeded"},
         503: {"description": _DB_NOT_READY},
@@ -650,17 +688,13 @@ def public_magic_link(
 ) -> MagicLinkResponse:
     """Mint a token + invoke the email sender. The token is never echoed.
 
-    Slice-5 hook: ``sender`` is the SMTP delivery seam. The default
-    sender is a no-op so the contract is exercised in tests without
-    pulling in SMTP. The production wiring plugs in an SMTP-backed
-    sender behind the same protocol.
+    ``sent`` is true only after the configured SMTP relay accepts the message.
 
     Q-5 fix: per-IP rate limit (5 / 60s) to prevent the endpoint being
     used as an email-spam relay once SMTP is wired.
 
-    Q-9 fix: the response shape is identical (``{"sent": true}`` 200)
-    whether or not the station has a paywall configured. An anonymous
-    caller cannot probe "is the paywall on?" via the status code.
+    The response shape remains identical whether or not the paywall is
+    configured. The boolean truthfully reports delivery, without a token.
 
     E-1 BLOCKER fix: the request model rejects ``scope_kind="all"``; we
     additionally route through :meth:`mint_magic_link_for_public` which
@@ -682,7 +716,7 @@ def public_magic_link(
             sid,
             payload.scope_kind,
         )
-        return MagicLinkResponse(sent=True)
+        return MagicLinkResponse(sent=False)
     except PaywallServiceError as exc:
         # E-1 belt-and-suspenders: a service-level rejection of
         # ``scope_kind="all"`` (or any other validation) becomes a 422
@@ -691,13 +725,21 @@ def public_magic_link(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
-    sender(
-        email=payload.email,
-        token=token,
-        station_id=sid,
-        scope_kind=payload.scope_kind,
-        scope_id=payload.scope_id,
-    )
+    try:
+        sender(
+            email=payload.email,
+            token=token,
+            station_id=sid,
+            scope_kind=payload.scope_kind,
+            scope_id=payload.scope_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "paywall.magic_link.delivery_failed station_id=%s error_type=%s",
+            sid,
+            type(exc).__name__,
+        )
+        return MagicLinkResponse(sent=False)
     return MagicLinkResponse(sent=True)
 
 
@@ -706,7 +748,7 @@ _VERIFY_GENERIC_DETAIL = "Magic link could not be verified."
 
 @public_router.get(
     "/paywall/verify",
-    response_model=PublicAccessDecision,
+    response_model=MagicLinkVerificationResponse,
     summary="Redeem a magic-link token (single-use)",
     responses={
         401: {"description": "Token invalid, expired, or already redeemed"},
@@ -718,7 +760,7 @@ def public_verify_magic_link(
     request: Request,
     token: str = Query(..., min_length=8, description="The signed token from the email link."),
     svc: PaywallService | None = Depends(get_paywall_service),
-) -> PublicAccessDecision:
+) -> MagicLinkVerificationResponse:
     """Verify the token + return a decision.
 
     E-3 / Q-7 fix: ALL failure modes (malformed / bad signature /
@@ -737,7 +779,7 @@ def public_verify_magic_link(
     resolved = _require_service(svc)
     sid = _station_id()
     try:
-        resolved.verify_magic_link(token, expected_station_id=sid)
+        grant = resolved.verify_magic_link(token, expected_station_id=sid)
     except MagicLinkVerificationError as exc:
         # E-3/Q-7: log specific cause, return identical detail body.
         logger.info(
@@ -749,7 +791,7 @@ def public_verify_magic_link(
             status.HTTP_401_UNAUTHORIZED,
             detail=_VERIFY_GENERIC_DETAIL,
         ) from exc
-    return PublicAccessDecision(allowed=True)
+    return MagicLinkVerificationResponse(email=grant.email)
 
 
 # --- webhook -----------------------------------------------------------------

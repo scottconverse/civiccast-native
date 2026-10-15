@@ -15,6 +15,7 @@ import { buildRecordingsHash, buildScheduleHash, useHashRoute, type PortalRoute 
 import { ChannelGuideScreen } from './screens/ChannelGuideScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { RecordingsScreen } from './screens/RecordingsScreen'
+import { MagicLinkRedeemScreen } from './screens/MagicLinkRedeemScreen'
 import { WatchScreen } from './screens/WatchScreen'
 
 // Points at the station's own in-product manual (served by the operator
@@ -157,6 +158,8 @@ function App() {
             />
           ) : route.view === 'watch' ? (
             <WatchScreen assetId={route.assetId} />
+          ) : route.view === 'redeem' ? (
+            <MagicLinkRedeemScreen />
           ) : route.view === 'schedule' ? (
             <ChannelGuideScreen channel={route.channel} />
           ) : (

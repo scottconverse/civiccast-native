@@ -158,6 +158,13 @@ class SmtpMailbox:
             body=f"Confirm your subscription: {confirmation_url}",
         )
 
+    def send_magic_link(self, *, email: str, link_url: str) -> str:
+        return self._send(
+            to=email,
+            subject="Your CivicCast sign-in link",
+            body=f"Open this single-use sign-in link: {link_url}",
+        )
+
     def send_notification(self, *, email: str, payload: NotificationPayload) -> str:
         return self._send(
             to=email,
