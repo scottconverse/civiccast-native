@@ -34,6 +34,16 @@ VENDOR_ALLOWLIST = frozenset(
         # The capabilities matrix describes the migrate-from-incumbent feature
         # with honest limits ("Cablecast only ..."); factual, no framing.
         "CAPABILITIES.md",
+        # The operator import workflow must name the source product so staff
+        # select the correct adapter. These are factual integration references;
+        # HIGH_RISK_PATTERNS still apply to every allowlisted file.
+        "CHANGELOG.md",
+        "civiccast/apps/portal-operator/src/api/stationImport.ts",
+        "civiccast/apps/portal-operator/src/screens/StationImportScreen.tsx",
+        "civiccast/apps/portal-operator/src/screens/StationImportScreen.test.tsx",
+        "civiccast/docsite/manual.json",
+        "docs/USER-MANUAL.md",
+        "docs/manual/src/26-integrations.md",
         # Internal release-verification and forward-planning docs that reference
         # the migrate-from-incumbent feature by name. Plain mentions only.
         "docs/releases/1.0.0-field-proof-runbook.md",
