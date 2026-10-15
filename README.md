@@ -28,7 +28,8 @@ provides the installer, runtime packs, station-model bundle, manuals, and
 checksums. The [Beta 16 verification record](docs/releases/v1.0.0-beta.16-verification.md)
 identifies the exact package and its scoped installation results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
-for operation, use the [User Manual](docs/USER-MANUAL.md) or [FAQ](FAQ.md).
+for Beta 16 operation, use the manual bundled on that release page. The
+[source manual](docs/USER-MANUAL.md) describes the Beta 17 candidate.
 
 Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
 captions, with supported NVIDIA CUDA applying to Whisper only. The native
