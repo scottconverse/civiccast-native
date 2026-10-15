@@ -2216,7 +2216,7 @@ Admit Guest.
 
 ### `POST /api/staff/contribution/sessions/{session_id}/drop`
 
-Mark the CivicCast guest lifecycle record dropped (does not disconnect provider media).
+Drop the guest and remove them from the live mix.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `session_id` (path, required): `string`
@@ -2234,7 +2234,7 @@ Record Media Control Request.
 
 ### `POST /api/staff/contribution/sessions/{session_id}/mute`
 
-Mark the CivicCast guest lifecycle record muted (does not send a provider media command).
+Mute the guest in CivicCast's live audio mix.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `session_id` (path, required): `string`
@@ -2243,7 +2243,7 @@ Mark the CivicCast guest lifecycle record muted (does not send a provider media 
 
 ### `POST /api/staff/contribution/sessions/{session_id}/off-air`
 
-Mark the CivicCast guest lifecycle record connected (does not remove provider media).
+Remove the guest from the live mix and return to scheduled output if last.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `session_id` (path, required): `string`
@@ -2252,7 +2252,7 @@ Mark the CivicCast guest lifecycle record connected (does not remove provider me
 
 ### `POST /api/staff/contribution/sessions/{session_id}/on-air`
 
-Mark the CivicCast guest lifecycle record on-air (does not route media or take the channel live).
+Route an admitted guest into the live channel and confirm the handoff.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `session_id` (path, required): `string`
@@ -9855,6 +9855,7 @@ rule (S13 §5.1).
 - `coturn_process_up` (optional): `boolean`
 - `detail` (optional): `string`
 - `ice_summary` (optional): `string`
+- `relay_process_up` (optional): `boolean`
 - `turn_host` (optional): `string | null`
 - `turn_port` (optional): `number | null`
 - `turn_reachable` (optional): `boolean`

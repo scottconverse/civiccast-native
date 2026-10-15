@@ -48,6 +48,8 @@ The most important idea in this chapter: CivicCast has several separate controls
 | **Channels** > **Take live** | Switches the channel from its schedule to a camera or encoder source right now. |
 | **Channels** > **Approve & put on air** | Approves one scheduled program so it plays at its scheduled time. It does not play it at the moment you click. |
 | **Remote Contribution** > **Take channel live** | Switches the channel to its configured live source after confirmation. It does not route a contribution guest into that source. |
+| **Remote Contribution** > **Put on air** | Adds an admitted guest to the composed picture and sound, and routes that mix to the channel. |
+| **Remote Contribution** > **Off air** | Removes a guest from the mix; the last guest returns the channel to its schedule. |
 | **Control Room** > **Fire cue** | Sends a command to your production gear (OBS, vMix, a camera, a router). It does not put anything on a channel. |
 
 ### A few words used here
@@ -431,9 +433,9 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 
 ## Bring in remote guests (Remote Contribution)
 
-**Remote Contribution** lets remote council members, presenters and public commenters join from a web browser, with nothing for them to install. CivicCast manages the *rooms*, the invite links and the guest list. The video mixing is done by separate software on your station (VDO.Ninja, a web video tool, and a *compositor*, a program that combines video sources into one picture). Those must be set up first.
+**Remote Contribution** lets remote council members, presenters and public commenters join from a web browser, with nothing for them to install. CivicCast manages rooms, invites and guest admission, combines admitted guests into one picture and audio mix, and routes that mix to the selected channel when you put a guest on air.
 
-> **For IT staff:** guest video needs a self-hosted VDO.Ninja service, a compositor, and a TURN relay (a server that helps guests behind firewalls connect). See [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
+> **For IT staff:** commission self-hosted VDO.Ninja, a MediaMTX relay and a reachable TURN service before the meeting. CivicCast uses its bundled FFmpeg for composition and its existing live-source path for channel output. See [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
 
 You see this item in the menu only with the Meeting operator, Setup admin or Support admin role.
 
@@ -447,28 +449,29 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 > **Note:** each guest link works for one guest, once, and expires after 4 hours. The screen says "single-use" but does not mention the 4 hours. Guests who join as **Public comment** must first accept terms before they can join. "Sent invites" lists each link as **Used** or **Pending**. A room holds up to 6 guests by default.
 
-> **Current limitation:** the channel menu shows only configured, enabled egress channels. If none are available, ask a Setup admin to configure and enable a channel first; unknown or disabled channel ids cannot be used to create a room or take a channel live. Room-list and detail reads currently require Meeting operator or Support admin access. A Setup admin working alone cannot manage a room they created. Guest media composition into the channel is not connected in CivicCast; commissioning VDO.Ninja alone does not put a guest on air.
+The channel menu shows configured, enabled egress channels. If none are available, ask a Setup admin to enable a channel. Each channel can have one remote-guest room on air at a time.
 
 ### Admit and control a guest
 
 1. When a guest opens their link, they appear under **Guests** with the tag **In waiting room**.
-2. Click **Admit** to mark them admitted in CivicCast. This does not put their media into the broadcast.
-3. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** send targeted audio requests for that guest; **Mute guest camera** and **Restore guest camera** send camera requests to the same guest.
-4. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
-5. **Off air** asks for confirmation, then sends separate requests to mute that guest's audio and camera. It leaves the guest connected and does not return the channel to its schedule.
+2. Click **Admit**. Admission keeps the guest in the waiting room; it does not air their media.
+3. Click **Put on air**. CivicCast adds the guest to the live picture and audio mix, takes the channel to that source, and waits for an on-air handoff record. An error leaves the guest in the room without claiming the action succeeded.
+4. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** change CivicCast's live audio mix and send a targeted VDO.Ninja request. **Mute guest camera** and **Restore guest camera** send camera requests to that guest.
+5. **Off air** removes the guest from CivicCast's live mix. If they were the last on-air guest, CivicCast returns the channel to its scheduled output. The guest stays connected in the room.
+6. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
 
-> **Important:** VDO.Ninja's director iframe does not confirm whether an audio, camera or hangup request succeeded. CivicCast records the latest browser-reported request as **sent, not verified** and keeps the guest's connection status unchanged. The audio control targets the guest's audio; it does not control the director's own audio. Check the director and compositor before relying on a media change, and verify in the director before treating a guest as disconnected. Off air does not disconnect the guest or return the channel to its schedule.
+> **Important:** VDO.Ninja's director iframe does not confirm whether camera or hangup requests succeeded. CivicCast records those browser commands as **sent, not verified**. Verify guest connection and camera state in the director. CivicCast's on-air, off-air and audio-mix actions are separate channel operations; watch the channel output during a live meeting.
 
 ### Take the channel live
 
-**Take channel live** is a separate, confirmed action. It switches the channel to its configured live source and can override the schedule. It does not route a contribution guest into the channel. To resume the schedule, use **Return to schedule** on **Channels**.
+**Take channel live** is a separate action for the channel's ordinary configured live source, such as a camera. Use **Put on air** on an admitted guest to route remote guests. Use **Off air** on the last guest to return to schedule.
 
 After checking in the director that a guest has left, click **Mark left after checking** and confirm. This changes only the CivicCast session record; it does not send a provider command.
 
 ### Close the room
 
 1. Select the room and click **Close room**.
-2. Confirm to send hangup requests for active guest sessions and close the CivicCast room record. The provider does not acknowledge those requests; active guests remain visible so you can inspect or retry controls. Mark each guest left only after verifying the director shows they have disconnected. Closing the room stops new invites; it does not return the channel to its schedule.
+2. Confirm to send hangup requests, remove any on-air guests from the channel and close the room record. VDO.Ninja does not acknowledge hangup requests; verify in the director before marking each guest left. The final on-air guest's removal returns the channel to its schedule.
 
 You can reopen the room and send new invites afterwards.
 
@@ -501,7 +504,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 
 12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh them.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
-14. Admit remote guests one at a time. Keep the VDO.Ninja director open and verify each guest there. Guest controls do not compose them into the broadcast; use **Take channel live** separately only for the channel's configured live source.
+14. Admit remote guests one at a time, then click **Put on air** for each guest you want in the live mix. Keep the VDO.Ninja director open and verify the channel output.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.
 
 **At the end**

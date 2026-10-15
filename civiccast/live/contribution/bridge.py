@@ -22,9 +22,10 @@ fake implementing the protocol.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from typing import Protocol
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
@@ -74,6 +75,7 @@ class VdoDiagnostics(BaseModel):
     turn_port: int | None = None
     vdo_process_up: bool = False
     coturn_process_up: bool = False
+    relay_process_up: bool = False
     ice_summary: str = ""
     detail: str = ""
 
@@ -82,6 +84,11 @@ class VdoBridgeError(RuntimeError):
     """Raised when the VDO.Ninja tier is not configured / cannot mint a URL.
 
     Carries the failure TYPE only — never a token or a credential."""
+
+
+def guest_stream_id(invite_token: str) -> str:
+    """Stable media path that does not reveal the single-use join token."""
+    return hashlib.sha256(invite_token.encode("utf-8")).hexdigest()[:32]
 
 
 class VdoNinjaBridge(Protocol):
@@ -145,6 +152,7 @@ class UrlVdoNinjaBridge:
         *,
         diagnostics_probe: Callable[[], VdoDiagnostics] | None = None,
         connectivity_test: Callable[[], VdoDiagnostics] | None = None,
+        mediamtx_url: str | None = None,
     ) -> None:
         base = base_url.strip().rstrip("/")
         if not base:
@@ -153,6 +161,19 @@ class UrlVdoNinjaBridge:
             # NullVdoNinjaBridge when no base is configured).
             raise VdoBridgeError("UrlVdoNinjaBridge requires a non-empty base_url")
         self._base = base
+        if mediamtx_url is not None:
+            mediamtx_url = mediamtx_url.strip().rstrip("/")
+            parsed = urlsplit(mediamtx_url)
+            if (
+                parsed.scheme not in ("http", "https")
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise VdoBridgeError("MediaMTX needs a public HTTP or HTTPS base URL")
+        self._mediamtx_url = mediamtx_url
         self._diagnostics_probe = diagnostics_probe
         self._connectivity_test = connectivity_test
 
@@ -160,10 +181,16 @@ class UrlVdoNinjaBridge:
         return f"{self._base}/?{urlencode({'director': room.vdo_room_name})}"
 
     def guest_urls(self, room: ContributionRoom, *, invite_token: str, role: str) -> GuestUrls:
-        # Guest publishes into the room, stream-id = the single-use token.
-        view_q = urlencode({"room": room.vdo_room_name, "push": invite_token, "label": role})
+        # With MediaMTX the stream ID is also a readable media path; the join
+        # capability must not become that path. Legacy VDO-only links keep the
+        # historical ID until their sessions expire.
+        stream_id = guest_stream_id(invite_token) if self._mediamtx_url else invite_token
+        view_args = {"room": room.vdo_room_name, "push": stream_id, "label": role}
+        if self._mediamtx_url:
+            view_args["mediamtx"] = self._mediamtx_url
+        view_q = urlencode(view_args)
         # Compositor renders a solo view of just this guest's stream.
-        push_q = urlencode({"view": invite_token, "room": room.vdo_room_name, "solo": "1"})
+        push_q = urlencode({"view": stream_id, "room": room.vdo_room_name, "solo": "1"})
         return GuestUrls(
             view_url=f"{self._base}/?{view_q}",
             push_url=f"{self._base}/?{push_q}",
@@ -191,4 +218,5 @@ __all__ = [
     "VdoBridgeError",
     "VdoDiagnostics",
     "VdoNinjaBridge",
+    "guest_stream_id",
 ]

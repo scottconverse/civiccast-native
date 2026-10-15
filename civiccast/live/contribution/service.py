@@ -152,6 +152,8 @@ class ContributionService:
         id_factory: Callable[[], str] | None = None,
         token_factory: Callable[[], str] | None = None,
         on_air_hook: Callable[[RemoteGuestSession, ContributionRoom], None] | None = None,
+        off_air_hook: Callable[[RemoteGuestSession, ContributionRoom], None] | None = None,
+        audio_mute_hook: Callable[[RemoteGuestSession, ContributionRoom, bool], None] | None = None,
         alert_hook: Callable[[str, str], None] | None = None,
         channel_enabled: Callable[[str], bool | None] | None = None,
         invite_ttl: timedelta = _DEFAULT_INVITE_TTL,
@@ -164,6 +166,8 @@ class ContributionService:
         # 32 bytes -> ~43 url-safe chars, comfortably over the ≥32 floor.
         self._token = token_factory or (lambda: secrets.token_urlsafe(32))
         self._on_air_hook = on_air_hook
+        self._off_air_hook = off_air_hook
+        self._audio_mute_hook = audio_mute_hook
         # ``None`` means no matching configured channel. Failing closed when
         # the app has not wired the validator prevents free-text ids from
         # creating rooms that can never be switched live.
@@ -228,13 +232,16 @@ class ContributionService:
         return room, director_url
 
     def close_room(self, room_id: str) -> ContributionRoom:
-        """Close the room record without inferring provider disconnection.
+        """Return active guests to program, then close the room record.
 
         VDO.Ninja currently exposes no authoritative disconnect observation to
-        this service. Active guest lifecycle rows remain visible until a
-        separate observed/manual lifecycle update changes them.
+        this service. Guests remain connected in the lifecycle until a
+        separate observed/manual update marks them disconnected.
         """
         self._require_room(room_id)
+        for guest in self._store.list_sessions(room_id=room_id, active_only=True):
+            if guest.state in {"on_air", "muted"}:
+                self.take_off_air(guest.session_id)
         now = self._clock()
         return self._store.set_room_state(room_id, "closed", updated_at=now)
 
@@ -346,17 +353,13 @@ class ContributionService:
         return self._store.save_session(admitted)
 
     def put_on_air(self, session_id: str) -> RemoteGuestSession:
-        """Mark an admitted guest's CivicCast lifecycle record as on-air.
-
-        This does not route guest media or take the channel live. The pinned
-        VDO director controls are browser-side, and guest composition is not
-        wired to the channel source here. The legacy hook parameter remains
-        accepted for app wiring compatibility but is intentionally not called;
-        channel takeover is a separate, confirmed operator action.
-        """
+        """Compose and route an admitted guest before accepting on-air state."""
         guest = self._require_active_guest(session_id)
         if guest.admitted_at is None:
             raise GuestNotAdmittedError(session_id)
+        if guest.state in ("on_air", "muted"):
+            return guest
+        room = self._require_room(guest.room_id)
         now = self._clock()
         on_air = guest.model_copy(
             update={
@@ -365,42 +368,61 @@ class ContributionService:
             }
         )
         saved = self._store.save_session(on_air)
-        room = self._store.get_room(guest.room_id)
-        if room is not None and room.state != "live":
+        changed_room = room.state != "live"
+        if changed_room:
             self._store.set_room_state(room.room_id, "live", updated_at=now)
+        if self._on_air_hook is not None:
+            try:
+                self._on_air_hook(saved, room)
+            except Exception as exc:
+                self._store.save_session(guest)
+                if changed_room:
+                    self._store.set_room_state(room.room_id, room.state, updated_at=now)
+                raise TakeoverHookError("Guest media could not be routed to air") from exc
         return saved
 
     def mute_guest(self, session_id: str) -> RemoteGuestSession:
         guest = self._require_active_guest(session_id)
         if guest.state not in ("on_air", "muted"):
             raise InvalidGuestTransitionError(f"cannot mute a guest in state {guest.state}")
+        if guest.state == "muted":
+            return guest
+        if self._audio_mute_hook is not None:
+            try:
+                self._audio_mute_hook(guest, self._require_room(guest.room_id), True)
+            except Exception as exc:
+                raise TakeoverHookError("Guest audio could not be muted on air") from exc
         return self._store.save_session(guest.model_copy(update={"state": "muted"}))
 
     def take_off_air(self, session_id: str) -> RemoteGuestSession:
-        """Mark the guest record connected after an operator's off-air action.
-
-        This changes only CivicCast's session record. It does not send VDO.Ninja
-        media controls, disconnect the guest, or change the channel source or
-        schedule.
-        """
+        """Remove a guest from the composition and return to program if last."""
         guest = self._require_active_guest(session_id)
         if guest.state not in ("on_air", "muted"):
             raise InvalidGuestTransitionError(
                 f"cannot take a guest off-air from state {guest.state}"
             )
-        return self._store.save_session(guest.model_copy(update={"state": "connected"}))
+        if self._off_air_hook is not None:
+            try:
+                self._off_air_hook(guest, self._require_room(guest.room_id))
+            except Exception as exc:
+                raise TakeoverHookError("Guest media could not be taken off air") from exc
+        saved = self._store.save_session(guest.model_copy(update={"state": "connected"}))
+        self._restore_room_state_if_empty(guest.room_id)
+        return saved
 
     def drop_guest(self, session_id: str) -> RemoteGuestSession:
-        """Mark a guest session dropped (terminal) and alert if it was on-air.
-
-        This updates CivicCast's session record; it does not disconnect the
-        VDO.Ninja guest, change guest media, or change the channel source or
-        schedule.
-        """
+        """Remove an on-air guest, then record the drop and alert."""
         guest = self._require_active_guest(session_id)
         was_on_air = guest.state in ("on_air", "muted")
+        if was_on_air and self._off_air_hook is not None:
+            try:
+                self._off_air_hook(guest, self._require_room(guest.room_id))
+            except Exception as exc:
+                raise TakeoverHookError("Guest drop could not return the channel") from exc
         dropped = guest.model_copy(update={"state": "dropped", "ended_at": self._clock()})
         saved = self._store.save_session(dropped)
+        if was_on_air:
+            self._restore_room_state_if_empty(guest.room_id)
         if was_on_air and self._alert_hook is not None:
             self._emit_alert(
                 ALERT_GUEST_DROP,
@@ -422,15 +444,33 @@ class ContributionService:
         this intentionally records only an unverified request.
         """
         guest = self._require_active_guest(session_id)
+        next_state = guest.state
+        if action in {"audio_mute", "audio_unmute"} and guest.state in {"on_air", "muted"}:
+            muted = action == "audio_mute"
+            next_state = "muted" if muted else "on_air"
+            if next_state != guest.state and self._audio_mute_hook is not None:
+                try:
+                    self._audio_mute_hook(guest, self._require_room(guest.room_id), muted)
+                except Exception as exc:
+                    raise TakeoverHookError("Guest audio control could not reach air") from exc
         return self._store.save_session(
             guest.model_copy(
                 update={
                     "media_control_state": "sent_unverified",
                     "media_control_action": action,
                     "media_control_requested_at": self._clock(),
+                    "state": next_state,
                 }
             )
         )
+
+    def _restore_room_state_if_empty(self, room_id: str) -> None:
+        sessions = self._store.list_sessions(room_id=room_id, active_only=True)
+        if any(guest.state in {"on_air", "muted"} for guest in sessions):
+            return
+        room = self._require_room(room_id)
+        if room.state == "live":
+            self._store.set_room_state(room_id, "open", updated_at=self._clock())
 
     def list_sessions(
         self, *, room_id: str | None = None, active_only: bool = False

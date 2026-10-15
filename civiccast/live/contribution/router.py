@@ -329,7 +329,7 @@ def admit_guest(
 @staff_router.post(
     "/sessions/{session_id}/on-air",
     response_model=RemoteGuestSession,
-    summary="Mark the CivicCast guest lifecycle record on-air (does not route media or take the channel live)",
+    summary="Route an admitted guest into the live channel and confirm the handoff",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def put_on_air(
@@ -341,7 +341,7 @@ def put_on_air(
 @staff_router.post(
     "/sessions/{session_id}/mute",
     response_model=RemoteGuestSession,
-    summary="Mark the CivicCast guest lifecycle record muted (does not send a provider media command)",
+    summary="Mute the guest in CivicCast's live audio mix",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def mute_guest(
@@ -353,7 +353,7 @@ def mute_guest(
 @staff_router.post(
     "/sessions/{session_id}/off-air",
     response_model=RemoteGuestSession,
-    summary="Mark the CivicCast guest lifecycle record connected (does not remove provider media)",
+    summary="Remove the guest from the live mix and return to scheduled output if last",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def off_air_guest(
@@ -365,7 +365,7 @@ def off_air_guest(
 @staff_router.post(
     "/sessions/{session_id}/drop",
     response_model=RemoteGuestSession,
-    summary="Mark the CivicCast guest lifecycle record dropped (does not disconnect provider media)",
+    summary="Drop the guest and remove them from the live mix",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def drop_guest(

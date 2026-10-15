@@ -5095,6 +5095,7 @@ export interface VdoDiagnostics {
   turn_port?: number | null
   vdo_process_up?: boolean
   coturn_process_up?: boolean
+  relay_process_up?: boolean
   ice_summary?: string
   detail?: string
 }

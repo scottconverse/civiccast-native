@@ -174,7 +174,7 @@ from civiccast.egress.router import get_egress_store, get_takeover_service
 from civiccast.egress.router import public_router as egress_public_router
 from civiccast.egress.router import staff_router as egress_staff_router
 from civiccast.egress.store import PostgresEgressStore
-from civiccast.egress.takeover_service import AlreadyLiveError, TakeoverService
+from civiccast.egress.takeover_service import TakeoverService
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
 from civiccast.facility.router import staff_router as facility_staff_router
 from civiccast.installer.commissioning_router import get_commissioning_egress_store
@@ -197,7 +197,7 @@ from civiccast.live.contribution.coprocess import (
     contribution_turn_connectivity_test,
     set_active_supervisor,
 )
-from civiccast.live.contribution.on_air import build_contribution_on_air_hook
+from civiccast.live.contribution.program import GuestProgramRouter
 from civiccast.live.contribution.router import get_contribution_service
 from civiccast.live.contribution.router import public_router as contribution_public_router
 from civiccast.live.contribution.router import staff_router as contribution_staff_router
@@ -809,6 +809,9 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
         egress_daemon = getattr(app.state, "egress_daemon", None)
         if egress_daemon is not None:
             egress_daemon.stop_all_channels(deadline_seconds=_egress_drain_deadline_seconds())
+        guest_program = getattr(app.state, "guest_program_router", None)
+        if guest_program is not None:
+            guest_program.close()
         # Recording peer of the egress drain: gracefully finalize any in-flight
         # scheduled recording (arming/recording/finalizing) to a valid asset
         # BEFORE background.stop() halts the scheduler poll thread, so a
@@ -1511,6 +1514,11 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     contribution_supervisor = ContributionCoprocessSupervisor(
         contribution_coprocess_settings,
         alert_hook=_build_contribution_alert_hook(session_factory),
+        mix_health_check=lambda: (
+            router.check_health()
+            if (router := getattr(app.state, "guest_program_router", None)) is not None
+            else None
+        ),
     )
     set_active_supervisor(contribution_supervisor)
     app.state.contribution_supervisor = contribution_supervisor
@@ -3253,6 +3261,38 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.dependency_overrides[get_control_room_service] = _resolve_control_room_service
     app.dependency_overrides[get_device_secret_writer] = lambda: save_device_secret
 
+    if not hasattr(app.state, "guest_program_lock"):
+        app.state.guest_program_router = None
+        app.state.guest_program_lock = threading.Lock()
+
+    def _guest_program() -> GuestProgramRouter:
+        if os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION", "off").strip().lower() != "on":
+            raise RuntimeError("Remote guest broadcast is disabled")
+        with app.state.guest_program_lock:
+            existing = getattr(app.state, "guest_program_router", None)
+            if existing is not None:
+                return cast(GuestProgramRouter, existing)
+            public_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL")
+            rtsp_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL")
+            srt_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL")
+            if not public_url or not rtsp_url or not srt_url:
+                raise RuntimeError(
+                    "Remote guest broadcast needs MediaMTX public, RTSP and SRT URLs"
+                )
+            egress_store = PostgresEgressStore(_session_factory)
+            router = GuestProgramRouter(
+                ContributionStore(_session_factory),
+                LiveSourceStore(_session_factory),
+                _resolve_takeover_service,
+                rtsp_base=rtsp_url,
+                srt_base=srt_url,
+                proof_events=lambda channel_id, limit: egress_store.recent_proof_events(
+                    channel_id, limit
+                ),
+            )
+            app.state.guest_program_router = router
+            return router
+
     def _resolve_contribution_service() -> ContributionService:
         # S17: mint real VDO.Ninja join URLs when a self-hosted base URL is
         # configured (CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL); otherwise the
@@ -3267,6 +3307,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
                 vdo_url,
                 diagnostics_probe=contribution_diagnostics_snapshot,
                 connectivity_test=contribution_turn_connectivity_test,
+                mediamtx_url=os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL"),
             )
             if vdo_url
             else NullVdoNinjaBridge()
@@ -3277,23 +3318,15 @@ def _wire_durable_stores(app: FastAPI) -> None:
             config = egress_store.get_config(channel_id)
             return config.enabled if config is not None else None
 
-        def _take_channel_live(channel_id: str) -> None:
-            # Legacy on-air hook retained for app-wiring compatibility.
-            # ContributionService.put_on_air currently records lifecycle state
-            # without invoking this callback; channel takeover remains a
-            # separate, confirmed operator action.
-            with suppress(AlreadyLiveError):
-                _resolve_takeover_service().take(
-                    channel_id=channel_id,
-                    operator_id="remote-contribution",
-                    reason="remote guest on-air",
-                )
-
         return ContributionService(
             ContributionStore(_session_factory),
             bridge,
             channel_enabled=_channel_enabled,
-            on_air_hook=build_contribution_on_air_hook(_take_channel_live),
+            on_air_hook=lambda guest, room: _guest_program().on_air(guest, room),
+            off_air_hook=lambda guest, room: _guest_program().off_air(guest, room),
+            audio_mute_hook=lambda guest, room, muted: _guest_program().audio_mute(
+                guest, room, muted
+            ),
             alert_hook=_build_contribution_alert_hook(_session_factory),
         )
 
@@ -3528,6 +3561,11 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.state.startup_condition_hooks.append(
         _build_recording_reconcile_startup_condition(recording_svc)
     )
+    if (
+        os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION", "off").strip().lower() == "on"
+        and os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL")
+    ):
+        app.state.startup_condition_hooks.append(lambda: _guest_program().recover())
 
 
 def _install_ephemeral_store_wiring(

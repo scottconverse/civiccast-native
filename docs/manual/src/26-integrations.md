@@ -13,9 +13,24 @@ This chapter is for the IT person who connects CivicCast to the outside world: t
 
 ## Remote Contribution controls
 
-Remote Contribution creates rooms only for configured, enabled egress channels. The server rejects missing or disabled channels even if a caller bypasses the menu. It embeds the self-hosted VDO.Ninja director and can send targeted guest audio, camera and hangup commands from the browser. The director iframe does not acknowledge command completion. CivicCast records the latest browser-reported command as **sent, not verified**; the guest's connection record remains active until an operator checks the director and marks the guest left.
+Remote Contribution creates rooms only for configured, enabled egress channels. A guest publishes from VDO.Ninja into MediaMTX over WHIP. CivicCast reads each admitted guest from the relay over RTSP, uses its bundled FFmpeg to tile the guest pictures and mix their audio, publishes the combined feed back to the relay over SRT, then takes that feed through its existing live-source and channel egress path. **Put on air** and **Off air** control this route; the last guest off air returns the channel to scheduled output. The channel handoff is confirmed against the egress on-air proof before the action reports success.
 
-The audio controls act on the director's audio path; they do not establish that channel output is muted. Camera and hangup commands are sent to the targeted guest, but CivicCast does not receive an authoritative result. Guest media composition into the channel is not implemented. **Take channel live** is a separate confirmed action that switches to the channel's configured live source; it does not route a remote guest into that source. Closing a room stops new invitations but leaves any unverified guest sessions visible for inspection or retry.
+The director iframe also sends targeted guest camera and hangup requests. VDO.Ninja does not acknowledge these commands, so CivicCast records them as **sent, not verified**. The channel audio-mute control changes CivicCast's own mix as well as sending a director request. Verify connection and camera state in the director. Closing a room removes its on-air guests and stops new invitations; a guest's connection record remains until an operator verifies that they have left.
+
+Commission the media relay and service environment before inviting guests:
+
+| Setting | Purpose |
+| --- | --- |
+| `CIVICCAST_REMOTE_CONTRIBUTION=on` | Enables remote-contribution supervision and broadcast routing. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL` | Browser-accessible HTTPS base URL of the self-hosted VDO.Ninja instance. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL` | Browser-accessible HTTPS base URL of MediaMTX's WHIP listener. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL` | Station-local RTSP base, for example `rtsp://127.0.0.1:8554`. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL` | Station-local SRT base, for example `srt://127.0.0.1:8890`. |
+| `CIVICCAST_MEDIAMTX_COMMAND` | Optional MediaMTX executable and config-file command for CivicCast to supervise; omit when another service manages the relay. |
+| `CIVICCAST_VDO_COMMAND` | VDO.Ninja server command when CivicCast supervises that separate process. |
+| `CIVICCAST_TURN_HOST`, `CIVICCAST_TURN_PORT` | Reachable TURN service used by guests behind firewalls. |
+
+The MediaMTX configuration must allow WHIP publishing and local RTSP and SRT access to publisher-created paths. Keep the RTSP and SRT listeners local to the station. The browser-facing WHIP listener needs the station's HTTPS reverse proxy and network routing. Test one guest on the station's output before a public meeting. If the relay is absent or the mix fails to produce video and audio, **Put on air** returns an error instead of marking the guest live.
 
 ## Cable headend: UDP transport streams
 

@@ -17838,7 +17838,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Mark the CivicCast guest lifecycle record on-air (does not route media or take the channel live)",
+        "summary": "Route an admitted guest into the live channel and confirm the handoff",
         "operationId": "put_on_air_api_staff_contribution_sessions__session_id__on_air_post",
         "parameters": [
           {
@@ -17900,7 +17900,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Mark the CivicCast guest lifecycle record muted (does not send a provider media command)",
+        "summary": "Mute the guest in CivicCast's live audio mix",
         "operationId": "mute_guest_api_staff_contribution_sessions__session_id__mute_post",
         "parameters": [
           {
@@ -17962,7 +17962,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Mark the CivicCast guest lifecycle record connected (does not remove provider media)",
+        "summary": "Remove the guest from the live mix and return to scheduled output if last",
         "operationId": "off_air_guest_api_staff_contribution_sessions__session_id__off_air_post",
         "parameters": [
           {
@@ -18024,7 +18024,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Mark the CivicCast guest lifecycle record dropped (does not disconnect provider media)",
+        "summary": "Drop the guest and remove them from the live mix",
         "operationId": "drop_guest_api_staff_contribution_sessions__session_id__drop_post",
         "parameters": [
           {
@@ -65595,6 +65595,11 @@
           "coturn_process_up": {
             "type": "boolean",
             "title": "Coturn Process Up",
+            "default": false
+          },
+          "relay_process_up": {
+            "type": "boolean",
+            "title": "Relay Process Up",
             "default": false
           },
           "ice_summary": {
