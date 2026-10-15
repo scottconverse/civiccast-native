@@ -5758,10 +5758,11 @@ Read CivicCast local federation metadata.
 - `allowed_tags` (optional): `Array<string>`
 - `approval_required` (optional): `boolean`
 - `board_id` (required): `string`
-- `content_source` (required): `'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock'`
+- `content_source` (required): `'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video'`
 - `created_at` (required): `string`
 - `feed_source_id` (optional): `string | null`
 - `image_asset_ref` (optional): `string | null`
+- `live_source_id` (optional): `string | null`
 - `manual_text` (optional): `string | null`
 - `refresh_seconds` (optional): `number | null`
 - `region` (required): `'main' | 'lower' | 'side' | 'bug' | 'background'`
@@ -10009,9 +10010,10 @@ rule (S13 §5.1).
 
 - `allowed_tags` (optional): `Array<string>`
 - `approval_required` (optional): `boolean`
-- `content_source` (required): `'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock'`
+- `content_source` (required): `'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video'`
 - `feed_source_id` (optional): `string | null`
 - `image_asset_ref` (optional): `string | null`
+- `live_source_id` (optional): `string | null`
 - `manual_text` (optional): `string | null`
 - `refresh_seconds` (optional): `number | null`
 - `region` (required): `'main' | 'lower' | 'side' | 'bug' | 'background'`
@@ -10021,9 +10023,10 @@ rule (S13 §5.1).
 
 - `allowed_tags` (optional): `Array<string> | null`
 - `approval_required` (optional): `boolean | null`
-- `content_source` (optional): `'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | null`
+- `content_source` (optional): `'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video' | null`
 - `feed_source_id` (optional): `string | null`
 - `image_asset_ref` (optional): `string | null`
+- `live_source_id` (optional): `string | null`
 - `manual_text` (optional): `string | null`
 - `refresh_seconds` (optional): `number | null`
 - `region` (optional): `'main' | 'lower' | 'side' | 'bug' | 'background' | null`

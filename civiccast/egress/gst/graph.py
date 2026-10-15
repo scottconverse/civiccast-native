@@ -96,10 +96,13 @@ class PlaylistLeg:
     # decodebin audio pad → a parallel audio concat → the audio selector pad
     audio_tail: tuple[ElementSpec, ...] = ()
     output_gain_db: float = 0.0
+    subchain_kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.subchains:
             raise ValueError(f"PlaylistLeg {self.label!r} requires at least one sub-chain")
+        if self.subchain_kinds and len(self.subchain_kinds) != len(self.subchains):
+            raise ValueError("PlaylistLeg subchain kinds must match the sub-chains")
         for chain in self.subchains:
             if not chain:
                 raise ValueError(f"PlaylistLeg {self.label!r} has an empty sub-chain")
@@ -262,7 +265,8 @@ class GraphicsOverlayLayer:
     screen instead of dropping the pad, which is the mechanism this leg relies on."""
 
     name: str
-    image_path: str
+    image_path: str = ""
+    source_chain: tuple[ElementSpec, ...] = ()
     xpos: int = 0
     ypos: int = 0
     width: int = 0  # 0 = the decoded image's native width (no scale-in-compositor)
@@ -273,8 +277,10 @@ class GraphicsOverlayLayer:
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("GraphicsOverlayLayer requires a name")
-        if not self.image_path.strip():
-            raise ValueError(f"GraphicsOverlayLayer {self.name!r} requires an image_path")
+        if bool(self.image_path.strip()) == bool(self.source_chain):
+            raise ValueError(
+                f"GraphicsOverlayLayer {self.name!r} requires exactly one image_path or source_chain"
+            )
         if not 0.0 <= self.alpha <= 1.0:
             raise ValueError(f"GraphicsOverlayLayer {self.name!r} alpha must be in [0.0, 1.0]")
 
@@ -644,6 +650,7 @@ def _overlay_layer_to_dict(layer: GraphicsOverlayLayer) -> dict[str, Any]:
     return {
         "name": layer.name,
         "image_path": layer.image_path,
+        "source_chain": [_elem_to_dict(spec) for spec in layer.source_chain],
         "xpos": layer.xpos,
         "ypos": layer.ypos,
         "width": layer.width,
@@ -657,6 +664,7 @@ def _overlay_layer_from_dict(obj: dict[str, Any]) -> GraphicsOverlayLayer:
     return GraphicsOverlayLayer(
         name=obj["name"],
         image_path=obj["image_path"],
+        source_chain=tuple(_elem_from_dict(spec) for spec in obj.get("source_chain", [])),
         xpos=int(obj.get("xpos", 0)),
         ypos=int(obj.get("ypos", 0)),
         width=int(obj.get("width", 0)),
@@ -693,6 +701,7 @@ def graph_to_json(graph: PlayoutGraph) -> str:
                 "subchains": [[_elem_to_dict(e) for e in ch] for ch in source.subchains],
                 "audio_tail": [_elem_to_dict(e) for e in source.audio_tail],
                 "output_gain_db": source.output_gain_db,
+                "subchain_kinds": list(source.subchain_kinds),
             }
         return {
             "type": "source",
@@ -746,6 +755,7 @@ def graph_from_json(text: str) -> PlayoutGraph:
                 ),
                 audio_tail=tuple(_elem_from_dict(e) for e in obj.get("audio_tail", [])),
                 output_gain_db=float(obj.get("output_gain_db", 0.0)),
+                subchain_kinds=tuple(obj.get("subchain_kinds", [])),
             )
         return SourceLeg(
             label=obj["label"],

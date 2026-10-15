@@ -30,11 +30,15 @@ from civiccast.cg.feed_fetcher import FeedCache
 from civiccast.cg.models import CgBulletinSubmission
 from civiccast.egress.board_compositor import (
     ImageResolver,
+    _region_box,
+    _safe_area_pixels,
     board_segment_cache_key,
     build_board_preview_args,
     build_board_segment_args,
 )
 from civiccast.egress.errors import SourcePrepareError
+from civiccast.egress.gst.bridge import source_first_element
+from civiccast.egress.gst.graph import ElementSpec, GraphicsOverlayLayer
 from civiccast.egress.models import (
     MAX_PLAYLIST_SUBCHAINS,
     EgressConfig,
@@ -57,6 +61,7 @@ BoardAudioProvider = Callable[[str], "BoardAudioBed | None"]
 #: (channel_id, config) -> board raster for the S15 engine overlay, or None.
 #: Takes the config because frame geometry lives on ``canonical_profile``.
 BoardOverlayProvider = Callable[[str, "EgressConfig"], Path | None]
+BoardLiveVideoProvider = Callable[[str, "EgressConfig"], tuple[GraphicsOverlayLayer, ...]]
 BrandingProvider = Callable[[str], ChannelBranding | None]
 
 _DEFAULT_BACKGROUND = "0x1a2744"
@@ -85,6 +90,7 @@ class _BoardAudioPhase:
 __all__ = [
     "BulletinFillerSourceGenerator",
     "FillerSourceProvider",
+    "build_board_live_video_provider",
     "build_board_overlay_provider",
     "build_bulletin_slide_args",
     "build_filler_source_provider",
@@ -690,6 +696,90 @@ def build_filler_source_provider(
         ),
         slate_generator=slate_generator,
     )
+
+
+def build_board_live_video_provider(session_factory: Any) -> BoardLiveVideoProvider:
+    """Resolve configured board live sources to real-time compositor layers.
+
+    Source ids are resolved against the channel's own live-source inventory;
+    the board never stores an arbitrary URL or a credential in its zone row.
+    A removed or unsupported source leaves that zone on the ordinary board.
+    """
+    from civiccast.live.store import LiveSourceStore
+
+    board_store = CgBoardStore(session_factory)
+    source_store = LiveSourceStore(session_factory)
+
+    def resolve(channel_id: str, config: EgressConfig) -> tuple[GraphicsOverlayLayer, ...]:
+        board = build_board_snapshot_from_store(
+            board_store, channel_id, now=datetime.now(UTC)
+        )
+        if board is None:
+            return ()
+        profile = config.canonical_profile
+        zones_by_kind = {zone.kind: zone for zone in board.snapshot.zones}
+        safe = _safe_area_pixels(profile.width, profile.height)
+        layers: list[GraphicsOverlayLayer] = []
+        for region in sorted(board.snapshot.template.regions, key=lambda item: item.order):
+            zone = zones_by_kind.get(region.zone_kind)
+            if zone is None or zone.source != "live_video":
+                continue
+            source_id = zone.content.get("live_source_id")
+            if not isinstance(source_id, str):
+                continue
+            source = source_store.get(source_id)
+            if source is None or source.channel_id != channel_id:
+                _LOG.warning(
+                    "channel %s: board live-video source %s is unavailable; leaving the board visible",
+                    channel_id,
+                    source_id,
+                )
+                continue
+            if source.source_type == "ndi":
+                _LOG.warning(
+                    "channel %s: NDI board source %s has no native playout path",
+                    channel_id,
+                    source_id,
+                )
+                continue
+            try:
+                first = source_first_element(
+                    EgressSourceSegment(
+                        label=source.name,
+                        path=source.endpoint_url,
+                        duration_seconds=3600,
+                        kind="live",
+                        source_ref=source.live_source_id,
+                        secret_ref=source.credentials_handle,
+                    )
+                )
+            except ValueError:
+                _LOG.warning(
+                    "channel %s: board live-video source %s has no supported playout path",
+                    channel_id,
+                    source_id,
+                )
+                continue
+            x, y, width, height = _region_box(
+                region.region,
+                width=profile.width,
+                height=profile.height,
+                safe_area_pixels=safe,
+            )
+            layers.append(
+                GraphicsOverlayLayer(
+                    name=f"board_live_{zone.zone_id}",
+                    source_chain=(first, ElementSpec("decodebin")),
+                    xpos=x,
+                    ypos=y,
+                    width=width,
+                    height=height,
+                    repeat_after_eos=False,
+                )
+            )
+        return tuple(layers)
+
+    return resolve
 
 
 def build_board_overlay_provider(

@@ -29,11 +29,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from civiccast.cg.board_service import CgBoardService
+from civiccast.cg.board_service import CgBoardService, ZoneInput
 from civiccast.cg.board_store import CgBoardStore
 from civiccast.db import Base
-from civiccast.egress.bulletin_filler import build_board_overlay_provider
+from civiccast.egress.bulletin_filler import (
+    build_board_live_video_provider,
+    build_board_overlay_provider,
+)
 from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
+from civiccast.live.models import LiveSourceCreate
+from civiccast.live.store import LiveSourceStore
 from civiccast.stream._ffmpeg import FfmpegResult
 
 _CHANNEL_ID = "public"
@@ -81,6 +86,37 @@ def _activate_board(factory, *, channel_id: str = _CHANNEL_ID) -> None:  # type:
     CgBoardService(CgBoardStore(factory)).create_board(
         channel_id, template_id="standard-community-board", operator_id="test-op"
     )
+
+
+def test_live_board_zone_resolves_only_a_same_channel_source(factory) -> None:  # type: ignore[no-untyped-def]
+    _activate_board(factory)
+    CgBoardService(CgBoardStore(factory)).add_zone(
+        _CHANNEL_ID,
+        payload=ZoneInput(
+            region="main",
+            zone_kind="primary",
+            content_source="live_video",
+            live_source_id="chamber-camera",
+        ),
+        operator_id="test-op",
+    )
+    provider = build_board_live_video_provider(factory)
+    assert provider(_CHANNEL_ID, _config()) == ()
+
+    LiveSourceStore(factory).create(
+        LiveSourceCreate(
+            live_source_id="chamber-camera",
+            channel_id=_CHANNEL_ID,
+            name="Chamber camera",
+            source_type="srt",
+            endpoint_url="srt://127.0.0.1:9000?mode=caller",
+        )
+    )
+    layers = provider(_CHANNEL_ID, _config())
+    assert len(layers) == 1
+    assert layers[0].source_chain[0].factory == "srtsrc"
+    assert layers[0].width > 0 and layers[0].height > 0
+    assert layers[0].repeat_after_eos is False
 
 
 def _ok_runner(calls: list[list[str]]) -> Callable[[list[str]], FfmpegResult]:

@@ -775,8 +775,8 @@ def _start_request(tmp_path):
     return EncoderStartRequest(channel_id="ch1", source_plan=plan, config=config, work_dir=tmp_path)
 
 
-def test_cg_overlay_inserts_gdkpixbufoverlay_when_element_registered(tmp_path) -> None:
-    # S15 §5 CG-lite: an active board's raster composites over the output half.
+def test_cg_overlay_uses_graphics_compositor_when_registered(tmp_path) -> None:
+    # The packaged runtime has a compositor but no gdkpixbufoverlay.
     from dataclasses import replace as dc_replace
 
     def fake_launcher(argv, *a):
@@ -793,9 +793,10 @@ def test_cg_overlay_inserts_gdkpixbufoverlay_when_element_registered(tmp_path) -
     request = dc_replace(_start_request(tmp_path), cg_overlay_image=board_png)
     result = strategy.start(request)
     graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
-    first = graph.encoder[0]
-    assert first.factory == "gdkpixbufoverlay"
-    assert first.props["location"] == str(board_png)
+    assert graph.graphics_overlay is not None
+    assert graph.graphics_overlay.layers[0].name == "cg_board_raster"
+    assert graph.graphics_overlay.layers[0].image_path == str(board_png)
+    assert not any(spec.factory == "gdkpixbufoverlay" for spec in graph.encoder)
 
 
 def test_cg_overlay_degrades_honestly_when_element_missing(tmp_path, caplog) -> None:
@@ -817,7 +818,7 @@ def test_cg_overlay_degrades_honestly_when_element_missing(tmp_path, caplog) -> 
         result = strategy.start(request)
     graph_text = result.concat_plan_path.read_text(encoding="utf-8")
     assert "gdkpixbufoverlay" not in graph_text
-    assert any("board overlay" in record.message for record in caplog.records), (
+    assert any("board output" in record.message for record in caplog.records), (
         "a requested-but-unavailable overlay must be announced, never silent"
     )
 

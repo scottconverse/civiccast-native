@@ -110,6 +110,7 @@ class ZoneInput(BaseModel):
     approval_required: bool = False
     manual_text: Annotated[str | None, Field(default=None, max_length=500)] = None
     image_asset_ref: Annotated[str | None, Field(default=None, max_length=120)] = None
+    live_source_id: Annotated[str | None, Field(default=None, max_length=120)] = None
     allowed_tags: list[str] = Field(default_factory=list)
 
 
@@ -126,6 +127,7 @@ class ZoneUpdateInput(BaseModel):
     approval_required: bool | None = None
     manual_text: Annotated[str | None, Field(default=None, max_length=500)] = None
     image_asset_ref: Annotated[str | None, Field(default=None, max_length=120)] = None
+    live_source_id: Annotated[str | None, Field(default=None, max_length=120)] = None
     allowed_tags: list[str] | None = None
 
 

@@ -1005,12 +1005,13 @@ export interface CgZoneConfig {
   board_id: string
   region: 'main' | 'lower' | 'side' | 'bug' | 'background'
   zone_kind: 'primary' | 'ticker' | 'schedule' | 'logo' | 'sponsor' | 'audio' | 'alert'
-  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock'
+  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video'
   feed_source_id?: string | null
   refresh_seconds?: number | null
   approval_required?: boolean
   manual_text?: string | null
   image_asset_ref?: string | null
+  live_source_id?: string | null
   allowed_tags?: Array<string>
   created_at: string
 }
@@ -5247,24 +5248,26 @@ export interface YearOverYearPoint {
 export interface ZoneInput {
   region: 'main' | 'lower' | 'side' | 'bug' | 'background'
   zone_kind: 'primary' | 'ticker' | 'schedule' | 'logo' | 'sponsor' | 'audio' | 'alert'
-  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock'
+  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video'
   feed_source_id?: string | null
   refresh_seconds?: number | null
   approval_required?: boolean
   manual_text?: string | null
   image_asset_ref?: string | null
+  live_source_id?: string | null
   allowed_tags?: Array<string>
 }
 
 export interface ZoneUpdateInput {
   region?: 'main' | 'lower' | 'side' | 'bug' | 'background' | null
   zone_kind?: 'primary' | 'ticker' | 'schedule' | 'logo' | 'sponsor' | 'audio' | 'alert' | null
-  content_source?: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | null
+  content_source?: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video' | null
   feed_source_id?: string | null
   refresh_seconds?: number | null
   approval_required?: boolean | null
   manual_text?: string | null
   image_asset_ref?: string | null
+  live_source_id?: string | null
   allowed_tags?: Array<string> | null
 }
 

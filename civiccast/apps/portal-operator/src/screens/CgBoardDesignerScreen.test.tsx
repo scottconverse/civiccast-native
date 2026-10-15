@@ -106,14 +106,31 @@ describe('ZoneForm', () => {
   })
 
   it('keeps audio out of visual zones and directs operators to board audio control', () => {
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText } = render(
       <ZoneForm feeds={[]} submitting={false} onSubmit={vi.fn()} />,
     )
     const zoneKind = getByLabelText('Zone kind') as HTMLSelectElement
     const audio = zoneKind.querySelector('option[value="audio"]') as HTMLOptionElement
     expect(audio.disabled).toBe(true)
     expect(audio.textContent).toMatch(/configured below the Board card/i)
-    expect(getByText(/Live video in a zone/i)).toBeTruthy()
+    expect((getByLabelText('Content source') as HTMLSelectElement).querySelector('option[value="live_video"]')).toBeTruthy()
+  })
+
+  it('requires a configured source for a live-video zone', () => {
+    const onSubmit = vi.fn()
+    const { getByLabelText, getByText } = render(
+      <ZoneForm
+        feeds={[]}
+        liveSources={[{ live_source_id: 'camera-1', channel_id: 'public', name: 'Chamber camera', source_type: 'srt' }]}
+        submitting={false}
+        onSubmit={onSubmit}
+      />,
+    )
+    fireEvent.change(getByLabelText('Content source'), { target: { value: 'live_video' } })
+    expect((getByText('Add zone') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(getByLabelText('Live video source'), { target: { value: 'camera-1' } })
+    fireEvent.click(getByText('Add zone'))
+    expect(onSubmit.mock.calls[0][0].live_source_id).toBe('camera-1')
   })
 })
 
@@ -192,6 +209,7 @@ vi.mock('../api/client', () => ({
   getCgBoard: vi.fn(),
   getCgBoardAudio: vi.fn(),
   listStaffAssets: vi.fn(),
+  listLiveSources: vi.fn(),
   setCgBoardAudio: vi.fn(),
   deleteCgBoardAudio: vi.fn(),
   previewCgBoard: vi.fn(),

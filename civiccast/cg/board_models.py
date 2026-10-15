@@ -38,7 +38,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from civiccast.cg.models import FeedKind, FeedTrustTier, TemplateRegion, ZoneKind
 from civiccast.db import Base
 
-ZoneContentSource = Literal["feed_adapter", "manual", "schedule", "emergency", "image", "clock"]
+ZoneContentSource = Literal[
+    "feed_adapter", "manual", "schedule", "emergency", "image", "clock", "live_video"
+]
 
 # A zone whose content comes from a registered feed needs a feed bound to it;
 # the other modes carry their content inline (manual_text / image_asset_ref) or
@@ -94,6 +96,7 @@ class CgZoneConfig(BaseModel):
     approval_required: bool = False
     manual_text: Annotated[str | None, Field(default=None, max_length=500)] = None
     image_asset_ref: Annotated[str | None, Field(default=None, max_length=120)] = None
+    live_source_id: Annotated[str | None, Field(default=None, max_length=120)] = None
     # CG depth (S18 gap 6): when non-empty, the zone only shows content carrying
     # one of these tag ids (see civiccast.cg.depth_models.ZoneTag).
     allowed_tags: list[str] = Field(default_factory=list)
@@ -105,6 +108,13 @@ class CgZoneConfig(BaseModel):
             raise ValueError("feed_adapter zones require a feed_source_id")
         if self.content_source not in _FEED_SOURCED and self.feed_source_id is not None:
             raise ValueError("feed_source_id is only valid for feed_adapter zones")
+        if self.content_source == "live_video":
+            if not self.live_source_id:
+                raise ValueError("live_video zones require a live_source_id")
+            if self.zone_kind == "audio":
+                raise ValueError("audio zones cannot show live video")
+        elif self.live_source_id is not None:
+            raise ValueError("live_source_id is only valid for live_video zones")
         return self
 
 
@@ -214,6 +224,7 @@ class CgZoneConfigDb(Base):
     approval_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     manual_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_asset_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    live_source_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     allowed_tags: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default=text("'[]'")
     )

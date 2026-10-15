@@ -28,6 +28,7 @@ export const CONTENT_SOURCES = [
   'emergency',
   'image',
   'clock',
+  'live_video',
 ] as const
 export const FEED_KINDS = ['rss', 'ical', 'caldav', 'weather', 'social'] as const
 export const TRUST_TIERS = ['operator_curated', 'partner_curated', 'public_permitted'] as const
@@ -68,6 +69,9 @@ export function zoneSummary(zone: CgZoneConfig): string {
   const parts = [humanize(zone.zone_kind), `via ${humanize(zone.content_source)}`]
   if (zone.content_source === 'feed_adapter' && zone.feed_source_id) {
     parts.push(`(${zone.feed_source_id})`)
+  }
+  if (zone.content_source === 'live_video' && zone.live_source_id) {
+    parts.push(`(${zone.live_source_id})`)
   }
   if (zone.approval_required) parts.push('· approval required')
   return parts.join(' ')

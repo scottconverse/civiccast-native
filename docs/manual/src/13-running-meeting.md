@@ -422,11 +422,12 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 5. To bring in an outside source such as a news feed or a calendar, click **Add feed**, fill in **Feed kind**, **Trust tier**, **Feed label**, **Source URL** and **Refresh (minutes)**, and click **Register feed**.
 6. To vet individual feed items, click **Review items** on a feed and click **Approve** on each item you want to allow.
 7. In post-Beta 18 builds, use **Board background audio** to choose an uploaded track with a measured duration and reduce its level if needed. The track plays across board slides while the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
-8. Check the **Live preview** and read **Board history** to see who changed what.
+8. To place a configured camera or other live feed in a board zone, choose **Live video** as the zone's **Content source**, then choose a live source belonging to this channel. The video appears in that zone while the board is on air. The preview shows the layout without playing the live feed. Configure the source under **Live Sources** first; NDI sources are not offered for board zones.
+9. Check the **Live preview** and read **Board history** to see who changed what.
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Beta 18 note:** Board background audio is unavailable in the published Beta 18 package. Post-Beta 18 source adds the control and on-air audio path. Live video inside a board zone remains future work. Support admins can view the designer but cannot edit it.
+> **Beta 18 note:** Board audio and live-video zones are unavailable in the published Beta 18 package. Post-Beta 18 source adds these controls and their on-air paths. Support admins can view the designer but cannot edit it.
 
 ## Bring in remote guests (Remote Contribution)
 

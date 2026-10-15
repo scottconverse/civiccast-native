@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import struct
 import zlib
+from dataclasses import replace
 
 import pytest
 
@@ -241,6 +242,28 @@ def test_graphics_overlay_leg_rejects_duplicate_layer_names() -> None:
 def test_graphics_overlay_layer_rejects_out_of_range_alpha() -> None:
     with pytest.raises(ValueError, match="alpha"):
         GraphicsOverlayLayer(name="bug", image_path="a.png", alpha=1.5)
+
+
+def test_live_video_layer_round_trips_its_source_chain() -> None:
+    from civiccast.egress.gst.graph import ElementSpec
+
+    original = _demo_graph_with_overlay()
+    live = GraphicsOverlayLayer(
+        name="board_live_video",
+        source_chain=(ElementSpec("videotestsrc", props={"is-live": True}),),
+        xpos=30,
+        ypos=30,
+        width=320,
+        height=180,
+        repeat_after_eos=False,
+    )
+    graph = replace(
+        original,
+        graphics_overlay=GraphicsOverlayLeg(layers=(*original.graphics_overlay.layers, live)),
+    )
+    restored = graph_from_json(graph_to_json(graph))
+    assert restored.graphics_overlay is not None
+    assert restored.graphics_overlay.layers[-1] == live
 
 
 def test_playout_graph_graphics_overlay_defaults_to_none() -> None:

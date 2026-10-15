@@ -11,6 +11,7 @@ from typing import Protocol
 from civiccast.captions.tap import AudioTapPlan
 from civiccast.egress.branding import EgressBrandingPlan
 from civiccast.egress.caption_embed import EgressCaptionEmbeddingPlan
+from civiccast.egress.gst.graph import GraphicsOverlayLayer
 from civiccast.egress.models import EgressConfig, EgressSourcePlan
 from civiccast.egress.runtime import (
     FfmpegStarter,
@@ -37,6 +38,7 @@ class EncoderStartRequest:
     # S15 §5 CG-lite: pre-rendered board raster composited over the output half
     # by the GStreamer engine (gdkpixbufoverlay). None = no board overlay.
     cg_overlay_image: Path | None = None
+    board_live_video_layers: tuple[GraphicsOverlayLayer, ...] = ()
     # B3 fix: forwarded to ``GstPlayoutEngine.reload_program`` (via the encoder
     # strategy's ``reload_content``) for a content-reload only.
     # ``EgressDaemon._try_content_reload`` sets this True for an automation-driven

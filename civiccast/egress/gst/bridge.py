@@ -821,6 +821,7 @@ def graph_from_config(
         program_segments = program_segments[:MAX_PLAYLIST_SUBCHAINS]
     program = PlaylistLeg(
         label="program",
+        subchain_kinds=tuple(segment.kind for segment in program_segments),
         output_gain_db=(
             program_segments[0].board_audio_gain_db
             if program_segments

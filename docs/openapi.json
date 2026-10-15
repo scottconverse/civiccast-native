@@ -39044,7 +39044,8 @@
               "schedule",
               "emergency",
               "image",
-              "clock"
+              "clock",
+              "live_video"
             ],
             "title": "Content Source"
           },
@@ -39101,6 +39102,18 @@
               }
             ],
             "title": "Image Asset Ref"
+          },
+          "live_source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Source Id"
           },
           "allowed_tags": {
             "items": {
@@ -66614,7 +66627,8 @@
               "schedule",
               "emergency",
               "image",
-              "clock"
+              "clock",
+              "live_video"
             ],
             "title": "Content Source"
           },
@@ -66671,6 +66685,18 @@
               }
             ],
             "title": "Image Asset Ref"
+          },
+          "live_source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Source Id"
           },
           "allowed_tags": {
             "items": {
@@ -66740,7 +66766,8 @@
                   "schedule",
                   "emergency",
                   "image",
-                  "clock"
+                  "clock",
+                  "live_video"
                 ]
               },
               {
@@ -66808,6 +66835,18 @@
               }
             ],
             "title": "Image Asset Ref"
+          },
+          "live_source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Source Id"
           },
           "allowed_tags": {
             "anyOf": [

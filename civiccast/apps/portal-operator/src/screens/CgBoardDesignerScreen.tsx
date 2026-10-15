@@ -13,6 +13,7 @@ import {
   getCgBoardAudio,
   getStaffIdentity,
   listCgBoardAudit,
+  listLiveSources,
   listStaffAssets,
   previewCgBoard,
   setCgBoardAudio,
@@ -28,6 +29,7 @@ import type {
   CgFeedSource,
   CgZoneConfig,
   FeedInput,
+  LiveSourceResponse,
   ResolvedBoard,
   ZoneInput,
 } from '../types/api.generated'
@@ -211,11 +213,13 @@ export function BoardCreateForm({
 
 export function ZoneForm({
   feeds,
+  liveSources = [],
   submitting,
   onSubmit,
   initial,
 }: {
   feeds: CgFeedSource[]
+  liveSources?: Pick<LiveSourceResponse, 'live_source_id' | 'channel_id' | 'name' | 'source_type'>[]
   submitting: boolean
   onSubmit: (payload: ZoneInput) => void
   initial?: CgZoneConfig
@@ -226,13 +230,15 @@ export function ZoneForm({
     initial?.content_source ?? 'manual',
   )
   const [feedSourceId, setFeedSourceId] = useState<string>(initial?.feed_source_id ?? '')
+  const [liveSourceId, setLiveSourceId] = useState<string>(initial?.live_source_id ?? '')
   const [manualText, setManualText] = useState<string>(initial?.manual_text ?? '')
   const [approvalRequired, setApprovalRequired] = useState<boolean>(initial?.approval_required ?? false)
   const [allowedTags, setAllowedTags] = useState<string>(formatTags(initial?.allowed_tags))
 
   const needsFeed = zoneNeedsFeed(contentSource)
   const feedMissing = needsFeed && !feedSourceId
-  const disabled = submitting || feedMissing
+  const liveSourceMissing = contentSource === 'live_video' && !liveSourceId
+  const disabled = submitting || feedMissing || liveSourceMissing
 
   return (
     <div className="grid gap-2 rounded-md p-3" style={insetStyle}>
@@ -269,20 +275,16 @@ export function ZoneForm({
             ))}
           </select>
         </label>
-        <div
-          className="grid gap-2 rounded-md p-3 text-xs sm:col-span-2"
-          style={insetStyle}
-          aria-label="Future CG options"
-        >
-          <div>
-            <div className="font-semibold">Live video in a zone — coming in a future release</div>
-            <p className="m-0 mt-1" style={{ color: 'var(--cc-ink-3)' }}>
-              A future release will let a board region show a live camera or program source. The
-              current CG renderer continues to support its existing text, schedule, feed, image,
-              logo, ticker, and alert zones.
-            </p>
-          </div>
-        </div>
+        {contentSource === 'live_video' && (
+          <label className="grid gap-1 text-xs sm:col-span-2">
+            <span>Live video in a zone</span>
+            <select aria-label="Live video source" value={liveSourceId} onChange={(event) => setLiveSourceId(event.target.value)} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+              <option value="">Select a configured live source…</option>
+              {liveSourceId && !liveSources.some((source) => source.live_source_id === liveSourceId) && <option value={liveSourceId}>Unavailable source: {liveSourceId}</option>}
+              {liveSources.map((source) => <option key={source.live_source_id} value={source.live_source_id}>{source.name}</option>)}
+            </select>
+          </label>
+        )}
         {needsFeed && (
           <label className="grid gap-1 text-xs">
             <span style={{ color: 'var(--cc-ink-3)' }}>Feed source</span>
@@ -324,6 +326,7 @@ export function ZoneForm({
           A feed-sourced zone must name a feed.
         </span>
       )}
+      {liveSourceMissing && <span className="text-xs" style={{ color: 'var(--cc-err)' }}>Select a live source for this zone.</span>}
       <div>
         <PrimaryButton
           label={submitting ? 'Saving…' : initial ? 'Save changes' : 'Add zone'}
@@ -334,6 +337,7 @@ export function ZoneForm({
               zone_kind: zoneKind,
               content_source: contentSource,
               feed_source_id: needsFeed ? feedSourceId : null,
+              live_source_id: contentSource === 'live_video' ? liveSourceId : null,
               approval_required: approvalRequired,
               manual_text: contentSource === 'manual' ? manualText.trim() || null : null,
               allowed_tags: parseTags(allowedTags),
@@ -523,6 +527,7 @@ export function CgBoardDesignerScreen() {
   const board = boardQuery.data ?? null
   const audioQuery = useQuery({ queryKey: ['cg-board-audio', channelId], queryFn: () => getCgBoardAudio(channelId), enabled: canRead && board != null, retry: false })
   const assetsQuery = useQuery({ queryKey: ['staff-assets'], queryFn: listStaffAssets, enabled: canWrite && board != null, retry: false })
+  const liveSourcesQuery = useQuery({ queryKey: ['live-sources'], queryFn: listLiveSources, enabled: canRead && board != null, retry: false })
   const previewQuery = useNoneOn404<ResolvedBoard | null>(['cg-board-preview', channelId], () => previewCgBoard(channelId), canRead && board != null)
   const auditQuery = useQuery({
     queryKey: ['cg-board-audit', channelId],
@@ -558,6 +563,9 @@ export function CgBoardDesignerScreen() {
 
   const channels = appConfigQuery.data?.channels ?? []
   const feeds = board?.feeds ?? []
+  const liveSources = (liveSourcesQuery.data ?? []).filter(
+    (source) => source.channel_id === channelId && source.source_type !== 'ndi',
+  )
   const zones = board?.zones ?? []
   const busy =
     createBoard.isPending || updateBoard.isPending || addZone.isPending || updateZone.isPending ||
@@ -699,7 +707,12 @@ export function CgBoardDesignerScreen() {
                 </div>
                 {showAddZone && canWrite && (
                   <div className="mt-3">
-                    <ZoneForm feeds={feeds} submitting={addZone.isPending} onSubmit={(p) => addZone.mutate(p)} />
+                    <ZoneForm feeds={feeds} liveSources={liveSources} submitting={addZone.isPending} onSubmit={(p) => addZone.mutate(p)} />
+                  </div>
+                )}
+                {liveSourcesQuery.isError && (
+                  <div role="alert" className="mt-2 text-xs" style={{ color: 'var(--cc-err)' }}>
+                    {apiMessage(liveSourcesQuery.error, 'Could not load configured live video sources.')}
                   </div>
                 )}
                 <div className="mt-3 grid gap-2">
@@ -719,7 +732,7 @@ export function CgBoardDesignerScreen() {
                       </div>
                       {editingZoneId === zone.zone_id && canWrite && (
                         <div className="mt-2">
-                          <ZoneForm feeds={feeds} submitting={updateZone.isPending} initial={zone} onSubmit={(p) => updateZone.mutate({ id: zone.zone_id, p })} />
+                          <ZoneForm feeds={feeds} liveSources={liveSources} submitting={updateZone.isPending} initial={zone} onSubmit={(p) => updateZone.mutate({ id: zone.zone_id, p })} />
                         </div>
                       )}
                     </div>
