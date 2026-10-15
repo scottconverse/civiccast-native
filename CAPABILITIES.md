@@ -6,11 +6,11 @@ encrypted station backup and restore, staff and network administration,
 local-time scheduling, bounded operational storage, automatic output recovery,
 RTMP output, coordinated HLS retention, and configurable recorded captions.
 
-The owner is preparing `v1.0.0-beta.16` as an unpublished candidate from this
-source. The current public package remains signed `v1.0.0-beta.15`; the
-[candidate verification record](docs/releases/v1.0.0-beta.16-verification.md)
+The owner is preparing `v1.0.0-beta.17` as an unpublished candidate from this
+source. The current public package remains signed `v1.0.0-beta.16`; the
+[Beta 16 verification record](docs/releases/v1.0.0-beta.16-verification.md)
 tracks its package status. The source additions described here are not claims
-about the Beta 15 installer.
+about the Beta 16 installer.
 
 This matrix distinguishes implemented components, wired workflows, and
 evidence states. Its entries cover different development and release dates. A

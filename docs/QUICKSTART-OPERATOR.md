@@ -1,12 +1,12 @@
-# CivicCast Beta 16 Candidate - Field-Test Quick Start
+# CivicCast Beta 17 Candidate - Field-Test Quick Start
 
-Beta 16 brings station-operation, station-local scheduling, broadcast-output,
-and recorded-caption changes to the native Windows station. This quick start
+Beta 17 adds subscriber delivery, Podcast publication, SMTP paywall links, and
+underwriting daypart selection to the native Windows station. This quick start
 covers the candidate kit, first setup, recovery, and closed field testing.
-Beta 16 is unpublished. The [candidate verification record](releases/v1.0.0-beta.16-verification.md)
+Beta 17 is unpublished. The [candidate verification record](releases/v1.0.0-beta.17-verification.md)
 tracks its current build and test state; use this guide only after the active
-owner-authorized handoff names the exact candidate artifacts. Beta 15 remains
-the latest published download; its [verification record](releases/v1.0.0-beta.15-verification.md)
+owner-authorized handoff names the exact candidate artifacts. Beta 16 remains
+the latest published download; its [verification record](releases/v1.0.0-beta.16-verification.md)
 applies only to that signed package.
 
 ## Before you begin
@@ -33,7 +33,7 @@ applies only to that signed package.
    `-Install`. It stages runtime packs under `packs\`, verifies and extracts
    the station bundle into `station\`, then runs `setup.exe /S`. Keep the
    verified files together; do not substitute a source ZIP, older release or
-   generic latest download. The Beta 16 candidate verification record and
+   generic latest download. The Beta 17 candidate verification record and
    handoff identify the exact source, package, and checks to use.
 2. If Windows shows **Windows protected your PC**, choose **More info** and
    confirm the publisher is Scott Converse before continuing. If the publisher,
@@ -64,20 +64,21 @@ applies only to that signed package.
 4. Confirm **System Health** is green. This is an installation check, not yet a
    beta release or production-readiness claim.
 
-## Beta 16 candidate features to exercise
+## Beta 17 candidate features to exercise
 
 Use the current manual and candidate handoff for the exact screen names and
 steps. Keep these checks on the assigned test station:
 
 - Confirm the supervisor runs as `NT SERVICE\CivicCastSupervisor` and that
   the handoff's installed-runtime checks pass.
-- Configure a scheduled backup, complete a backup, and rehearse restore on the
-  disposable test station. Record what the backup includes and excludes.
-- Exercise station-local scheduling and the configured broadcast output with
-  a short test source; keep external/public delivery off unless the handoff
-  explicitly assigns a controlled proof.
-- Test the recorded-caption setting with a sample recording. Record whether
-  caption work is queued or paused under the selected setting.
+- Publish a packaged local recording to Portal, then select or retry Podcast.
+  Open its RSS feed and play the MP3 enclosure.
+- Confirm a resident subscription and publish a recording. Check the Publish
+  card's delivered, queued and failed counts, then retry an eligible failure.
+- Request a paywall magic link through configured mail and follow it from the
+  resident portal; check that an unavailable mail provider reports failure.
+- In Underwriting, select a saved daypart for a flight and verify the selected
+  schedule window is shown to the operator.
 
 ## Field-test boundary
 
@@ -111,10 +112,9 @@ asset to be packaged and explicitly published.
 
 ## Candidate and published-package evidence
 
-The [Beta 16 candidate verification record](releases/v1.0.0-beta.16-verification.md)
-tracks the exact source, candidate build, and required fresh-install, upgrade,
-uninstall, service-identity, and runtime checks. Use it for the current status;
-do not infer a Beta 16 package result from the Beta 15 record.
+The [Beta 17 candidate verification record](releases/v1.0.0-beta.17-verification.md)
+tracks the exact source and any candidate package checks. Use it for the current
+status; do not infer a Beta 17 package result from the Beta 16 record.
 
 The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
 records one fresh offline Sandbox installation and scoped package checks for

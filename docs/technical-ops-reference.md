@@ -1220,7 +1220,7 @@ version from the station you are monitoring.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.16","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.17","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the
@@ -1337,7 +1337,7 @@ This reference is maintained in `docs/technical-ops-reference.md`. The user-faci
 
 ## Published package evidence and historical release identity
 
-This working-tree reference follows `CivicCast 1.0.0-beta.16`, an unpublished
+This working-tree reference follows `CivicCast 1.0.0-beta.17`, an unpublished
 candidate. Beta 15 remains the latest published package until a later candidate
 is authorized and published. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
 identifies the original signed candidate and the limits of its package

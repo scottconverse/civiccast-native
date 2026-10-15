@@ -117,14 +117,14 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # retention terms and 0088 seeds live-caption health alert rules. 0089 adds
     # persisted, explicitly unverified remote-guest media-control requests.
     # 0090 indexes consumed egress commands for bounded history pruning.
-    assert expected_migration_head() == "0091_programlog_local_anchor"
+    assert expected_migration_head() == "0092_notification_delivery_outcomes"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0091_programlog_local_anchor"
+        assert expected_migration_head() == "0092_notification_delivery_outcomes"
     finally:
         expected_migration_head.cache_clear()
 
@@ -139,7 +139,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0091_programlog_local_anchor",),
+            ("0092_notification_delivery_outcomes",),
         )
         conn.commit()
 
@@ -152,8 +152,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0091_programlog_local_anchor",
-        expected_head="0091_programlog_local_anchor",
+        db_revision="0092_notification_delivery_outcomes",
+        expected_head="0092_notification_delivery_outcomes",
     )
 
 

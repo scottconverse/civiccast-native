@@ -3,6 +3,16 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
+## Beta 17 source candidate
+
+The unpublished candidate adds four completed Sprint 5 workflows: subscriber
+publication notices with delivery outcomes and retries; Podcast MP3 episodes,
+enclosures and RSS; SMTP paywall magic-link delivery; and selection of saved
+underwriting dayparts. The [candidate record](releases/v1.0.0-beta.17-verification.md)
+will identify the signed package and its checks when available. Remote-guest
+composition, bulletin-board media, station-import UI and native viewer
+completion remain open work outside this candidate.
+
 ## Beta 16 release
 
 The [published Beta 16 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16) adds:

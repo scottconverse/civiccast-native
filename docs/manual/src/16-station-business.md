@@ -51,7 +51,7 @@ Under the panels, the page shows:
 - A **view** is one time someone starts playing a recording. The same person watching twice counts twice. The PDF report says this itself: "Viewer Count is a play count, not unique humans."
 - The numbers cover **streaming only**: the resident website and apps. They do not include people watching on cable.
 - Live "concurrent" numbers (how many people watch at the same moment) are estimates.
-- **Podcast downloads** is expected to show 0. The Publish screen describes podcasts as coming in a future release.
+- **Podcast downloads** counts analytics events named `podcast_download`. Publishing an episode now creates playable audio and an RSS enclosure; the audio route does not itself emit that analytics event, so this tile can remain at 0 while downloads occur.
 
 ### What is collected, and what is not
 

@@ -65,5 +65,5 @@ The field report describes one in-place Beta 12-to-Beta 15 upgrade on
 MICROMONSTERPC. It records these package-specific observations and their
 measurement limits; it does not identify all causes, and it is not Beta 16
 candidate verification. The [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md)
-and [Beta 16 candidate verification record](../releases/v1.0.0-beta.16-verification.md)
+and [Beta 16 package verification record](../releases/v1.0.0-beta.16-verification.md)
 remain the package-specific sources for those releases.

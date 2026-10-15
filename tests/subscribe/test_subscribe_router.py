@@ -38,7 +38,11 @@ def store() -> InMemorySubscribeStore:
 
 
 @pytest.fixture
-def client(store: InMemorySubscribeStore) -> Iterator[TestClient]:
+def client(store: InMemorySubscribeStore, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
+    monkeypatch.setenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
+    monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://records.example-city.gov")
     app = create_app()
     app.dependency_overrides[get_subscribe_store] = lambda: store
     with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as c:
@@ -98,9 +102,8 @@ def test_rss_endpoint_serves_an_honest_empty_feed_with_no_invented_items(
     """This route used to serve a single fabricated "Example CivicCast
     recording" <item> with a https://portal.example/watch/... link on every
     request -- indistinguishable from a real published recording to any
-    reader or aggregator. There is no published-recording resolver wired to
-    this route yet, so it must serve an honest, valid, empty feed instead of
-    inventing one."""
+    reader or aggregator. With no published records in this fixture, it must
+    serve an honest, valid, empty feed instead of inventing one."""
     response = client.get("/api/public/subscribe/rss/channel/government.xml")
     body = response.text
 
@@ -133,7 +136,7 @@ def test_rss_feed_link_uses_the_configured_real_public_base_url(
     response = client.get("/api/public/subscribe/rss/channel/government.xml")
 
     assert response.status_code == 200
-    assert "<link>https://watch.example-station.org/channel/government</link>" in response.text
+    assert "<link>https://watch.example-station.org/</link>" in response.text
     assert "portal.example" not in response.text
 
 

@@ -10,13 +10,13 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-## Beta 16 candidate
+## Beta 17 candidate
 
-Sprints 1–4 are merged: station backup and staff access, unattended scheduling,
-broadcast outputs and recorded captions, and documentation reconciliation.
-Beta 16 packages these changes together. Candidate preparation and installation
-results are tracked in the [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md).
-Publication requires owner authorization; Beta 15 remains the published download.
+Beta 16 is the current published package, with its installation results in the
+[Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md). The unpublished
+Beta 17 source candidate adds subscriber delivery, Podcast publication, SMTP
+paywall links, and underwriting daypart selection. Its package checks belong to
+the [Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md).
 
 The R9 field findings are assigned to [Beta 17](docs/ops/beta17-deferred.md).
 

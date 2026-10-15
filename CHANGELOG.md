@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+Candidate `v1.0.0-beta.17` contains the completed Sprint 5 publication and
+underwriting changes below. Remote-guest composition, bulletin-board media,
+station import UI, and native viewer completion remain separate open work.
+
 - The optional Podcast surface converts a local recording to MP3, stores an
   episode in the channel RSS feed, serves its audio enclosure, and reports
   failures for operator retry. Feed and audio access follow playback policy.

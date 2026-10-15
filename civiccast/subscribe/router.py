@@ -209,7 +209,7 @@ def _unsubscribe(
 # which faced the same problem (a public link built from an env value or a
 # request Host header must never be allowed to point somewhere the operator
 # didn't configure).
-_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]", "testserver"})
 
 
 def _resolve_public_base_url(request: Request) -> str:
@@ -286,9 +286,7 @@ def unsubscribe_one_click(
 
 
 # Hosts a request can legitimately arrive on for a station serving itself.
-# "0.0.0.0" is a bind address, not a Host a browser sends, so it is not here --
-# S104 flags it and it would be meaningless in a link anyway.
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
+# "0.0.0.0" is a bind address, not a Host a browser sends, so it is not here.
 
 
 def _trusted_hosts() -> frozenset[str]:

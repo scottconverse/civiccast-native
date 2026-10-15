@@ -634,7 +634,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ## Package status
 
-These instructions describe the merged Beta 16 source. Use the release page and the Help and verification record that match the package on the station. The [Beta 16 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package-specific checks.
+These instructions describe the Beta 17 candidate source. Use the release page and the Help and verification record that match the package on the station. The [Beta 17 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its package-specific checks.
 
 ## Related
 
