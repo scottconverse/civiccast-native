@@ -56,7 +56,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This edition documents the unpublished Beta 19 candidate: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; Beta 19 installation claims require its own candidate record.
+This Beta 19 edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; Use the Beta 19 verification record for claims about its installed package.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 
@@ -196,7 +196,7 @@ These are the words used most in Part I. Each is explained again where it first 
 
 ### Source edition and release evidence
 
-This manual describes the Beta 19 candidate source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Keep each historical result with its named release.
+This manual describes the Beta 19 source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Keep each historical result with its named release.
 
 **Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 16 measurement. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
@@ -1567,7 +1567,7 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Package note:** Board audio and live-video zones are part of the Beta 19 candidate, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
+> **Package note:** Board audio and live-video zones are part of the Beta 19, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
 
 ### Bring in remote guests (Remote Contribution)
 
@@ -2157,7 +2157,7 @@ Some stations may want some recordings behind a paid subscription. The **Paywall
 
 The screen has three cards: **Config** (the **Enable paywall** box, a provider, a signing secret), **Tiers** (plans that map to prices you create yourself in Stripe, a payment company) and **Comp access grants** (free passes you give to an email address).
 
-> **Beta 19 candidate status:** Treat the Paywall as a test-only screen, not protected paid access. In the current code:
+> **Beta 19 status:** Treat the Paywall as a test-only screen, not protected paid access. In the current code:
 >
 > - Turning it on does not select particular recordings. The Watch page asks every resident for a pass on every recording.
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
@@ -2166,7 +2166,7 @@ The screen has three cards: **Config** (the **Enable paywall** box, a provider, 
 > - An ordinary save with the **Signing secret** box left blank preserves the stored secret. To remove it, use the explicit clear control. The secret is hidden when the page reloads.
 > - The list of comp grants shows only grants made in the current browser session, and does not provide a history of grants from earlier sessions.
 
-The Beta 19 candidate sends the sign-in link through a configured mail provider and reports delivery failure when mail is unavailable. The published Beta 18 package predates this change; purchase routes and protected video delivery remain separate work.
+The Beta 19 sends the sign-in link through a configured mail provider and reports delivery failure when mail is unavailable. The published Beta 18 package predates this change; purchase routes and protected video delivery remain separate work.
 
 If you turn the paywall on for testing, the Watch page shows the gate described in the resident tour below. Residents will be blocked.
 
@@ -2254,9 +2254,9 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 Only if a setup administrator has turned the paywall on. The video is replaced by a gate. While it checks, a small label says "Checking access…". The gate shows "Subscription required", a reason line, a **Sign in by email** form with **Email me a sign-in link**, a "New here?" block with a plan list and **Subscribe**, and "Already signed in as {email}? Switch email".
 
-In the Beta 19 candidate, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
+In the Beta 19, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
 
-The Beta 19 candidate sends the link through a configured mail provider and shows an error if delivery fails. The published Beta 18 package predates this change.
+The Beta 19 sends the link through a configured mail provider and shows an error if delivery fails. The published Beta 18 package predates this change.
 
 #### Subscribing to new recordings
 
@@ -2596,7 +2596,7 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-> **Beta 19 candidate status:** The magic-link button sends through a configured mail provider and reports delivery failure. Paid access remains incomplete: the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
+> **Beta 19 status:** The magic-link button sends through a configured mail provider and reports delivery failure. Paid access remains incomplete: the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 
@@ -3193,7 +3193,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-This manual describes the Beta 19 source candidate. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for published packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's results.
+This manual describes the Beta 19 edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for published packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's results.
 
 The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -3684,7 +3684,7 @@ Because the database password is deleted from the registry, the surviving databa
 
 ### Package status and verification
 
-This chapter describes the Beta 19 source candidate. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package's checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
+This chapter describes the Beta 19 edition. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package's checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
 
 ### Related
 
@@ -4118,7 +4118,7 @@ Custom Fields (Setup group; `setup_admin`) are your own labels for programs, suc
 
 The paywall (Setup group; `setup_admin`) is optional paid access to recordings through Stripe-hosted checkout, plus free "comp" passes. It is **off** by default; when off, every asset is public.
 
-> **Beta 19 candidate status:** Do not rely on the paywall for paid access. A configured mail provider sends magic links and reports delivery failure, but the public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching server routes, and the public VOD media route does not enforce grants. The access check trusts the email address passed to it; the code does not prove the caller owns it.
+> **Beta 19 status:** Do not rely on the paywall for paid access. A configured mail provider sends magic links and reports delivery failure, but the public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching server routes, and the public VOD media route does not enforce grants. The access check trusts the email address passed to it; the code does not prove the caller owns it.
 
 > **Signing secret:** The server never returns the saved value, so the field stays blank after you open or reload this page. If a secret is saved, leave the field blank to keep it during an ordinary **Save**. To replace it, enter a new secret of at least 32 characters or generate one. Confirm the exact value currently in the field, then **Save**; editing the value clears confirmation, so confirm again. **Cancel** discards the pending replacement. To remove the saved secret, choose **Clear saved secret**, confirm, then **Save**. Clearing stops magic-link signing and Stripe webhook verification until you save a new one.
 
@@ -4335,7 +4335,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ### Package status
 
-These instructions describe the Beta 19 source candidate. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
+These instructions describe the Beta 19 edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
 
 ### Related
 
@@ -4733,7 +4733,7 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ### Package status and verification
 
-This chapter describes the Beta 19 source candidate. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
+This chapter describes the Beta 19 edition. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ### Related
 
@@ -5032,7 +5032,7 @@ The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-
 
 ### Package status and verification
 
-This chapter describes the Beta 19 source candidate. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+This chapter describes the Beta 19 edition. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 #### Report a security problem
 
@@ -5460,7 +5460,7 @@ If nothing here matches, do the following in order. First, run `curl.exe http://
 
 ### Package status and verification
 
-This chapter describes the Beta 19 source candidate. For package-specific results, use the record matching the installed version. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
+This chapter describes the Beta 19 edition. For package-specific results, use the record matching the installed version. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
 
 ### Related
 
@@ -5735,7 +5735,7 @@ The **Alerts** screen can hold destinations of three kinds: email, text message 
 
 `POST /api/webhooks/stripe` accepts a payment provider's notification. It requires a `Stripe-Signature` header, rejects a body over 1 MiB, and answers 401 for a bad signature. It is not reachable from the internet unless you build a path to it.
 
-> **Beta 19 candidate status:** A configured mail provider sends sign-in links and reports delivery failures. The public portal still asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
+> **Beta 19 status:** A configured mail provider sends sign-in links and reports delivery failures. The public portal still asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
 
 ### Station import from Cablecast {#station-import-cablecast}
 
@@ -5874,7 +5874,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ### Package status and verification
 
-This chapter describes the Beta 19 source candidate. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the Beta 19 edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
 
 ### Related
 
@@ -6364,7 +6364,7 @@ This is about how the files you download came to exist, and what checks stand be
 - **A software bill of materials** and a licence list are generated for the runtime and the application payload. The build refuses to produce them if any file has an unknown licence, and it rejects GPL-licensed GStreamer components.
 - **Gate A** is one Windows Sandbox acceptance protocol. The current publisher also accepts physical-host verification receipts through a separate path; it then creates a draft release, checks the asset names and sizes, publishes it and records the result.
 
-**Package and runtime evidence.** Use the release verification record matching the package for its installation checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; Beta 19 candidate checks require a separate record. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement.
+**Package and runtime evidence.** Use the release verification record matching the package for its installation checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; Use the Beta 19 verification record for its package checks. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement.
 
 ### Two example stations {#arch-topology}
 
@@ -9152,7 +9152,7 @@ Checklist:
 
 ## Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; the Beta 19 source candidate needs its own package record. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; the Beta 19 edition needs its own package record. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ### Historical Beta 11: three channels, 72 hours, 99.78% live caption-input coverage
 
@@ -9214,7 +9214,7 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ### H.6 How to use this evidence
 
-Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the Beta 19 candidate, use the current operating chapters and its own package record when available; keep each measured result associated with its recorded source and run.
+Read sections H.1 through H.5 as historical evidence for their named builds and runs. For Beta 19, use the current operating chapters and its matching package record; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->
 
@@ -9879,11 +9879,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the unpublished Beta 19 source candidate. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) applies to that earlier signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual covers the Beta 19 edition. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) applies to that earlier signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **Beta 19 source candidate** | — | Unpublished; package checks to be recorded against its exact candidate | Completes Sprint 5 remote-guest output, bulletin-board video/audio and native viewer source apps. |
+| **v1.0.0-beta.19** | — | Edition covered by this manual; see its matching package record | Completes Sprint 5 remote-guest output, bulletin-board video/audio and native viewer source apps. |
 | **v1.0.0-beta.18** | 2026-10-15 | Published package; historical record | Guided Cablecast station import; see its verification record. |
 | **v1.0.0-beta.15** | — | Published package; historical record | Package observations and limits are in the Beta 15 verification record; no extended soak or normal cross-version upgrade is claimed. |
 | **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |

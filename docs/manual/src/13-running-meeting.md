@@ -429,7 +429,7 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Package note:** Board audio and live-video zones are part of the Beta 19 candidate, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
+> **Package note:** Board audio and live-video zones are part of the Beta 19, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
 
 ## Bring in remote guests (Remote Contribution)
 

@@ -130,7 +130,7 @@ Some stations may want some recordings behind a paid subscription. The **Paywall
 
 The screen has three cards: **Config** (the **Enable paywall** box, a provider, a signing secret), **Tiers** (plans that map to prices you create yourself in Stripe, a payment company) and **Comp access grants** (free passes you give to an email address).
 
-> **Beta 19 candidate status:** Treat the Paywall as a test-only screen, not protected paid access. In the current code:
+> **Beta 19 status:** Treat the Paywall as a test-only screen, not protected paid access. In the current code:
 >
 > - Turning it on does not select particular recordings. The Watch page asks every resident for a pass on every recording.
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
@@ -225,7 +225,7 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 Only if a setup administrator has turned the paywall on. The video is replaced by a gate. While it checks, a small label says "Checking access…". The gate shows "Subscription required", a reason line, a **Sign in by email** form with **Email me a sign-in link**, a "New here?" block with a plan list and **Subscribe**, and "Already signed in as {email}? Switch email".
 
-In the Beta 19 candidate, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
+In the Beta 19, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
 
 ### Subscribing to new recordings
 
