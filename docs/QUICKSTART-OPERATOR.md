@@ -1,11 +1,12 @@
-# CivicCast Beta 17 - Field-Test Quick Start
+# CivicCast Beta 18 - Field-Test Quick Start
 
-Beta 17 adds subscriber delivery, Podcast publication, and
-underwriting daypart selection to the native Windows station. This quick start
+Beta 18 adds guided Cablecast station import to the native Windows station,
+building on Beta 17's subscriber delivery, Podcast publication, and
+underwriting daypart selection. This quick start
 covers the published kit, first setup, recovery, and closed field testing.
-The [Beta 17 verification record](releases/v1.0.0-beta.17-verification.md)
+The [Beta 18 verification record](releases/v1.0.0-beta.18-verification.md)
 identifies its signed build and scoped checks. Use the complete kit from the
-[Beta 17 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17).
+[Beta 18 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18).
 
 ## Before you begin
 
@@ -31,7 +32,7 @@ identifies its signed build and scoped checks. Use the complete kit from the
    `-Install`. It stages runtime packs under `packs\`, verifies and extracts
    the station bundle into `station\`, then runs `setup.exe /S`. Keep the
    verified files together; do not substitute a source ZIP, older release or
-   generic latest download. The Beta 17 candidate verification record and
+   generic latest download. The Beta 18 candidate verification record and
    handoff identify the exact source, package, and checks to use.
 2. If Windows shows **Windows protected your PC**, choose **More info** and
    confirm the publisher is Scott Converse before continuing. If the publisher,
@@ -62,7 +63,7 @@ identifies its signed build and scoped checks. Use the complete kit from the
 4. Confirm **System Health** is green. This is an installation check, not yet a
    beta release or production-readiness claim.
 
-## Beta 17 candidate features to exercise
+## Beta 18 features to exercise
 
 Use the current manual and candidate handoff for the exact screen names and
 steps. Keep these checks on the assigned test station:
@@ -75,6 +76,9 @@ steps. Keep these checks on the assigned test station:
   card's delivered, queued and failed counts, then retry an eligible failure.
 - In Underwriting, select a saved daypart for a flight and verify the selected
   schedule window is shown to the operator.
+- As a Setup admin on a disposable station, open **Import station**, preview a
+  Cablecast source, review conflicts, then apply and inspect the batch result.
+  Confirm rollback removes only that batch's imported rows.
 
 ## Field-test boundary
 
@@ -108,9 +112,9 @@ asset to be packaged and explicitly published.
 
 ## Candidate and published-package evidence
 
-The [Beta 17 candidate verification record](releases/v1.0.0-beta.17-verification.md)
+The [Beta 18 verification record](releases/v1.0.0-beta.18-verification.md)
 tracks the exact source and any candidate package checks. Use it for the current
-status; do not infer a Beta 17 package result from the Beta 16 record.
+status; do not infer a Beta 18 package result from the Beta 16 record.
 
 The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
 records one fresh offline Sandbox installation and scoped package checks for

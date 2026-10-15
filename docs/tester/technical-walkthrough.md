@@ -1,11 +1,12 @@
-# Beta 17 Technical Tester Walkthrough
+# Beta 18 Technical Tester Walkthrough
 
-Beta 17 adds subscriber delivery, Podcast publication, and
-underwriting daypart selection to CivicCast for native Windows. This walkthrough
+Beta 18 adds guided Cablecast station import to CivicCast for native Windows,
+building on Beta 17's subscriber delivery, Podcast publication, and
+underwriting daypart selection. This walkthrough
 covers package acquisition, installation, the release feature paths, upgrade,
 and uninstall.
 
-Beta 17 is published. The [package verification record](../releases/v1.0.0-beta.17-verification.md)
+Beta 18 is published. The [package verification record](../releases/v1.0.0-beta.18-verification.md)
 identifies the signed kit and its scoped checks.
 
 For the broader station acceptance path, use the
@@ -14,7 +15,7 @@ when the handoff assigns it.
 
 ## Package acquisition
 
-1. Acquire the complete kit from the [Beta 17 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17).
+1. Acquire the complete kit from the [Beta 18 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18).
 2. If the handoff names `download_windows_release_artifacts.ps1`, pass its
    exact `-Tag` and `-Version` values with the requested asset options. Do not
    rely on a generic latest download or mix packages from different builds.
@@ -42,10 +43,15 @@ when the handoff assigns it.
    path. Record the station-data outcome and any recovery artifacts. Do not use
    a production station.
 
-## Beta 17 feature path
+## Beta 18 feature path
 
 Use a disposable station, short test media, and the current manual for exact
 screen names and settings.
+
+Before testing the publishing workflows below, use a Setup-admin account to
+open **Import station**. Preview a Cablecast source, review proposed shows and
+schedule rows plus conflicts and skips, apply a small batch, and confirm its
+result and rollback in **Import history**. This imports metadata only.
 
 1. Publish a packaged local recording to Portal, then use Podcast and verify
    its channel RSS entry, audio enclosure, and retryable failure status.

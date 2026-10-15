@@ -38,6 +38,14 @@ VENDOR_ALLOWLIST = frozenset(
         # select the correct adapter. These are factual integration references;
         # HIGH_RISK_PATTERNS still apply to every allowlisted file.
         "CHANGELOG.md",
+        "README.md",
+        "docs/index.html",
+        "docs/QUICKSTART-OPERATOR.md",
+        "docs/ROADMAP.md",
+        "docs/tester/START-HERE.md",
+        "docs/tester/technical-walkthrough.md",
+        "docs/manual/src/00-front.md",
+        "docs/manual/src/40-appendices.md",
         "civiccast/apps/portal-operator/src/api/stationImport.ts",
         "civiccast/apps/portal-operator/src/screens/StationImportScreen.tsx",
         "civiccast/apps/portal-operator/src/screens/StationImportScreen.test.tsx",

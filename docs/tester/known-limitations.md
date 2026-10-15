@@ -1,12 +1,12 @@
 # Known Limitations For Early-Adopter Builds
 
 > **Historical Beta 10 limitation record.** This page records evidence and
-> limits for Beta 10 only. Beta 17 is the latest published release. For Beta 17
+> limits for Beta 10 only. Beta 18 is the latest published release. For Beta 18
 > operating guidance, use the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> [tester start page](START-HERE.md), and [Beta 17 verification
-> record](../releases/v1.0.0-beta.17-verification.md). The Beta 10 results below
-> remain historical and do not establish Beta 17 behavior.
+> [tester start page](START-HERE.md), and [Beta 18 verification
+> record](../releases/v1.0.0-beta.18-verification.md). The Beta 10 results below
+> remain historical and do not establish Beta 18 behavior.
 
 ## Release State
 
