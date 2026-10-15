@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+`v1.0.0-beta.19` is an unpublished candidate. Its sign-in link delivery is
+described below; the current published download remains Beta 18.
+
 Remote-guest composition, bulletin-board media, native viewer completion,
 and protected paywall media remain separate open work.
 
