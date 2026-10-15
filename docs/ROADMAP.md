@@ -3,6 +3,10 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
+## Beta 18 release
+
+The [Beta 18 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18) adds the Setup-admin Cablecast station-import workflow: connect, preview proposed show and schedule metadata with conflicts and skips, explicitly apply, inspect the batch, and confirm rollback. The [package record](releases/v1.0.0-beta.18-verification.md) identifies the signed candidate and its checks. Remote-guest output, bulletin-board media, protected paywall access, and native viewer completion remain separate open work.
+
 ## Beta 17 release
 
 The [published Beta 17 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17) adds three completed Sprint 5 workflows: subscriber
@@ -41,8 +45,8 @@ is not a Beta 15 field result or Beta 16 package qualification.
 
 ## Roadmap ownership and evidence
 
-The owner sets implementation and release scope. The [Beta 17 verification
-record](releases/v1.0.0-beta.17-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
+The owner sets implementation and release scope. The [Beta 18 verification
+record](releases/v1.0.0-beta.18-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
 identity and installation observations. The [Beta 17 deferred
 backlog](ops/beta17-deferred.md) cites the separate Beta 15 R9 field report and
 describes what that host evaluation did and did not establish. No release date
