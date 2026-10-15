@@ -386,7 +386,7 @@ Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "
 | YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
 | Cable package | Optional; `not_configured` when unset. |
 | Podcast | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
-| Subscriber notifications | `coming_soon`; publishing sends nothing. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
+| Subscriber notifications | Optional, selected publish surface with delivery receipts and retries; requires confirmed subscribers and configured providers. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
 | ActivityPub | Off by default; when enabled, a note is delivered only after the portal surface succeeds. |
 
 **Provider setup note:** **Setup > Provider setup** saves fields to `provider-credentials.json`, while the Publish registry reads `CIVICCAST_PROVIDER_*` selectors and adapter credentials from the service environment. Saving that file alone does not enable real delivery. Keep public webhooks set to mock: the resident-supplied URL and identifier-derived secret make real webhook selection unsafe.

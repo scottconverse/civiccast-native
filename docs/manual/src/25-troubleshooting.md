@@ -219,7 +219,7 @@ Scheduled recording runs inside the station (`CIVICCAST_SCHEDULED_RECORDING`, `i
 
 ## Publishing problems
 
-The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. The podcast and subscriber targets are "future": nothing is mailed or posted on publish (the owner parked real sends on 2026-09-02).
+The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. Podcast publication remains unavailable. Subscriber notifications are optional and show delivery outcomes when selected.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
@@ -228,7 +228,7 @@ The Publish screen records "operator-dashboard" as the operator for every approv
 | A target shows a success message but nothing arrived at YouTube or the archive | Providers default to **mock**. Each of `CIVICCAST_PROVIDER_INTERNET_ARCHIVE`, `_LOCAL_NAS`, `_YOUTUBE`, `_MAIL` and `_WEBHOOK` is `mock` unless set to `real`. | Check the environment variables. | Set the variable to `real` and add the credentials listed in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations). |
 | A target you did not tick was reset on a second approval | Approving again rebuilds the whole run and resets unticked targets. | The Publish screen. | Tick every target in one approval. |
 | The cable file package row says "not set up (optional)" | `CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR` is not set. | The row. | Set it (see Chapter 15) and approve again. |
-| A mailing list or fediverse follower did not hear about a new recording | Automatic subscriber notifications are not connected to publishing, and federation is off by default. | Nothing is sent by design. | None automatically in beta.11. |
+| A subscriber did not receive a new-recording notice | The subscriber is not confirmed, the optional surface was not selected, or its provider is mock or failed. | Check the subscriber-notification row and its delivery list. | Confirm the subscription, configure the provider, then retry eligible deliveries. Federation is a separate feature and is off by default. |
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but the card's headline can still read "Archive verified" (HELP-02), and a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Before you rely on a publish target, send one test and look at the far end.
 

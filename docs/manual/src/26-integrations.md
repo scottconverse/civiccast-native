@@ -140,11 +140,11 @@ All of them default to `mock`. A mock provider does not send anything. The selec
 
 The real Internet Archive and local archive adapters use a resolved recording file when available. If it cannot resolve, the fallback is an asset/title payload rather than the full media. The local archive adapter writes a canonical copy and dated snapshot to a mounted filesystem path and checks the files by SHA-256 read-back; it does not run rsync or manage a ZFS target. YouTube VOD needs a local recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live creates and binds a YouTube broadcast/stream, but the Publish path does not connect CivicCast's live output to the returned ingest address.
 
-`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and the staff-only subscription dispatch-test route. `CIVICCAST_PROVIDER_WEBHOOK=real` can be exercised through that same dispatch-test route. Neither adapter is called by the Publish screen's subscriber-notifications row, which remains unavailable. Podcast publication is also unavailable: the normal screen excludes it, and a legacy API path can return placeholder URLs without saving an episode to the public feed.
+`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publication is unavailable: the normal screen excludes it, and a legacy API path can return placeholder URLs without saving an episode to the public feed.
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 
-> **Known issue (beta.11):** The Publish screen has targets for a podcast episode and for subscriber notifications, but real sends were parked by an owner decision on 2026-09-02. Nothing is mailed or posted when you publish. See [Publishing](#ch-publishing).
+> **Beta.11 history:** The Publish screen then listed subscriber notifications without sending them. Current source can send notices from the selected subscriber surface when its provider is configured. Podcast publication remains unavailable. See [Publishing](#ch-publishing).
 
 ## Cable file packages
 
@@ -249,7 +249,7 @@ Residents can sign up on the public portal with `POST /api/public/subscribe/emai
 
 When a subscriber webhook is delivered, the station sends a JSON body with `asset_id`, `title`, `portal_url`, `podcast_url`, `summary` and `published_at`, and two headers: `x-civiccast-signature: sha256=<hex>` (an HMAC-SHA256 of the body written with sorted keys and compact separators) and `x-civiccast-asset-id`. The timeout is `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` (default 30), with retries set by the `CIVICCAST_WEBHOOK_RETRY_*` variables.
 
-> **Known issue (beta.11):** Nothing is delivered automatically when a recording is published; only the staff test dispatch sends. Subscriber notifications are parked (see above).
+> **Beta.11 history:** Only staff test dispatch could send subscriber notices. Current source can send them when the optional Publish surface is selected.
 
 > **Known issue (beta.11):** The signing secret for a subscriber webhook is calculated from the subscription's own identifier, not chosen at random, and it is never shown to the subscriber. A receiver therefore cannot check the signature. Webhook "confirmation" does not prove that the person owns the address: the confirmation token is returned in the sign-up response, and any `http` or `https` address is accepted. If `CIVICCAST_PROVIDER_WEBHOOK` is set to `real`, this can be used to make the station send requests to addresses of an attacker's choosing (audit findings E-001 and B-002). Leave the webhook provider on `mock` until this is fixed.
 
