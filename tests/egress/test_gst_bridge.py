@@ -261,6 +261,39 @@ def test_graph_from_config_builds_per_output_rtmp_and_normalized_ts_branches() -
     assert restored.max_output_audio_latency_ns == 3_000_000_000
 
 
+def test_board_audio_gain_survives_graph_transport_after_sink_normalization() -> None:
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[
+            EgressSinkSpec(
+                kind="file",
+                label="normalized",
+                uri="file:///tmp/board.ts",
+                loudness_regime="atsc-a85",
+            )
+        ],
+    )
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(
+                label="Board",
+                path="/m/board.ts",
+                duration_seconds=10,
+                kind="cg",
+                board_audio_gain_db=-9.0,
+            )
+        ],
+    )
+    graph = graph_from_config(config, plan)
+    audio_factories = [spec.factory for spec in graph.output_branches[0].audio_chain]
+    assert audio_factories.index("volume") == audio_factories.index("audioloudnorm") + 1
+    assert isinstance(graph.sources[0], PlaylistLeg)
+    assert graph_from_json(graph_to_json(graph)).sources[0].output_gain_db == -9.0
+
+
 def test_graph_from_config_fails_closed_on_a_bypassed_program_plan() -> None:
     """Hostile-review fix (2026-09-05): a "program"-kind plan (the schedule
     shape) reaching ``graph_from_config`` above ``MAX_PLAYLIST_SUBCHAINS``

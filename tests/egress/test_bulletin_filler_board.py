@@ -190,12 +190,14 @@ class TestBoardFillerIntegration:
         calls: list[list[str]] = []
         bed = tmp_path / "bed.wav"
         bed.write_bytes(b"audio")
-        times = iter([
-            NOW,
-            NOW + timedelta(seconds=90),
-            NOW + timedelta(seconds=95),
-            NOW + timedelta(seconds=210),
-        ])
+        times = iter(
+            [
+                NOW,
+                NOW + timedelta(seconds=90),
+                NOW + timedelta(seconds=95),
+                NOW + timedelta(seconds=210),
+            ]
+        )
         generator = BulletinFillerSourceGenerator(
             work_dir=tmp_path,
             bulletins_provider=lambda _cid: [],
@@ -236,9 +238,10 @@ class TestBoardFillerIntegration:
             target_fill_seconds=10,
         )
 
-        generator(_config())
+        plan = generator(_config())
 
         assert str(bed) in calls[0]
+        assert plan.segments[0].board_audio_gain_db == -9.0
         assert "volume=-9.0dB" in " ".join(calls[0])
         assert "[aout]" in calls[0]
 
@@ -373,6 +376,7 @@ class TestBoardFailOpenAndRetry:
 
         assert plan.segments[0].kind == "cg"
         assert plan.segments[0].path.endswith(".silent.ts")
+        assert plan.segments[0].board_audio_gain_db is None
         assert "anullsrc" in " ".join(calls[-1])
         assert sum(str(bed) in call for call in calls) == 2
 

@@ -266,6 +266,7 @@ class BulletinFillerSourceGenerator:
                     path=str(segment_path),
                     duration_seconds=self._slide_seconds,
                     kind="cg",
+                    board_audio_gain_db=audio_bed.gain_db if audio_bed else None,
                     source_ref=(
                         "board-empty" if bulletin is None else f"bulletin-{bulletin.submission_id}"
                     ),
@@ -594,7 +595,12 @@ def _default_audio_resolver(session_factory: Any) -> ImageResolver:
 
     def resolve(ref: str) -> Path | None:
         row = asset_store.get_staff_row(ref)
-        if row is None or not row.codec_audio or not row.duration_seconds or row.duration_seconds <= 0:
+        if (
+            row is None
+            or not row.codec_audio
+            or not row.duration_seconds
+            or row.duration_seconds <= 0
+        ):
             return None
         return confined_path(ref)
 
@@ -641,7 +647,12 @@ def build_filler_source_provider(
         audio = configured[-1]
         asset = asset_store.get_staff_row(audio.asset_ref)
         path = audio_resolver(audio.asset_ref)
-        if path is None or asset is None or not asset.duration_seconds or asset.duration_seconds <= 0:
+        if (
+            path is None
+            or asset is None
+            or not asset.duration_seconds
+            or asset.duration_seconds <= 0
+        ):
             _LOG.warning(
                 "channel %s: configured board audio asset %s is unavailable; airing silence",
                 channel_id,

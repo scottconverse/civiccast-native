@@ -126,6 +126,10 @@ def _per_output_audio_chain(
                         "max-true-peak": -1.5,
                     },
                 ),
+                # Board audio is rendered at its selected level, but the
+                # normalizer would raise it again. The engine updates this
+                # element on programme/slate handback and programme reload.
+                ElementSpec("volume"),
             )
         )
     tone_strip = resolution.eas_tone_strip_enabled and resolution.kind in _OTT_SINK_KINDS
@@ -817,6 +821,16 @@ def graph_from_config(
         program_segments = program_segments[:MAX_PLAYLIST_SUBCHAINS]
     program = PlaylistLeg(
         label="program",
+        output_gain_db=(
+            program_segments[0].board_audio_gain_db
+            if program_segments
+            and program_segments[0].board_audio_gain_db is not None
+            and all(
+                segment.board_audio_gain_db == program_segments[0].board_audio_gain_db
+                for segment in program_segments
+            )
+            else 0.0
+        ),
         subchains=tuple(
             (
                 source_first_element(segment),  # filesrc, or a live source by URI scheme

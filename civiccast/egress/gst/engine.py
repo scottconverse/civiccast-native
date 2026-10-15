@@ -969,11 +969,13 @@ class InputSelectorSwap(SwapController):
 
     def __init__(self) -> None:
         self._selector: Gst.Element | None = None
+        self._engine: GstPlayoutEngine | None = None
         self._pads: list[Gst.Pad] = []
         self._audio_selector: Gst.Element | None = None
         self._audio_pads: list[Gst.Pad] = []
 
     def bind(self, engine: GstPlayoutEngine) -> None:
+        self._engine = engine
         self._selector = engine.selector
         self._pads = engine.selector_sink_pads
         self._audio_selector = engine.audio_selector
@@ -990,6 +992,10 @@ class InputSelectorSwap(SwapController):
         if self._audio_selector is not None and index < len(self._audio_pads):
             # swap audio atomically with video (seconds-granularity, same thread)
             self._audio_selector.set_property("active-pad", self._audio_pads[index])
+        if self._engine is not None:
+            self._engine._set_board_output_gain(
+                self._engine._program_output_gain_db if index == 0 else 0.0
+            )
 
 
 class GstPlayoutEngine:
@@ -1030,6 +1036,12 @@ class GstPlayoutEngine:
                 flush=True,
             )
         self.graph = graph
+        self._program_output_gain_db = (
+            graph.sources[0].output_gain_db
+            if graph.sources and isinstance(graph.sources[0], PlaylistLeg)
+            else 0.0
+        )
+        self._board_output_gain_elements: list[Gst.Element] = []
         # Per-branch processing hold is separate from mux-drain observations.
         # Reload/EOS handoff uses this bounded graph-declared delay to avoid
         # committing while audio remains inside a per-output normalizer.
@@ -2078,6 +2090,11 @@ class GstPlayoutEngine:
                 audio_tail = audio_source
                 for spec in branch.audio_chain:
                     element = self._make(spec)
+                    if spec.factory == "volume" and any(
+                        item.factory == "audioloudnorm" for item in branch.audio_chain
+                    ):
+                        element.set_property("volume", 10 ** (self._program_output_gain_db / 20))
+                        self._board_output_gain_elements.append(element)
                     self._link(audio_tail, element)
                     audio_tail = element
                 self._link(audio_tail, mux)
@@ -2100,6 +2117,11 @@ class GstPlayoutEngine:
             (mux for spec, mux in muxes if spec.factory == "mpegtsmux"),
             muxes[0][1] if muxes else None,
         )
+
+    def _set_board_output_gain(self, gain_db: float) -> None:
+        """Preserve board-bed level after per-output loudness normalization."""
+        for element in getattr(self, "_board_output_gain_elements", ()):
+            element.set_property("volume", 10 ** (gain_db / 20))
 
     def _instantiate_source_leg(
         self, leg: SourceLeg | PlaylistLeg
@@ -5149,6 +5171,9 @@ class GstPlayoutEngine:
         rebase_new_leg = not source_leg_is_clock_timed(new_leg)
 
         pending: dict[str, Any] = {
+            "new_output_gain_db": new_leg.output_gain_db
+            if isinstance(new_leg, PlaylistLeg)
+            else 0.0,
             # Round-2 finding 5: identifies THIS reload transaction. The boundary
             # probes live on the OUTGOING pads, which are the same pad objects
             # across successive transactions (``selector_sink_pads[0]`` until a
@@ -6557,6 +6582,8 @@ class GstPlayoutEngine:
         if self.audio_sink_pads and pending["new_audio_pad"] is not None:
             self.audio_sink_pads[0] = pending["new_audio_pad"]
         self._source_leg_elements[0] = pending["new_elements"]
+        self._program_output_gain_db = pending.get("new_output_gain_db", 0.0)
+        self._set_board_output_gain(self._program_output_gain_db)
         # U41: the program is back, so any plan-EOS hold is over -- and the hold has
         # to be re-armed on the pad just published, because the probe from before
         # this commit sits on the pad the line above displaced. Both statements

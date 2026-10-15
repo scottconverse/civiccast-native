@@ -95,6 +95,7 @@ class PlaylistLeg:
     # optional per-clip audio chain (audioconvert..capsfilter) fed by each clip's
     # decodebin audio pad → a parallel audio concat → the audio selector pad
     audio_tail: tuple[ElementSpec, ...] = ()
+    output_gain_db: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.subchains:
@@ -691,6 +692,7 @@ def graph_to_json(graph: PlayoutGraph) -> str:
                 "label": source.label,
                 "subchains": [[_elem_to_dict(e) for e in ch] for ch in source.subchains],
                 "audio_tail": [_elem_to_dict(e) for e in source.audio_tail],
+                "output_gain_db": source.output_gain_db,
             }
         return {
             "type": "source",
@@ -743,6 +745,7 @@ def graph_from_json(text: str) -> PlayoutGraph:
                     tuple(_elem_from_dict(e) for e in chain) for chain in obj["subchains"]
                 ),
                 audio_tail=tuple(_elem_from_dict(e) for e in obj.get("audio_tail", [])),
+                output_gain_db=float(obj.get("output_gain_db", 0.0)),
             )
         return SourceLeg(
             label=obj["label"],

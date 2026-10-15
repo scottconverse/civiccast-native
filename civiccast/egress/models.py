@@ -768,6 +768,9 @@ class EgressSourceSegment(BaseModel):
     #: do not carry measured/recorded media provenance.
     playable_duration_seconds: Annotated[float | None, Field(default=None, gt=0)] = None
     kind: EgressSourceKind = "program"
+    #: Board bed level already applied while rendering; per-sink loudness
+    #: normalization needs this level restored after its gain pass.
+    board_audio_gain_db: Annotated[float | None, Field(default=None, ge=-36, le=0)] = None
     source_ref: Annotated[str | None, Field(default=None, max_length=200)] = None
     #: Stable schedule-row identity for scheduled program occurrences. Multiple
     #: occurrences may air the same asset, so this cannot be inferred from
