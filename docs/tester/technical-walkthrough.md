@@ -1,12 +1,12 @@
-# Beta 18 Technical Tester Walkthrough
+# Beta 19 Technical Tester Walkthrough
 
-Beta 18 adds guided Cablecast station import to CivicCast for native Windows,
-building on Beta 17's subscriber delivery, Podcast publication, and
-underwriting daypart selection. This walkthrough
+Beta 19 adds resident sign-in link delivery and redemption to CivicCast for
+native Windows, building on Beta 18's guided Cablecast import and Beta 17's
+subscriber delivery, Podcast publication, and underwriting daypart selection. This walkthrough
 covers package acquisition, installation, the release feature paths, upgrade,
 and uninstall.
 
-Beta 18 is published. The [package verification record](../releases/v1.0.0-beta.18-verification.md)
+Beta 19 is published. The [package verification record](../releases/v1.0.0-beta.19-verification.md)
 identifies the signed kit and its scoped checks.
 
 For the broader station acceptance path, use the
@@ -15,7 +15,7 @@ when the handoff assigns it.
 
 ## Package acquisition
 
-1. Acquire the complete kit from the [Beta 18 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18).
+1. Acquire the complete kit from the [Beta 19 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19).
 2. If the handoff names `download_windows_release_artifacts.ps1`, pass its
    exact `-Tag` and `-Version` values with the requested asset options. Do not
    rely on a generic latest download or mix packages from different builds.
@@ -43,15 +43,21 @@ when the handoff assigns it.
    path. Record the station-data outcome and any recovery artifacts. Do not use
    a production station.
 
-## Beta 18 feature path
+## Beta 19 feature path
 
 Use a disposable station, short test media, and the current manual for exact
 screen names and settings.
 
-Before testing the publishing workflows below, use a Setup-admin account to
-open **Import station**. Preview a Cablecast source, review proposed shows and
-schedule rows plus conflicts and skips, apply a small batch, and confirm its
-result and rollback in **Import history**. This imports metadata only.
+Configure the station's SMTP mail provider and public resident-portal URL. In
+the public portal, request a sign-in link for a test email address, confirm the
+message arrives, open the link, and confirm the portal reports signed-in state.
+Then disable SMTP and confirm the request reports a delivery failure instead
+of claiming the email was sent. Paid checkout is outside this feature path.
+
+For the earlier station-import workflow, a Setup admin can open **Import
+station**, preview a Cablecast source, review conflicts, apply a small batch,
+and confirm its result and rollback in **Import history**. This imports
+metadata only.
 
 1. Publish a packaged local recording to Portal, then use Podcast and verify
    its channel RSS entry, audio enclosure, and retryable failure status.

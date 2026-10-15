@@ -5,6 +5,13 @@
 Remote-guest composition, bulletin-board media, native viewer completion,
 and protected paywall media remain separate open work.
 
+## [1.0.0-beta.19] - 2026-10-15
+
+Resident sign-in links now use the configured SMTP provider and a trusted public
+portal URL. The public portal can redeem a link, and failed delivery reports a
+failure instead of claiming that mail was sent. Paid checkout and protected
+media remain outside this release.
+
 ## [1.0.0-beta.18] - 2026-10-15
 
 The operator console now provides a Setup-admin Cablecast import workflow:

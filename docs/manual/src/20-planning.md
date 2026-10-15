@@ -186,7 +186,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 ### What is on the release page
 
-This manual describes the Beta 18 source edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks package-specific results.
+This manual describes the Beta 19 source edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 19 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.19-verification.md) tracks package-specific results.
 
 The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -246,7 +246,7 @@ Windows may show a blue **Windows protected your PC** screen. That screen is abo
 
 ## Historical measurements and package evidence
 
-These host measurements belong to Beta 11 and are not Beta 16 capacity results. The 72-hour run covered Public, Government and Education without a service restart and recorded **99.78% live caption-input coverage**; the earlier 48-hour window recorded **99.88% rounded coverage**. See the [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) and [Beta 11 48-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the methods and run identities. Package checks belong to the verification record for the matching release; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package results.
+These host measurements belong to Beta 11 and are not Beta 16 capacity results. The 72-hour run covered Public, Government and Education without a service restart and recorded **99.78% live caption-input coverage**; the earlier 48-hour window recorded **99.88% rounded coverage**. See the [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) and [Beta 11 48-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the methods and run identities. Package checks belong to the verification record for the matching release; the [Beta 19 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.19-verification.md) tracks its package results.
 
 ## Related
 
