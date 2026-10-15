@@ -45,6 +45,16 @@ struct ContentView: View {
 
 private struct StationView: View {
     let config: ConfigResponse
+    @EnvironmentObject private var store: ConfigStore
+    @State private var search = ""
+
+    private var filteredReplays: [PublishedAsset] {
+        guard !search.isEmpty else { return store.replays }
+        return store.replays.filter {
+            $0.title.localizedCaseInsensitiveContains(search)
+                || ($0.description?.localizedCaseInsensitiveContains(search) ?? false)
+        }
+    }
 
     var body: some View {
         List {
@@ -65,10 +75,34 @@ private struct StationView: View {
                     }
                 }
             }
+            Section("Published station replays") {
+                ForEach(filteredReplays) { replay in
+                    NavigationLink(value: replay) {
+                        HStack {
+                            if let poster = replay.posterUrl,
+                               let url = store.client.mediaURL(poster) {
+                                AsyncImage(url: url) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    Color.secondary.opacity(0.15)
+                                }
+                                .frame(width: 80, height: 45)
+                                .clipped()
+                                .accessibilityHidden(true)
+                            }
+                            Text(replay.title)
+                        }
+                    }
+                }
+            }
         }
         .listStyle(.insetGrouped)
+        .searchable(text: $search, prompt: "Search station replays")
         .navigationDestination(for: Channel.self) { channel in
             PlayerView(channel: channel)
+        }
+        .navigationDestination(for: PublishedAsset.self) { replay in
+            PlayerView(replay: replay)
         }
     }
 }

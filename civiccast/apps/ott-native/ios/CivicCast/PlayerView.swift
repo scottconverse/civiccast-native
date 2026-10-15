@@ -10,7 +10,18 @@ import SwiftUI
 import AVKit
 
 struct PlayerView: View {
-    let channel: Channel
+    let channel: Channel?
+    let replay: PublishedAsset?
+
+    init(channel: Channel) {
+        self.channel = channel
+        self.replay = nil
+    }
+
+    init(replay: PublishedAsset) {
+        self.channel = nil
+        self.replay = replay
+    }
 
     @EnvironmentObject private var store: ConfigStore
     @State private var player: AVPlayer?
@@ -25,7 +36,7 @@ struct PlayerView: View {
                     .onDisappear { player.pause() }
             } else {
                 VStack(spacing: 12) {
-                    ProgressView("Preparing stream…")
+                    if status == nil { ProgressView("Preparing stream…") }
                     if let status {
                         Text(status)
                             .font(.footnote)
@@ -36,7 +47,7 @@ struct PlayerView: View {
                 }
             }
         }
-        .navigationTitle(channel.branding.displayName)
+        .navigationTitle(channel?.branding.displayName ?? replay?.title ?? "CivicCast")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadAndPlay()
@@ -45,9 +56,18 @@ struct PlayerView: View {
 
     private func loadAndPlay() async {
         do {
-            let live = try await store.client.fetchLiveState(channel.liveStateUrl)
-            guard let url = live.playbackURL else {
-                status = live.summary
+            let url: URL
+            if let replay, let replayURL = store.client.mediaURL(replay.manifestUrl) {
+                url = replayURL
+            } else if let channel {
+                let live = try await store.client.fetchLiveState(channel.liveStateUrl)
+                guard let liveURL = live.playbackUrl.flatMap(store.client.mediaURL) else {
+                    status = live.summary
+                    return
+                }
+                url = liveURL
+            } else {
+                status = "This replay has no playback URL."
                 return
             }
             let asset = AVURLAsset(url: url)

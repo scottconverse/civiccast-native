@@ -34,6 +34,7 @@ final class ConfigStore: ObservableObject {
     }
 
     @Published var state: State = .idle
+    @Published var replays: [PublishedAsset] = []
 
     let client = NetworkClient.fromBundle()
 
@@ -42,6 +43,7 @@ final class ConfigStore: ObservableObject {
         do {
             let config = try await client.fetchConfig()
             state = .loaded(config)
+            replays = (try? await client.fetchPublishedAssets()) ?? []
         } catch {
             state = .error((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
         }

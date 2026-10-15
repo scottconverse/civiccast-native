@@ -50,6 +50,16 @@ struct ContentView: View {
 
 private struct StationView: View {
     let config: ConfigResponse
+    @EnvironmentObject private var store: ConfigStore
+    @State private var search = ""
+
+    private var filteredReplays: [PublishedAsset] {
+        guard !search.isEmpty else { return store.replays }
+        return store.replays.filter {
+            $0.title.localizedCaseInsensitiveContains(search)
+                || ($0.description?.localizedCaseInsensitiveContains(search) ?? false)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -65,6 +75,7 @@ private struct StationView: View {
 
             ScrollView {
                 LazyVStack(spacing: 24) {
+                    Text("Live channels").font(.title2).frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(config.channels) { channel in
                         NavigationLink(value: channel) {
                             ChannelCard(channel: channel)
@@ -73,13 +84,39 @@ private struct StationView: View {
                         // .focusEffectDisabled(false) is the default;
                         // listed in the file header as a search anchor.
                     }
+                    Text("Published station replays").font(.title2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(filteredReplays) { replay in
+                        NavigationLink(value: replay) {
+                            HStack(spacing: 24) {
+                                if let poster = replay.posterUrl,
+                                   let url = store.client.mediaURL(poster) {
+                                    AsyncImage(url: url) { image in
+                                        image.resizable().scaledToFill()
+                                    } placeholder: {
+                                        Color.secondary.opacity(0.15)
+                                    }
+                                    .frame(width: 220, height: 124)
+                                    .clipped()
+                                    .accessibilityHidden(true)
+                                }
+                                Text(replay.title).font(.title2)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.card)
+                    }
                 }
                 .padding(.horizontal, 80)
                 .padding(.bottom, 60)
             }
         }
+        .searchable(text: $search, prompt: "Search station replays")
         .navigationDestination(for: Channel.self) { channel in
             PlayerView(channel: channel)
+        }
+        .navigationDestination(for: PublishedAsset.self) { replay in
+            PlayerView(replay: replay)
         }
     }
 }
