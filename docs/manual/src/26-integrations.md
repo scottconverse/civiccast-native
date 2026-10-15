@@ -20,8 +20,7 @@ The director iframe also sends targeted guest camera and hangup requests. VDO.Ni
 Commission the media relay and service environment before inviting guests:
 
 In **Remote Contribution → Diagnostics**, a Support admin can select
-**Install VDO and media relay**. CivicCast verifies the pinned VDO.Ninja
-source and a pinned MediaMTX Windows binary and its MIT license before activating either. The
+**Install VDO and media relay**. The service account needs Git for Windows on its PATH to fetch the pinned VDO.Ninja checkout. CivicCast verifies that checkout's commit before activating it, then verifies the pinned MediaMTX Windows binary and MIT license before activating the relay. The
 relay starts under CivicCast supervision when Remote Contribution is enabled;
 its RTSP and SRT listeners bind to loopback. The VDO source still needs its
 HTTPS site and signalling service, and the relay's WHIP listener needs an

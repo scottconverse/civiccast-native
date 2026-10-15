@@ -3565,10 +3565,9 @@ def _wire_durable_stores(app: FastAPI) -> None:
     app.state.startup_condition_hooks.append(
         _build_recording_reconcile_startup_condition(recording_svc)
     )
-    if (
-        os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION", "off").strip().lower() == "on"
-        and os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL")
-    ):
+    if os.environ.get(
+        "CIVICCAST_REMOTE_CONTRIBUTION", "off"
+    ).strip().lower() == "on" and os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL"):
         app.state.startup_condition_hooks.append(lambda: _guest_program().recover())
 
 

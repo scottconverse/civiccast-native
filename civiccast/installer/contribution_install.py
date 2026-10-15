@@ -167,7 +167,9 @@ def install_remote_contribution(
             try:
                 install_mediamtx(dest=relay_home)
             except Exception as exc:
-                raise ContributionInstallError(f"MediaMTX relay installation failed: {exc}") from exc
+                raise ContributionInstallError(
+                    f"MediaMTX relay installation failed: {exc}"
+                ) from exc
         binary, config = relay_paths(relay_home)
         verified = relay_verified(relay_home)
         return {

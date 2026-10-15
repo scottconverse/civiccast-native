@@ -1,4 +1,15 @@
-# Current handoff: Beta 17 published (2026-10-15)
+# Current handoff: Beta 19 candidate source (2026-10-15)
+
+Current branch: `feat/sprint5-board-audio`. Read current HEAD with
+`git rev-parse HEAD`; the last source/docs checkpoint is
+`0daff38f6a752d5781a983b628be8fffc7ab3d2a`.
+Current published tag: `v1.0.0-beta.18`; Beta 19 remains unpublished.
+PR: https://github.com/scottconverse/civiccast-native/pull/257.
+The source branch now includes Sprint 5 remote-guest composition and relay
+commissioning, bulletin-board live video and audio, and native viewer
+completion, along with the earlier Beta 17/18 publication/import work.
+Beta 19 package build and exact-candidate verification remain pending.
+The historical Beta 17 record below is retained for attribution.
 
 ## Beta 17 release (2026-10-15)
 

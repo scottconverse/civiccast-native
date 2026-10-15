@@ -80,20 +80,24 @@ def test_guest_program_takes_adds_and_returns_to_schedule(monkeypatch) -> None:
             # The old feed remains live while the new handoff is pending.
             if len(handles) > 1:
                 assert not handles[-2].terminated
-            return [SimpleNamespace(
+            return [
+                SimpleNamespace(
+                    state="ON_AIR",
+                    proof_boundary="civiccast-egress-handoff-boundary",
+                    source_path=program.redact_source_uri(sources.row.endpoint_url),
+                    source_ref=takeover.active.source_ref,
+                    observed_at=datetime.now(UTC),
+                )
+            ]
+        return [
+            SimpleNamespace(
                 state="ON_AIR",
                 proof_boundary="civiccast-egress-handoff-boundary",
-                source_path=program.redact_source_uri(sources.row.endpoint_url),
-                source_ref=takeover.active.source_ref,
+                source_path="scheduled.ts",
+                source_ref="scheduled",
                 observed_at=datetime.now(UTC),
-            )]
-        return [SimpleNamespace(
-            state="ON_AIR",
-            proof_boundary="civiccast-egress-handoff-boundary",
-            source_path="scheduled.ts",
-            source_ref="scheduled",
-            observed_at=datetime.now(UTC),
-        )]
+            )
+        ]
 
     def start(feeds, _uri):
         feed_batches.append(feeds)
@@ -135,5 +139,12 @@ def test_guest_program_takes_adds_and_returns_to_schedule(monkeypatch) -> None:
     assert handles[3].terminated
     assert takeover.active is None
     assert takeover.actions == [
-        "take", "handback", "take", "handback", "take", "handback", "take", "handback"
+        "take",
+        "handback",
+        "take",
+        "handback",
+        "take",
+        "handback",
+        "take",
+        "handback",
     ]

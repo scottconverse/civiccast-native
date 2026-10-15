@@ -281,7 +281,9 @@ class GuestProgramRouter:
         """Restart a failed active mixer without changing guest lifecycle records."""
         with self._lock:
             for channel, run in list(self._runs.items()):
-                if run.handle.poll() is None or time.monotonic() < self._retry_after.get(channel, 0):
+                if run.handle.poll() is None or time.monotonic() < self._retry_after.get(
+                    channel, 0
+                ):
                     continue
                 room = self._contribution_store.get_room(run.room_id)
                 if room is None:

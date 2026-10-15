@@ -44,7 +44,12 @@ def managed_relay_dir() -> Path:
     if os.name == "nt":
         root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
         return root / "CivicCast" / "remote-contribution" / "mediamtx"
-    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "civiccast" / "remote-contribution" / "mediamtx"
+    return (
+        Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        / "civiccast"
+        / "remote-contribution"
+        / "mediamtx"
+    )
 
 
 def relay_paths(dest: Path | None = None) -> tuple[Path, Path]:
@@ -86,17 +91,24 @@ def install_mediamtx(*, dest: Path | None = None) -> Path:
     staging.mkdir()
     try:
         archive = staging / "release.zip"
-        with urllib.request.urlopen(WINDOWS_ZIP_URL, timeout=60) as response, archive.open("wb") as output:  # noqa: S310 -- fixed trusted HTTPS release URL; verify archive hash below
+        with (
+            urllib.request.urlopen(WINDOWS_ZIP_URL, timeout=60) as response,  # noqa: S310  # nosec B310 -- fixed HTTPS URL and pinned archive hash
+            archive.open("wb") as output,
+        ):
             shutil.copyfileobj(response, output)
         if _file_sha256(archive) != WINDOWS_ZIP_SHA256:
             raise RuntimeError("MediaMTX archive checksum mismatch; installation refused.")
-        with zipfile.ZipFile(archive) as package, package.open("mediamtx.exe") as source, (
-            staging / "mediamtx.exe"
-        ).open("wb") as output:
+        with (
+            zipfile.ZipFile(archive) as package,
+            package.open("mediamtx.exe") as source,
+            (staging / "mediamtx.exe").open("wb") as output,
+        ):
             shutil.copyfileobj(source, output)
-        with zipfile.ZipFile(archive) as package, package.open("LICENSE") as source, (
-            staging / "LICENSE"
-        ).open("wb") as output:
+        with (
+            zipfile.ZipFile(archive) as package,
+            package.open("LICENSE") as source,
+            (staging / "LICENSE").open("wb") as output,
+        ):
             shutil.copyfileobj(source, output)
         if _file_sha256(staging / "mediamtx.exe") != WINDOWS_EXE_SHA256:
             raise RuntimeError("MediaMTX executable checksum mismatch; installation refused.")

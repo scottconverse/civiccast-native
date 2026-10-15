@@ -121,8 +121,7 @@ def wait_for_guest_mix(
         if handle.poll() is not None:
             handle.drain_thread.join(timeout=0.5)
             raise RuntimeError(
-                "guest composition process exited before media was ready: "
-                + handle.error_tail()
+                "guest composition process exited before media was ready: " + handle.error_tail()
             )
         if time.monotonic() < first_probe_at:
             time.sleep(0.5)
@@ -203,8 +202,16 @@ def build_guest_mix_args(
             raise ValueError("guest feed contains neither video nor audio")
         args.extend(
             [
-                "-rtsp_transport", "tcp", "-analyzeduration", "500000",
-                "-probesize", "65536", "-timeout", "10000000", "-i", feed.endpoint,
+                "-rtsp_transport",
+                "tcp",
+                "-analyzeduration",
+                "500000",
+                "-probesize",
+                "65536",
+                "-timeout",
+                "10000000",
+                "-i",
+                feed.endpoint,
             ]
         )
         picture = (
