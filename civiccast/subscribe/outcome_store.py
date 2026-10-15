@@ -205,9 +205,9 @@ def _may_take_over(
 
     A recipient already observed ``sent`` is never taken over -- that is the
     duplicate-send guard. A ``pending`` row is taken over only once its lease
-    has expired (the previous sender died mid-send). ``failed``/``queued`` rows
-    are taken over only by an explicit retry, which is what makes a normal
-    re-approval idempotent instead of a second fan-out.
+    has expired (the previous sender died mid-send). A ``failed`` row is taken
+    over only by an explicit retry. A ``queued`` row belongs to the background
+    worker until it succeeds or dead-letters.
     """
 
     if record.outcome == "sent":

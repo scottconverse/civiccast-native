@@ -201,7 +201,7 @@ class _OutcomeRecorder:
                 # An explicit retry means "reach every confirmed subscriber not
                 # yet sent" -- including one who confirmed AFTER the original
                 # approval (they get a fresh row) and one whose delivery is
-                # terminal-failed or sitting in the webhook retry queue. A
+                # terminal-failed. Queued webhooks stay with their retry worker. A
                 # normal re-approval takes over neither, which is what makes it
                 # idempotent instead of a second fan-out.
                 allow_reattempt=self._retry_only,
@@ -345,6 +345,9 @@ def refresh_notification_surface(
     health, message_template, next_step = _STATE_COPY[state]
     if previous.simulated:
         health = "warning"
+        message_template = (
+            "SIMULATED - no subscriber notice actually left this station. " + message_template
+        )
     refreshed = previous.model_copy(
         update={
             "state": state,
@@ -378,15 +381,14 @@ _STATE_COPY: dict[str, tuple[str, str, str]] = {
         "warning",
         "Some subscriber notices were not delivered: {sent} of {intended} delivered, "
         "{queued} still retrying, {failed} failed.",
-        "Open the delivery list, then retry the subscriber notifications surface "
-        "once the listed problem is fixed.",
+        "Open the delivery list. The worker will retry queued webhooks; retry the "
+        "surface after fixing a terminal failure.",
     ),
     "pending": (
         "warning",
         "No subscriber notice has been delivered yet: {queued} are queued for retry "
         "and {pending} have not been attempted.",
-        "The retry worker is still trying. Check again shortly, or retry this "
-        "surface after fixing the delivery problem.",
+        "The retry worker is still trying. Check again shortly.",
     ),
     "failed": (
         "warning",

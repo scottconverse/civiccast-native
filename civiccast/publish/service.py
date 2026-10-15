@@ -987,7 +987,8 @@ def retry_publish_surface(
         delivery_store=delivery_store,
         target_lookup=target_lookup,
         # WP-05 plan item 6: an explicit retry re-attempts only deliveries that
-        # already exist and are failed/queued/pending. It never contacts a
+        # already exist and are failed or stale pending. Queued webhooks stay
+        # with the background worker. It never contacts a
         # recipient already observed sent, and never starts a delivery the
         # original run did not intend.
         notification_retry_only=True,
