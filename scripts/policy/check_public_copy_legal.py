@@ -42,6 +42,7 @@ VENDOR_ALLOWLIST = frozenset(
         "docs/index.html",
         "docs/QUICKSTART-OPERATOR.md",
         "docs/ROADMAP.md",
+        "docs/releases/v1.0.0-beta.18-verification.md",
         "docs/tester/START-HERE.md",
         "docs/tester/technical-walkthrough.md",
         "docs/manual/src/00-front.md",
