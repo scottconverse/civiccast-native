@@ -4,6 +4,8 @@ CivicCast brings station scheduling, broadcast, recording, caption review, and
 resident publication into one native Windows system. Support is
 community-driven; there is no commercial support contract or SLA.
 
+The current published download is signed [v1.0.0-beta.18](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18). Beta 19 is an unpublished source candidate; use the manual bundled with the version installed on your station.
+
 ## How To Get Help
 
 1. **Read the early-adopter docs first.** Start with
