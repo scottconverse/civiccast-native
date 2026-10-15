@@ -7,13 +7,12 @@
 
 ## Current Release State
 
-`v1.0.0-beta.18` is the latest signed GitHub pre-release, not a production
-release. Download the complete kit from its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18),
+`v1.0.0-beta.19` is the latest signed GitHub pre-release. Download the complete kit from its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19),
 and use that release's `SHA256SUMS.txt`, installer signature and station/pack
-manifests to verify the bytes you receive. The [Beta 18 verification
-record](../releases/v1.0.0-beta.18-verification.md) identifies the exact
-signed package and its scoped installation results. Earlier installation
-results remain in their own verification records and do not qualify Beta 18.
+manifests to verify the bytes you receive. The [Beta 19 verification
+record](../releases/v1.0.0-beta.19-verification.md) identifies the exact
+signed package and its scoped checks. Earlier installation
+results remain in their own verification records and do not qualify Beta 19.
 [release-truth.yaml](../releases/release-truth.yaml)
 is the authored release-state record. Watch the official native release page,
 not `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
@@ -34,7 +33,7 @@ upgrade-baseline kit.
 This page explains how an operator should verify a CivicCast Windows setup
 download before running it.
 
-For the published Beta 18 interface, use the Help installed with Beta 18 or the manual assets from its release page. Repository manual revisions may contain later editorial corrections; source changes do not update an installed station.
+For the published Beta 19 interface, use the Help installed with Beta 19 or the manual assets from its release page. Repository manual revisions may contain later editorial corrections; source changes do not update an installed station.
 
 ## Read The Release Docs First
 

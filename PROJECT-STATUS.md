@@ -10,12 +10,19 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-## Beta 17 release
+## Current release: Beta 19
 
-Beta 17 is the current published package, with its scoped installation results
+Beta 19 completes Sprint 5 remote-guest output, bulletin-board media and native
+viewer apps alongside the Beta 17 and 18 publication and import workflows.
+Its signed package and scoped checks are in the [Beta 19 record](docs/releases/v1.0.0-beta.19-verification.md).
+
+## Historical Beta 17 release
+
+Beta 17 was a published package, with its scoped installation results
 in the [Beta 17 record](docs/releases/v1.0.0-beta.17-verification.md). It adds
 subscriber delivery, Podcast publication, and underwriting daypart selection.
-Protected paywall media and the remaining Sprint 5 workflows stay open.
+Protected paywall media stayed outside Sprint 5; the later Beta 18 and 19
+releases completed its remaining workflows.
 
 The R9 field findings are assigned to [Beta 17](docs/ops/beta17-deferred.md).
 

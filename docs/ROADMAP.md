@@ -3,16 +3,14 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
-## Beta 19 candidate (unpublished)
+## Beta 19 release
 
-Sprint 5 source now connects remote guests to channel output, adds live
+The [published Beta 19 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19) connects remote guests to channel output, adds live
 video and an audio bed to the bulletin board, and completes the native
 viewer app controls for channel/replay browsing, artwork, search, deep
 links and playback options. The earlier Beta 17 and 18 packages delivered
 subscriber notices, Podcast episodes, magic-link delivery, underwriting
-dayparts and Cablecast station import. Beta 19 package evidence will be
-recorded against its exact candidate; source completion is not a package
-result.
+dayparts and Cablecast station import. The [Beta 19 package record](releases/v1.0.0-beta.19-verification.md) identifies its signed artifacts and scoped checks.
 
 ## Beta 18 release
 
@@ -24,9 +22,7 @@ The [published Beta 17 release](https://github.com/scottconverse/civiccast-nativ
 publication notices with delivery outcomes and retries; Podcast MP3 episodes,
 enclosures and RSS; and selection of saved
 underwriting dayparts. The [package record](releases/v1.0.0-beta.17-verification.md)
-identifies the signed package and its scoped checks. Remote-guest
-composition, bulletin-board media, station-import UI and native viewer
-completion and protected paywall media remain open work outside this candidate.
+identifies the signed package and its scoped checks. The later Beta 18 and 19 releases complete the remaining Sprint 5 features; protected paywall media remains outside this scope.
 
 ## Beta 16 release
 
@@ -56,8 +52,8 @@ is not a Beta 15 field result or Beta 16 package qualification.
 
 ## Roadmap ownership and evidence
 
-The owner sets implementation and release scope. The [Beta 18 verification
-record](releases/v1.0.0-beta.18-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
+The owner sets implementation and release scope. The [Beta 19 verification
+record](releases/v1.0.0-beta.19-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
 identity and installation observations. The [Beta 17 deferred
 backlog](ops/beta17-deferred.md) cites the separate Beta 15 R9 field report and
 describes what that host evaluation did and did not establish. No release date

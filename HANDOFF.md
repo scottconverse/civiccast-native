@@ -1,14 +1,19 @@
-# Current handoff: Beta 19 candidate source (2026-10-15)
+# Current handoff: Beta 19 release preparation (2026-10-15)
 
 Current branch: `feat/sprint5-board-audio`. Read current HEAD with
-`git rev-parse HEAD`; the last source/docs checkpoint is
-`0daff38f6a752d5781a983b628be8fffc7ab3d2a`.
+`git rev-parse HEAD`.
 Current published tag: `v1.0.0-beta.18`; Beta 19 remains unpublished.
 PR: https://github.com/scottconverse/civiccast-native/pull/257.
 The source branch now includes Sprint 5 remote-guest composition and relay
 commissioning, bulletin-board live video and audio, and native viewer
 completion, along with the earlier Beta 17/18 publication/import work.
-Beta 19 package build and exact-candidate verification remain pending.
+Beta 19's signed kit was built from
+`7d61cbede3123a65b4a0d6d4b413ae99edbc3f04` in
+[workflow 38797808863](https://github.com/scottconverse/civiccast-native/actions/runs/38797808863).
+Its package identity and scoped checks are in the
+[Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md).
+Merge, tag and publication remain pending; the earlier Beta 18 download stays
+current until then.
 The historical Beta 17 record below is retained for attribution.
 
 ## Beta 17 release (2026-10-15)
@@ -29,9 +34,9 @@ installation checks passed; its Windows Sandbox product-engine stream capture
 did not. The exact result is in the package record. Historical Beta 16 results
 below belong only to Beta 16.
 
-The current source brings together station operations, unattended scheduling,
+At Beta 17, the source brought together station operations, unattended scheduling,
 broadcast output, programme transitions, HLS retention, and recorded-caption
-work. Signed `v1.0.0-beta.17` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17); the
+work. Signed `v1.0.0-beta.17` was that edition's [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17); the
 [package verification record](docs/releases/v1.0.0-beta.17-verification.md)
 identifies its installer and checks.
 

@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-Unpublished candidate `v1.0.0-beta.19` completes the remaining Sprint 5
+## [1.0.0-beta.19] - 2026-10-15
+
+Beta 19 completes the remaining Sprint 5
 software scope. Remote guests now enter the channel program through a
 composed video/audio mix with take and handback controls; the install screen
 can fetch pinned VDO.Ninja source and a verified local MediaMTX relay. The

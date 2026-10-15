@@ -1338,8 +1338,8 @@ This reference is maintained in `docs/technical-ops-reference.md`. The user-faci
 ## Published package evidence and historical release identity
 
 This working-tree reference follows the published `CivicCast 1.0.0-beta.19`.
-The [Beta 18 verification record](releases/v1.0.0-beta.19-verification.md)
-identifies the signed package and its scoped installation checks. No Beta 18
+The [Beta 19 verification record](releases/v1.0.0-beta.19-verification.md)
+identifies the signed package and its scoped checks. No Beta 19
 cross-version upgrade or extended soak is claimed. Earlier results remain tied
 to their own release records. Consult
 `docs/releases/release-truth.yaml` for the authored release state; this

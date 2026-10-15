@@ -6,11 +6,10 @@ encrypted station backup and restore, staff and network administration,
 local-time scheduling, bounded operational storage, automatic output recovery,
 RTMP output, coordinated HLS retention, and configurable recorded captions.
 
-The current public package is signed `v1.0.0-beta.18`; the
-[Beta 18 verification record](docs/releases/v1.0.0-beta.18-verification.md)
-tracks its package identity and scoped checks. The Beta 19 source candidate
-adds the remaining Sprint 5 remote-guest, board-media and viewer-app work;
-its package result has not yet been established.
+The current public package is signed `v1.0.0-beta.19`; the
+[Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md)
+tracks its package identity and scoped checks. Beta 19 adds the remaining
+Sprint 5 remote-guest, board-media and viewer-app work.
 
 This matrix distinguishes implemented components, wired workflows, and
 evidence states. Its entries cover different development and release dates. A
