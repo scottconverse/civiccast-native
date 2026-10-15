@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.18
+current: v1.0.0-beta.19
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,13 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.18
+  - tag: v1.0.0-beta.19
     status: current
+    notes: >-
+      Published October 15, 2026; signed artifact source 7d61cbede3123a65b4a0d6d4b413ae99edbc3f04, build 38797808863 attempt 2, setup SHA-256 62cd8d9b43c8ce823e90b5aa0e2f7b1fedb233353dd96c843063cd328f83f17e, merge/tag target b5204750bd96986dcde1adadffc0fe4b4e81f695. All 26 public assets matched prepared SHA-256 digests and byte sizes; public downloader and PDF downloads matched. Exact-package install, upgrade, uninstall and soak are unverified; see the Beta 19 verification record.
+  - tag: v1.0.0-beta.18
+    status: superseded
+    superseded_by: v1.0.0-beta.19
     notes: >-
       Published October 15, 2026; signed artifact source 24c91a2ef7f9bd42bfa3ad9b7119e0c9f9e44168, build 38739455545, setup SHA-256 47d49e99d584d0907e66480709d364c26d93053831eb2fb5e15f7bc4b5aa85f5, merge/tag target af5228eef99f242fef798cc27f0d192d776d1eb8. All 26 public assets matched prepared SHA-256 digests. The focused Sandbox attempt logged off without an install result; see the exact verification record.
   - tag: v1.0.0-beta.17

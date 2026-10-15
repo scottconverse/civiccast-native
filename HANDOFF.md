@@ -1,10 +1,10 @@
-# Current handoff: Beta 19 release preparation (2026-10-15)
+# Current handoff: Beta 19 published (2026-10-15)
 
-Current branch: `feat/sprint5-board-audio`. Read current HEAD with
-`git rev-parse HEAD`.
-Current published tag: `v1.0.0-beta.18`; Beta 19 remains unpublished.
-PR: https://github.com/scottconverse/civiccast-native/pull/257.
-The source branch now includes Sprint 5 remote-guest composition and relay
+Current branch: `main`. Read current HEAD with `git rev-parse HEAD`.
+Current published tag: `v1.0.0-beta.19`.
+PR #257: https://github.com/scottconverse/civiccast-native/pull/257;
+merge/tag target `b5204750bd96986dcde1adadffc0fe4b4e81f695`.
+Current source includes Sprint 5 remote-guest composition and relay
 commissioning, bulletin-board live video and audio, and native viewer
 completion, along with the earlier Beta 17/18 publication/import work.
 Beta 19's signed kit was built from
@@ -12,8 +12,9 @@ Beta 19's signed kit was built from
 [workflow 38797808863](https://github.com/scottconverse/civiccast-native/actions/runs/38797808863).
 Its package identity and scoped checks are in the
 [Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md).
-Merge, tag and publication remain pending; the earlier Beta 18 download stays
-current until then.
+The [public Beta 19 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19)
+has 26 verified assets. The exact package has no fresh-install, upgrade,
+uninstall or extended-soak result; those outcomes remain for later evaluation.
 The historical Beta 17 record below is retained for attribution.
 
 ## Beta 17 release (2026-10-15)
