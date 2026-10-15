@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
-Remote-guest composition, bulletin-board media, native viewer completion,
-and protected paywall media remain separate open work.
+The CG Board Designer can select an uploaded audio track and set its level for
+between-program board output. The board filler includes that audio in its
+video segments, normalizes it, and airs the board silently if the track fails.
+
+Remote-guest composition, live video in a bulletin-board zone, native viewer
+completion, and protected paywall media remain separate open work.
 
 ## [1.0.0-beta.18] - 2026-10-15
 

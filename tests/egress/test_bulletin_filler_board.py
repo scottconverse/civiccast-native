@@ -19,7 +19,7 @@ from civiccast.cg.models import (
     CgZone,
     MultiZoneCgSnapshot,
 )
-from civiccast.egress.bulletin_filler import BulletinFillerSourceGenerator
+from civiccast.egress.bulletin_filler import BoardAudioBed, BulletinFillerSourceGenerator
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
 from civiccast.stream._ffmpeg import FfmpegNotFoundError, FfmpegResult
@@ -164,6 +164,25 @@ def _runner(calls: list[list[str]], *, out_path: Path | None = None):  # type: i
 
 
 class TestBoardFillerIntegration:
+    def test_configured_audio_bed_reaches_the_board_segment(self, tmp_path: Path) -> None:
+        calls: list[list[str]] = []
+        bed = tmp_path / "bed.wav"
+        bed.write_bytes(b"audio")
+        generator = BulletinFillerSourceGenerator(
+            work_dir=tmp_path,
+            bulletins_provider=lambda _cid: [],
+            board_provider=lambda _cid, _now: _board(),
+            board_audio_provider=lambda _cid: BoardAudioBed("bed", bed, -9.0, "v1"),
+            ffmpeg_runner=_runner(calls),
+            target_fill_seconds=10,
+        )
+
+        generator(_config())
+
+        assert str(bed) in calls[0]
+        assert "volume=-9.0dB" in " ".join(calls[0])
+        assert "[aout]" in calls[0]
+
     def test_active_board_renders_board_segment_per_airable_bulletin(self, tmp_path: Path) -> None:
         calls: list[list[str]] = []
         generator = BulletinFillerSourceGenerator(
@@ -270,6 +289,33 @@ def _not_found_runner(calls: list[list[str]]):  # type: ignore[no-untyped-def]
 
 
 class TestBoardFailOpenAndRetry:
+    def test_unreadable_audio_bed_keeps_board_on_air_with_silence(self, tmp_path: Path) -> None:
+        calls: list[list[str]] = []
+        bed = tmp_path / "bad-bed.wav"
+        bed.write_bytes(b"invalid")
+
+        def run(args: list[str]) -> FfmpegResult:
+            calls.append(args)
+            if str(bed) in args:
+                return FfmpegResult(returncode=1, stdout="", stderr="bad audio")
+            Path(args[-1]).write_bytes(b"ts")
+            return FfmpegResult(returncode=0, stdout="", stderr="")
+
+        generator = BulletinFillerSourceGenerator(
+            work_dir=tmp_path,
+            bulletins_provider=lambda _cid: [],
+            board_provider=lambda _cid, _now: _board(),
+            board_audio_provider=lambda _cid: BoardAudioBed("bed", bed, -9.0, "v1"),
+            ffmpeg_runner=run,
+            target_fill_seconds=10,
+        )
+
+        plan = generator(_config())
+
+        assert plan.segments[0].kind == "cg"
+        assert plan.segments[0].path.endswith(".silent.ts")
+        assert "anullsrc" in " ".join(calls[-1])
+
     """Pins the gate's Blocker fix (QA-1): board-path ffmpeg errors must never
     escape the filler uncaught -- they translate to SourcePrepareError so the
     daemon's existing fallback-to-slate contract handles them, and a text-render

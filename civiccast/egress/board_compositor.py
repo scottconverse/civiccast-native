@@ -43,6 +43,12 @@ def build_board_segment_args(
     now: datetime,
     image_resolver: ImageResolver,
     codec_args: list[str] | tuple[str, ...] | None = None,
+    audio_path: Path | None = None,
+    audio_gain_db: float = 0.0,
+    audio_sample_rate: int = 48000,
+    audio_channels: int = 2,
+    audio_codec: str = "aac",
+    audio_bitrate_kbps: int = 128,
 ) -> list[str]:
     """Build wrapper-ready ffmpeg args for one multi-zone board segment."""
 
@@ -59,6 +65,23 @@ def build_board_segment_args(
         image_resolver=image_resolver,
         include_text=include_text,
     )
+    audio_index = args.count("-i")
+    audio_input = (
+        ["-stream_loop", "-1", "-i", str(audio_path)]
+        if audio_path is not None
+        else ["-f", "lavfi", "-i", f"anullsrc=r={audio_sample_rate}:cl=stereo"]
+    )
+    args[args.index("-filter_complex") : args.index("-filter_complex")] = audio_input
+    filter_index = args.index("-filter_complex") + 1
+    audio_filter = (
+        f"[{audio_index}:a]aresample={audio_sample_rate},"
+        f"loudnorm=I=-23:TP=-2:LRA=7,volume={audio_gain_db}dB,"
+        "alimiter=limit=0.89:level=false[aout]"
+        if audio_path is not None
+        else f"[{audio_index}:a]anull[aout]"
+    )
+    args[filter_index] += f";{audio_filter}"
+    args.extend(["-map", "[aout]"])
     args.extend(
         [
             "-t",
@@ -66,6 +89,14 @@ def build_board_segment_args(
             "-r",
             str(frame_rate),
             *list(codec_args if codec_args is not None else ["-c:v", "mpeg2video"]),
+            "-c:a",
+            audio_codec,
+            "-b:a",
+            f"{audio_bitrate_kbps}k",
+            "-ar",
+            str(audio_sample_rate),
+            "-ac",
+            str(audio_channels),
             "-f",
             "mpegts",
             "-y",
@@ -132,6 +163,9 @@ def board_segment_cache_key(
     height: int,
     frame_rate: int,
     now: datetime,
+    audio_asset_ref: str | None = None,
+    audio_gain_db: float = 0.0,
+    audio_source_version: str | None = None,
 ) -> str:
     """Return the stable content-addressed cache key for one board segment."""
 
@@ -153,6 +187,11 @@ def board_segment_cache_key(
             "frame_rate": frame_rate,
             "segment_seconds": segment_seconds,
             "safe_area_pixels": _safe_area_pixels(width, height),
+        },
+        "audio": {
+            "asset_ref": audio_asset_ref,
+            "gain_db": audio_gain_db,
+            "source_version": audio_source_version,
         },
     }
     if _has_clock_zone(board):

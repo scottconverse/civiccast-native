@@ -170,6 +170,18 @@ def _joined(args: list[str]) -> str:
 
 
 class TestSegmentArgs:
+    def test_board_segment_carries_audio_with_or_without_a_bed(self) -> None:
+        silent = _args()
+        assert "anullsrc" in _joined(silent)
+        assert "-c:a" in silent
+        assert "[aout]" in silent
+
+        bed = _args(audio_path=Path("/tmp/board-bed.wav"), audio_gain_db=-12.0)
+        assert str(Path("/tmp/board-bed.wav")) in bed
+        assert "volume=-12.0dB" in _joined(bed)
+        assert "alimiter=" in _joined(bed)
+        assert "[aout]" in bed
+
     def test_background_covers_frame_with_branding_color(self) -> None:
         joined = _joined(_args())
         assert "color=c=#102030" in joined or "color=c=0x102030" in joined

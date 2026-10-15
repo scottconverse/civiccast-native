@@ -27,10 +27,13 @@ from civiccast.auth.models import OperatorIdentity
 from civiccast.cg.board_router import (
     _preview_ffmpeg_runner,
     board_staff_router,
+    get_cg_audio_asset_resolver,
     get_cg_board_service,
+    get_cg_depth_store,
 )
 from civiccast.cg.board_service import CgBoardService
 from civiccast.cg.board_store import CgBoardStore
+from civiccast.cg.depth_store import CgDepthStore
 from civiccast.db import Base
 from civiccast.stream._ffmpeg import FfmpegResult
 
@@ -86,6 +89,10 @@ def _build_app(
     if wire:
         service = CgBoardService(CgBoardStore(factory))
         app.dependency_overrides[get_cg_board_service] = lambda: service
+        app.dependency_overrides[get_cg_depth_store] = lambda: CgDepthStore(factory)
+        app.dependency_overrides[get_cg_audio_asset_resolver] = lambda: (
+            lambda ref: Path("music-1.wav") if ref == "music-1" else None
+        )
     if ffmpeg_runner is not None:
         app.dependency_overrides[_preview_ffmpeg_runner] = lambda: ffmpeg_runner
     return app
@@ -113,8 +120,29 @@ def _always_failing_png_runner() -> Callable[[list[str]], FfmpegResult]:
 
 
 _BOARD = "/api/staff/cg/channels/public/board"
+_BOARD_AUDIO = f"{_BOARD}/audio"
 _ZONES = "/api/staff/cg/channels/public/zones"
 _FEEDS = "/api/staff/cg/channels/public/feeds"
+
+
+def test_channel_board_audio_can_be_selected_adjusted_and_removed(factory) -> None:  # type: ignore[no-untyped-def]
+    client = _client(factory)
+    assert client.get(_BOARD_AUDIO).json() is None
+
+    selected = client.put(_BOARD_AUDIO, json={"asset_ref": "music-1", "gain_db": -9.0})
+    assert selected.status_code == 200
+    assert selected.json()["gain_db"] == -9.0
+    assert client.get(_BOARD_AUDIO).json()["asset_ref"] == "music-1"
+
+    rejected = client.put(_BOARD_AUDIO, json={"asset_ref": "missing", "gain_db": 0})
+    assert rejected.status_code == 422
+    assert client.put(_BOARD_AUDIO, json={"asset_ref": "music-1", "gain_db": 6}).status_code == 422
+    assert client.get(_BOARD_AUDIO).json()["asset_ref"] == "music-1"
+
+    assert client.delete(_BOARD_AUDIO).status_code == 204
+    assert client.get(_BOARD_AUDIO).json() is None
+
+
 _TICKER = {
     "region": "lower",
     "zone_kind": "ticker",

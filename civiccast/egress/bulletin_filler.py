@@ -16,6 +16,7 @@ import os
 import textwrap
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpe
 
 BulletinsProvider = Callable[[str], Sequence[CgBulletinSubmission]]
 BoardProvider = Callable[[str, datetime], ResolvedBoard | None]
+BoardAudioProvider = Callable[[str], "BoardAudioBed | None"]
 #: (channel_id, config) -> board raster for the S15 engine overlay, or None.
 #: Takes the config because frame geometry lives on ``canonical_profile``.
 BoardOverlayProvider = Callable[[str, "EgressConfig"], Path | None]
@@ -60,6 +62,15 @@ _DEFAULT_BACKGROUND = "0x1a2744"
 _LOG = logging.getLogger(__name__)
 _SLIDE_SECONDS = 10
 _WRAP_WIDTH = 46
+
+
+@dataclass(frozen=True)
+class BoardAudioBed:
+    asset_ref: str
+    path: Path
+    gain_db: float
+    source_version: str
+
 
 __all__ = [
     "BulletinFillerSourceGenerator",
@@ -80,6 +91,7 @@ class BulletinFillerSourceGenerator:
         bulletins_provider: BulletinsProvider,
         branding_provider: BrandingProvider | None = None,
         board_provider: BoardProvider | None = None,
+        board_audio_provider: BoardAudioProvider | None = None,
         ffmpeg_runner: FfmpegRunner = run_ffmpeg,
         slate_generator: SlateSourceGenerator | None = None,
         board_image_resolver: ImageResolver | None = None,
@@ -91,6 +103,7 @@ class BulletinFillerSourceGenerator:
         self._bulletins_provider = bulletins_provider
         self._branding_provider = branding_provider
         self._board_provider = board_provider
+        self._board_audio_provider = board_audio_provider
         self._ffmpeg_runner = ffmpeg_runner
         self._slate_generator = slate_generator or SlateSourceGenerator(
             work_dir=work_dir, ffmpeg_runner=ffmpeg_runner
@@ -141,6 +154,9 @@ class BulletinFillerSourceGenerator:
     ) -> EgressSourcePlan:
         bulletins = airable_bulletins(list(self._bulletins_provider(config.channel_id)), now=now)
         board_bulletins: list[CgBulletinSubmission | None] = list(bulletins) or [None]
+        audio_bed = (
+            self._board_audio_provider(config.channel_id) if self._board_audio_provider else None
+        )
         branding = self._branding(config.channel_id)
         profile = config.canonical_profile
         board_dir = self._work_dir / config.channel_id / "board"
@@ -158,6 +174,9 @@ class BulletinFillerSourceGenerator:
                 height=profile.height,
                 frame_rate=profile.fps,
                 now=now,
+                audio_asset_ref=audio_bed.asset_ref if audio_bed else None,
+                audio_gain_db=audio_bed.gain_db if audio_bed else 0.0,
+                audio_source_version=audio_bed.source_version if audio_bed else None,
             )
             segment_path = board_dir / f"{key}.ts"
             if not segment_path.exists():
@@ -166,14 +185,17 @@ class BulletinFillerSourceGenerator:
                 # (or a crash mid-write) leave a partial segment that a later
                 # exists() check happily airs (gate finding: cache TOCTOU).
                 staging = segment_path.with_name(f".{key}.{os.getpid()}.partial.ts")
-                self._render_board_segment(
+                rendered_with_audio = self._render_board_segment(
                     segment_path=staging,
                     config=config,
                     board=board,
                     bulletin=bulletin,
                     branding=branding,
                     now=now,
+                    audio_bed=audio_bed,
                 )
+                if audio_bed is not None and not rendered_with_audio:
+                    segment_path = board_dir / f"{key}.silent.ts"
                 staging.replace(segment_path)
             segments.append(
                 EgressSourceSegment(
@@ -264,34 +286,11 @@ class BulletinFillerSourceGenerator:
         bulletin: CgBulletinSubmission | None,
         branding: ChannelBranding | None,
         now: datetime,
-    ) -> None:
+        audio_bed: BoardAudioBed | None,
+    ) -> bool:
         profile = config.canonical_profile
-        args = build_board_segment_args(
-            board=board,
-            bulletin=bulletin,
-            width=profile.width,
-            height=profile.height,
-            frame_rate=profile.fps,
-            background_color=self._background(branding),
-            station_short_name=(branding.short_name if branding else ""),
-            segment_seconds=self._slide_seconds,
-            out_path=segment_path,
-            include_text=True,
-            now=now,
-            image_resolver=self._board_image_resolver or (lambda _: None),
-            codec_args=self._board_codec_args(profile),
-        )
-        result = self._run_ffmpeg_or_fail_open(
-            args, what=f"board segment for channel {config.channel_id}"
-        )
-        if result.returncode != 0:
-            # Mirror the slide-path posture on missing font support: retry with all
-            # text disabled so the board can still air as an image-only fallback.
-            _LOG.warning(
-                "channel %s: board text render failed; retrying image-only. The board "
-                "will air WITHOUT its text zones until the host's fonts are fixed.",
-                config.channel_id,
-            )
+
+        def attempt(include_text: bool, bed: BoardAudioBed | None) -> bool:
             args = build_board_segment_args(
                 board=board,
                 bulletin=bulletin,
@@ -302,20 +301,53 @@ class BulletinFillerSourceGenerator:
                 station_short_name=(branding.short_name if branding else ""),
                 segment_seconds=self._slide_seconds,
                 out_path=segment_path,
-                include_text=False,
+                include_text=include_text,
                 now=now,
                 image_resolver=self._board_image_resolver or (lambda _: None),
                 codec_args=self._board_codec_args(profile),
+                audio_path=bed.path if bed else None,
+                audio_gain_db=bed.gain_db if bed else 0.0,
+                audio_sample_rate=profile.audio_sample_rate,
+                audio_channels=profile.audio_channels,
+                audio_codec=profile.audio_codec,
+                audio_bitrate_kbps=profile.audio_bitrate_kbps,
             )
-            result = self._run_ffmpeg_or_fail_open(
-                args, what=f"board segment for channel {config.channel_id}"
+            try:
+                result = self._run_ffmpeg_or_fail_open(
+                    args, what=f"board segment for channel {config.channel_id}"
+                )
+            except SourcePrepareError as exc:
+                if isinstance(exc.__cause__, FfmpegError):
+                    return False
+                raise
+            return result.returncode == 0
+
+        if attempt(True, audio_bed):
+            return audio_bed is not None
+        if audio_bed is not None:
+            _LOG.warning(
+                "channel %s: board render failed with audio; retrying without text",
+                config.channel_id,
             )
-        if result.returncode != 0:
-            ref = "empty" if bulletin is None else bulletin.submission_id
-            raise SourcePrepareError(
-                f"Could not render board segment for bulletin {ref!r}; "
-                "inspect FFmpeg output before retrying."
+            if attempt(False, audio_bed):
+                return True
+            _LOG.warning(
+                "channel %s: configured board audio could not be rendered; airing the board silently",
+                config.channel_id,
             )
+            if attempt(True, None):
+                return False
+        _LOG.warning(
+            "channel %s: board text render failed; retrying image-only",
+            config.channel_id,
+        )
+        if attempt(False, None):
+            return False
+        ref = "empty" if bulletin is None else bulletin.submission_id
+        raise SourcePrepareError(
+            f"Could not render board segment for bulletin {ref!r}; "
+            "inspect FFmpeg output before retrying."
+        )
 
     def _run_ffmpeg_or_fail_open(self, args: list[str], *, what: str) -> Any:
         """Run ffmpeg, converting an absent/failed binary into the daemon's contract.
@@ -461,14 +493,14 @@ def _default_image_resolver(session_factory: Any) -> ImageResolver:
         path = Path(row.file_path).expanduser().resolve()
         # Defense-in-depth confinement (gate finding F-4): file_path is a
         # staff-set DB column, not community-controlled, so this isn't
-        # exploitable today -- but a board/bulletin image zone should never
+        # exploitable today -- but board image and audio assets should never
         # be able to resolve to an arbitrary filesystem path outside
         # CivicCast's own upload storage. Fail closed (render without the
         # image, same as an unresolvable ref) rather than serve it.
         upload_root = _upload_confinement_root()
         if upload_root is None or not path.is_relative_to(upload_root):
             _LOG.warning(
-                "image zone ref %r resolved to %s, which is outside the "
+                "CG asset ref %r resolved to %s, which is outside the "
                 "configured CivicCast upload root (%s); refusing to render "
                 "it into the board/bulletin.",
                 ref,
@@ -477,6 +509,19 @@ def _default_image_resolver(session_factory: Any) -> ImageResolver:
             )
             return None
         return path if path.is_file() else None
+
+    return resolve
+
+
+def _default_audio_resolver(session_factory: Any) -> ImageResolver:
+    asset_store = PostgresAssetStore(session_factory)
+    confined_path = _default_image_resolver(session_factory)
+
+    def resolve(ref: str) -> Path | None:
+        row = asset_store.get_staff_row(ref)
+        if row is None or not row.codec_audio:
+            return None
+        return confined_path(ref)
 
     return resolve
 
@@ -490,10 +535,14 @@ def build_filler_source_provider(
 
     from civiccast.cable.channel import default_channel_profiles
     from civiccast.cg.bulletin_store import PostgresCgBulletinStore
+    from civiccast.cg.depth_store import CgDepthStore
 
     bulletin_store = PostgresCgBulletinStore(session_factory)
     board_store = CgBoardStore(session_factory)
+    audio_store = CgDepthStore(session_factory)
     feed_cache = FeedCache()
+    asset_resolver = _default_image_resolver(session_factory)
+    audio_resolver = _default_audio_resolver(session_factory)
 
     def board_resolver(channel_id: str, now: datetime) -> ResolvedBoard | None:
         return build_board_snapshot_from_store(
@@ -509,6 +558,35 @@ def build_filler_source_provider(
                 return profile.branding
         return None
 
+    def _board_audio(channel_id: str) -> BoardAudioBed | None:
+        configured = audio_store.list_audio(scope="channel", target_id=channel_id)
+        if not configured:
+            return None
+        audio = configured[-1]
+        path = audio_resolver(audio.asset_ref)
+        if path is None:
+            _LOG.warning(
+                "channel %s: configured board audio asset %s is unavailable; airing silence",
+                channel_id,
+                audio.asset_ref,
+            )
+            return None
+        try:
+            stat = path.stat()
+        except OSError:
+            _LOG.warning(
+                "channel %s: board audio asset %s disappeared before rendering; airing silence",
+                channel_id,
+                audio.asset_ref,
+            )
+            return None
+        return BoardAudioBed(
+            asset_ref=audio.asset_ref,
+            path=path,
+            gain_db=audio.gain_db,
+            source_version=f"{stat.st_size}:{stat.st_mtime_ns}",
+        )
+
     slate_generator = SlateSourceGenerator(work_dir=work_dir)
     return FillerSourceProvider(
         bulletin_generator=BulletinFillerSourceGenerator(
@@ -516,7 +594,8 @@ def build_filler_source_provider(
             bulletins_provider=bulletin_store.list_approved,
             branding_provider=_branding,
             board_provider=board_resolver,
-            board_image_resolver=_default_image_resolver(session_factory),
+            board_audio_provider=_board_audio,
+            board_image_resolver=asset_resolver,
             ffmpeg_runner=run_ffmpeg,
             slate_generator=slate_generator,
         ),

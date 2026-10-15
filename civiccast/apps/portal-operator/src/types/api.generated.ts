@@ -624,6 +624,11 @@ export interface BetaHandoffSummary {
   lanes: Array<BetaHandoffLane>
 }
 
+export interface BoardAudioRequest {
+  asset_ref: string
+  gain_db?: number
+}
+
 export interface BoardCreateRequest {
   template_id: string
 }
@@ -699,6 +704,16 @@ export interface BrokenMediaGateResult {
 export interface BuildRequest {
   app_target: 'web_pwa' | 'roku' | 'tvos' | 'fire_tv' | 'android_tv' | 'android_mobile' | 'ios_ipados' | 'cg' | 'epg'
   build_tier?: 'unbranded' | 'branded' | null
+}
+
+export interface BulletinAudio {
+  audio_id: string
+  scope: 'bulletin' | 'channel'
+  target_id: string
+  asset_ref: string
+  loudness_regime?: string
+  gain_db?: number
+  created_at: string
 }
 
 export interface BulletinCreate {

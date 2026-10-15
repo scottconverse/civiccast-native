@@ -5,16 +5,21 @@ import {
   addCgFeed,
   addCgZone,
   createCgBoard,
+  deleteCgBoardAudio,
   deleteCgFeed,
   deleteCgZone,
   getAppPlatformConfig,
   getCgBoard,
+  getCgBoardAudio,
   getStaffIdentity,
   listCgBoardAudit,
+  listStaffAssets,
   previewCgBoard,
+  setCgBoardAudio,
   updateCgBoard,
   updateCgFeed,
   updateCgZone,
+  type BoardAudio,
 } from '../api/client'
 import { FeedApprovalQueue } from './FeedApprovalQueue'
 import { hasOperatorRole } from '../auth/roles'
@@ -42,6 +47,7 @@ import {
   zoneSummary,
 } from './cg-board-format'
 import { EmptyState } from '../components/EmptyState'
+import type { AssetRow } from '../types/asset'
 
 const POLL_MS = 30_000
 
@@ -125,6 +131,39 @@ function ConfirmDeleteButton({ onDelete }: { onDelete: () => void }) {
         Cancel
       </button>
     </span>
+  )
+}
+
+export function BoardAudioForm({ initial, assets, submitting, onSubmit }: {
+  initial: BoardAudio | null
+  assets: AssetRow[]
+  submitting: boolean
+  onSubmit: (payload: { asset_ref: string; gain_db: number }) => void
+}) {
+  const [assetRef, setAssetRef] = useState(initial?.asset_ref ?? '')
+  const [gainDb, setGainDb] = useState(initial?.gain_db ?? 0)
+  const audioAssets = assets.filter((asset) => asset.file_path && asset.codec_audio)
+  const currentMissing = initial && !audioAssets.some((asset) => asset.asset_id === initial.asset_ref)
+
+  return (
+    <form className="mt-3 grid gap-3" onSubmit={(event) => {
+      event.preventDefault()
+      if (assetRef) onSubmit({ asset_ref: assetRef, gain_db: gainDb })
+    }}>
+      <label className="grid gap-1 text-xs">
+        <span>Audio track</span>
+        <select aria-label="Board audio track" value={assetRef} onChange={(event) => setAssetRef(event.target.value)} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+          <option value="">Select an uploaded audio track…</option>
+          {currentMissing && <option value={initial.asset_ref}>Unavailable asset: {initial.asset_ref}</option>}
+          {audioAssets.map((asset) => <option key={asset.asset_id} value={asset.asset_id}>{asset.title}</option>)}
+        </select>
+      </label>
+      <label className="grid gap-1 text-xs">
+        <span>Board audio level: {gainDb} dB</span>
+        <input aria-label="Board audio level" type="range" min="-36" max="0" step="1" value={gainDb} onChange={(event) => setGainDb(Number(event.target.value))} />
+      </label>
+      <PrimaryButton label={initial ? 'Save audio changes' : 'Set board audio'} disabled={submitting || !assetRef} onClick={() => onSubmit({ asset_ref: assetRef, gain_db: gainDb })} />
+    </form>
   )
 }
 
@@ -214,7 +253,7 @@ export function ZoneForm({
             {ZONE_KINDS.map((k) => (
               <option key={k} value={k} disabled={k === 'audio'}>
                 {k === 'audio'
-                  ? 'Board background audio — coming in a future release'
+                  ? 'Board audio is configured below the Board card'
                   : humanize(k)}
               </option>
             ))}
@@ -231,7 +270,7 @@ export function ZoneForm({
           </select>
         </label>
         <div
-          className="grid gap-2 rounded-md p-3 text-xs sm:col-span-2 sm:grid-cols-2"
+          className="grid gap-2 rounded-md p-3 text-xs sm:col-span-2"
           style={insetStyle}
           aria-label="Future CG options"
         >
@@ -241,13 +280,6 @@ export function ZoneForm({
               A future release will let a board region show a live camera or program source. The
               current CG renderer continues to support its existing text, schedule, feed, image,
               logo, ticker, and alert zones.
-            </p>
-          </div>
-          <div>
-            <div className="font-semibold">Board background audio — coming in a future release</div>
-            <p className="m-0 mt-1" style={{ color: 'var(--cc-ink-3)' }}>
-              A future release will let a channel mix a managed audio bed under its bulletin board.
-              This option is disabled because the current renderer does not play it.
             </p>
           </div>
         </div>
@@ -489,6 +521,8 @@ export function CgBoardDesignerScreen() {
 
   const boardQuery = useNoneOn404<BoardView | null>(['cg-board', channelId], () => getCgBoard(channelId), canRead)
   const board = boardQuery.data ?? null
+  const audioQuery = useQuery({ queryKey: ['cg-board-audio', channelId], queryFn: () => getCgBoardAudio(channelId), enabled: canRead && board != null, retry: false })
+  const assetsQuery = useQuery({ queryKey: ['staff-assets'], queryFn: listStaffAssets, enabled: canWrite && board != null, retry: false })
   const previewQuery = useNoneOn404<ResolvedBoard | null>(['cg-board-preview', channelId], () => previewCgBoard(channelId), canRead && board != null)
   const auditQuery = useQuery({
     queryKey: ['cg-board-audit', channelId],
@@ -502,6 +536,7 @@ export function CgBoardDesignerScreen() {
     void queryClient.invalidateQueries({ queryKey: ['cg-board', channelId] })
     void queryClient.invalidateQueries({ queryKey: ['cg-board-preview', channelId] })
     void queryClient.invalidateQueries({ queryKey: ['cg-board-audit', channelId] })
+    void queryClient.invalidateQueries({ queryKey: ['cg-board-audio', channelId] })
   }
   const onError = (fallback: string) => (err: unknown) => setActionError(apiMessage(err, fallback))
   const onOk = (after?: () => void) => () => {
@@ -518,13 +553,16 @@ export function CgBoardDesignerScreen() {
   const addFeed = useMutation({ mutationFn: (p: FeedInput) => addCgFeed(channelId, p), onSuccess: onOk(() => setShowAddFeed(false)), onError: onError('Could not register the feed.') })
   const updateFeed = useMutation({ mutationFn: ({ id, p }: { id: string; p: FeedInput }) => updateCgFeed(channelId, id, p), onSuccess: onOk(() => setEditingFeedId(null)), onError: onError('Could not update the feed.') })
   const deleteFeed = useMutation({ mutationFn: (id: string) => deleteCgFeed(channelId, id), onSuccess: onOk(), onError: onError('Could not delete the feed.') })
+  const setAudio = useMutation({ mutationFn: (payload: { asset_ref: string; gain_db: number }) => setCgBoardAudio(channelId, payload), onSuccess: onOk(), onError: onError('Could not save the board audio.') })
+  const deleteAudio = useMutation({ mutationFn: () => deleteCgBoardAudio(channelId), onSuccess: onOk(), onError: onError('Could not remove the board audio.') })
 
   const channels = appConfigQuery.data?.channels ?? []
   const feeds = board?.feeds ?? []
   const zones = board?.zones ?? []
   const busy =
     createBoard.isPending || updateBoard.isPending || addZone.isPending || updateZone.isPending ||
-    deleteZone.isPending || addFeed.isPending || updateFeed.isPending || deleteFeed.isPending
+    deleteZone.isPending || addFeed.isPending || updateFeed.isPending || deleteFeed.isPending ||
+    setAudio.isPending || deleteAudio.isPending
 
   return (
     <div className="grid min-w-0 gap-5 overflow-x-hidden px-4 py-5 sm:px-6">
@@ -624,6 +662,29 @@ export function CgBoardDesignerScreen() {
                 </div>
               )}
             </section>
+
+            {board != null && (
+              <section className="rounded-md p-4" style={panelStyle} aria-label="Board audio">
+                <h2 className="m-0 text-base font-semibold">Board background audio</h2>
+                <p className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                  Choose an uploaded track to play when this board fills a gap between programs. Audio is normalized and the level can be reduced below that target.
+                </p>
+                {audioQuery.isLoading && <div className="text-xs">Loading board audio…</div>}
+                {audioQuery.isError && <div role="alert" className="text-xs">{apiMessage(audioQuery.error, 'Could not load board audio.')}</div>}
+                {canWrite && assetsQuery.isError && <div role="alert" className="text-xs">{apiMessage(assetsQuery.error, 'Could not load audio tracks.')}</div>}
+                {canWrite && audioQuery.isSuccess && assetsQuery.isSuccess && (
+                  <BoardAudioForm
+                    key={`${channelId}:${audioQuery.data?.asset_ref ?? ''}:${audioQuery.data?.gain_db ?? ''}`}
+                    initial={audioQuery.data}
+                    assets={assetsQuery.data}
+                    submitting={setAudio.isPending}
+                    onSubmit={(payload) => setAudio.mutate(payload)}
+                  />
+                )}
+                {!canWrite && audioQuery.isSuccess && <div className="text-sm">{audioQuery.data ? `Track: ${audioQuery.data.asset_ref}, level ${audioQuery.data.gain_db} dB` : 'No background audio selected.'}</div>}
+                {canWrite && audioQuery.data && <div className="mt-3"><ConfirmDeleteButton onDelete={() => deleteAudio.mutate()} /></div>}
+              </section>
+            )}
 
             {/* Zones */}
             {board != null && (

@@ -12,10 +12,9 @@ Extends the board/zone/bulletin model with the depth incumbent PEG graphics ship
   :class:`~civiccast.cg.board_models.CgZoneConfig` in slice 6) restricts the
   zone to tagged content.
 
-These are the authoring/persistence layer. The actual on-channel composition
-(live-video PiP/L-bar, background-audio mix) is performed by the GStreamer
-engine (S15) via the CG-overlay contract; the live composite/loudness proofs
-(DC-CG1 / DC-CG2) are owned by the engine's WSL/tester lane. No hard FKs —
+These are the authoring/persistence layer. The channel background bed is
+rendered into between-program board segments by the FFmpeg compositor; live
+video inside a board zone remains separate work. No hard FKs —
 ``bulletin_id`` / ``target_id`` / ``channel_id`` are soft string references
 resolved in the store (matching the rest of the cg module).
 """
@@ -26,7 +25,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from civiccast.db import Base
@@ -90,6 +89,7 @@ class BulletinAudio(BaseModel):
     target_id: Annotated[str, Field(min_length=1, max_length=120)]  # bulletin_id or channel_id
     asset_ref: Annotated[str, Field(min_length=1, max_length=120)]
     loudness_regime: Annotated[str, Field(min_length=1, max_length=40)] = "inherit"
+    gain_db: Annotated[float, Field(ge=-36.0, le=0.0, allow_inf_nan=False)] = 0.0
     created_at: datetime
 
 
@@ -136,6 +136,7 @@ class BulletinAudioDb(Base):
     loudness_regime: Mapped[str] = mapped_column(
         String(40), nullable=False, default="inherit", server_default="inherit"
     )
+    gain_db: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )

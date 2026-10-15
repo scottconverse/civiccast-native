@@ -10047,6 +10047,199 @@
         ]
       }
     },
+    "/api/staff/cg/channels/{channel_id}/board/audio": {
+      "get": {
+        "tags": [
+          "staff",
+          "cg"
+        ],
+        "summary": "Get Board Audio",
+        "operationId": "get_board_audio_api_staff_cg_channels__channel_id__board_audio_get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BulletinAudio"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Board Audio Api Staff Cg Channels  Channel Id  Board Audio Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "staff",
+          "cg"
+        ],
+        "summary": "Set Board Audio",
+        "operationId": "set_board_audio_api_staff_cg_channels__channel_id__board_audio_put",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BoardAudioRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulletinAudio"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "staff",
+          "cg"
+        ],
+        "summary": "Delete Board Audio",
+        "operationId": "delete_board_audio_api_staff_cg_channels__channel_id__board_audio_delete",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/cg/channels/{channel_id}/zones": {
       "post": {
         "tags": [
@@ -36525,6 +36718,29 @@
         "title": "BetaHandoffSummary",
         "description": "Operator-facing beta handoff state without secret values or soft success."
       },
+      "BoardAudioRequest": {
+        "properties": {
+          "asset_ref": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Asset Ref"
+          },
+          "gain_db": {
+            "type": "number",
+            "maximum": 0.0,
+            "minimum": -36.0,
+            "title": "Gain Db",
+            "default": 0.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "asset_ref"
+        ],
+        "title": "BoardAudioRequest"
+      },
       "BoardCreateRequest": {
         "properties": {
           "template_id": {
@@ -36941,6 +37157,66 @@
         ],
         "title": "BuildRequest",
         "description": "Body for POST /builds."
+      },
+      "BulletinAudio": {
+        "properties": {
+          "audio_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Audio Id"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "bulletin",
+              "channel"
+            ],
+            "title": "Scope"
+          },
+          "target_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Target Id"
+          },
+          "asset_ref": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Asset Ref"
+          },
+          "loudness_regime": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Loudness Regime",
+            "default": "inherit"
+          },
+          "gain_db": {
+            "type": "number",
+            "maximum": 0.0,
+            "minimum": -36.0,
+            "title": "Gain Db",
+            "default": 0.0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "audio_id",
+          "scope",
+          "target_id",
+          "asset_ref",
+          "created_at"
+        ],
+        "title": "BulletinAudio",
+        "description": "Per-bulletin narration or per-channel background bed (loudness-managed)."
       },
       "BulletinCreate": {
         "properties": {

@@ -1559,11 +1559,12 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 4. To add a zone, click **Add zone**, fill in **Region**, **Zone kind** and **Content source**, then click **Add zone** again. To delete a zone, click **Delete**, then **Confirm delete?**.
 5. To bring in an outside source such as a news feed or a calendar, click **Add feed**, fill in **Feed kind**, **Trust tier**, **Feed label**, **Source URL** and **Refresh (minutes)**, and click **Register feed**.
 6. To vet individual feed items, click **Review items** on a feed and click **Approve** on each item you want to allow.
-7. Check the **Live preview** and read **Board history** to see who changed what.
+7. In post-Beta 18 builds, use **Board background audio** to choose an uploaded track with audio and reduce its level if needed. The track plays when the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
+8. Check the **Live preview** and read **Board history** to see who changed what.
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Known issue (beta.11):** if you only have the Support admin role, you can open this screen but every Add, Edit and Delete button is missing, and nothing says why. Changing the template does not tell you what happens to existing zones, and we could not confirm that. You cannot switch a board off from here. The zone form lists some options as "coming in a future release" (live video in a zone and board background audio). Do not plan around them. Labels such as **Region**, **Zone kind**, **Trust tier** and **feed adapter** are not explained on screen. Ask whoever set up your board.
+> **Beta 18 note:** Board background audio is unavailable in the published Beta 18 package. Post-Beta 18 source adds the control and on-air audio path. Live video inside a board zone remains future work. Support admins can view the designer but cannot edit it.
 
 ### Bring in remote guests (Remote Contribution)
 
@@ -7461,6 +7462,9 @@ Staff routes (`/api/staff/*`) require a bearer token and a role; public routes d
 | GET | `/api/staff/cg/channels/{channel_id}/board` | Read the active CG board for a channel (board + zones + feeds) |  | 200, 401, 422, 429, 503 |
 | PATCH | `/api/staff/cg/channels/{channel_id}/board` | Update the active CG board (template / active) | application/json | 200, 401, 404, 422, 429, 503 |
 | POST | `/api/staff/cg/channels/{channel_id}/board` | Create (and activate) a CG board for a channel | application/json | 201, 401, 422, 429, 503 |
+| GET | `/api/staff/cg/channels/{channel_id}/board/audio` | Read the channel board's background-audio selection |  | 200, 401, 422, 429, 503 |
+| PUT | `/api/staff/cg/channels/{channel_id}/board/audio` | Select an uploaded audio asset and set its level | application/json | 200, 401, 422, 429, 503 |
+| DELETE | `/api/staff/cg/channels/{channel_id}/board/audio` | Remove the board background-audio selection |  | 204, 401, 422, 429, 503 |
 | GET | `/api/staff/cg/channels/{channel_id}/board/audit` | List board-lifecycle audit events (newest first) |  | 200, 401, 422, 429, 503 |
 | GET | `/api/staff/cg/channels/{channel_id}/bulletins` | Read operator community bulletin submission queue |  | 200, 401, 422, 429 |
 | POST | `/api/staff/cg/channels/{channel_id}/bulletins` | Add a community bulletin submission to the channel board | application/json | 200, 401, 422, 429, 503 |

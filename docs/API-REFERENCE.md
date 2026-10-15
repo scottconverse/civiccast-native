@@ -1908,6 +1908,33 @@ Create (and activate) a CG board for a channel.
 - Request body: `BoardCreateRequest`
 - Responses: 201 `CgBoard`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `DELETE /api/staff/cg/channels/{channel_id}/board/audio`
+
+Delete Board Audio.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `channel_id` (path, required): `string`
+- Request body: none
+- Responses: 204 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/cg/channels/{channel_id}/board/audio`
+
+Get Board Audio.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `channel_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `BulletinAudio | null`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/cg/channels/{channel_id}/board/audio`
+
+Set Board Audio.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `channel_id` (path, required): `string`
+- Request body: `BoardAudioRequest`
+- Responses: 200 `BulletinAudio`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/cg/channels/{channel_id}/board/audit`
 
 List board-lifecycle audit events (newest first).
@@ -5350,6 +5377,11 @@ Read CivicCast local federation metadata.
 - `ready` (required): `boolean`
 - `version` (required): `string`
 
+### `BoardAudioRequest`
+
+- `asset_ref` (required): `string`
+- `gain_db` (optional): `number`
+
 ### `BoardCreateRequest`
 
 - `template_id` (required): `string`
@@ -5426,6 +5458,16 @@ Read CivicCast local federation metadata.
 
 - `app_target` (required): `'web_pwa' | 'roku' | 'tvos' | 'fire_tv' | 'android_tv' | 'android_mobile' | 'ios_ipados' | 'cg' | 'epg'`
 - `build_tier` (optional): `'unbranded' | 'branded' | null`
+
+### `BulletinAudio`
+
+- `asset_ref` (required): `string`
+- `audio_id` (required): `string`
+- `created_at` (required): `string`
+- `gain_db` (optional): `number`
+- `loudness_regime` (optional): `string`
+- `scope` (required): `'bulletin' | 'channel'`
+- `target_id` (required): `string`
 
 ### `BulletinCreate`
 

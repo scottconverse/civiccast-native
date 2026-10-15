@@ -1,8 +1,8 @@
 {
   "source": "docs/USER-MANUAL.md",
-  "source_sha256": "1f3257e601fe50a5288488f17f486a614ea04992aaacd295be20ccd872ca1e42",
+  "source_sha256": "aacd9649922f88e1ffc00fdbf677a012fd79bb248537eaed772881ed6e22ca62",
   "artifact": {
     "path": "civiccast/docsite/manual.json",
-    "sha256": "4653c7e399c38e6495514486dac432661f652b8699c72f8ef9804953ac1c302f"
+    "sha256": "e5768e3e773d293bd79f45efcbc4b6e0a3f4a65e889dd527c54c9ad9f1206b71"
   }
 }

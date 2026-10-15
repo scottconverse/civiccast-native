@@ -123,11 +123,16 @@ from civiccast.captions.vod_job import (
     OfflineCaptionJobWorker,
 )
 from civiccast.cg.board_router import board_staff_router as cg_board_staff_router
-from civiccast.cg.board_router import get_cg_board_service
+from civiccast.cg.board_router import (
+    get_cg_audio_asset_resolver,
+    get_cg_board_service,
+    get_cg_depth_store,
+)
 from civiccast.cg.board_service import CgBoardService
 from civiccast.cg.board_store import CgBoardStore
 from civiccast.cg.bulletin_expiry_worker import BulletinExpirySettings, BulletinExpiryWorker
 from civiccast.cg.bulletin_store import PostgresCgBulletinStore
+from civiccast.cg.depth_store import CgDepthStore
 from civiccast.cg.router import get_cg_board_service as get_cg_feed_board_service
 from civiccast.cg.router import get_cg_bulletin_store, get_eas_overlay_provider
 from civiccast.cg.router import public_router as cg_public_router
@@ -160,6 +165,7 @@ from civiccast.egress.audio_router import public_router as audio_tracks_public_r
 from civiccast.egress.audio_router import staff_router as audio_tracks_staff_router
 from civiccast.egress.audio_tracks import AudioTrackStore
 from civiccast.egress.automation import ChannelAutomationSettings, build_channel_automation
+from civiccast.egress.bulletin_filler import _default_audio_resolver
 from civiccast.egress.caption_feed import build_caption_feed_worker
 from civiccast.egress.caption_proof_process import CaptionProofProcessSupervisor
 from civiccast.egress.caption_proof_worker import build_caption_proof_worker
@@ -3185,6 +3191,10 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     app.dependency_overrides[get_cg_bulletin_store] = _resolve_cg_bulletin_store
     app.dependency_overrides[get_cg_board_service] = _resolve_cg_board_service
+    app.dependency_overrides[get_cg_depth_store] = lambda: CgDepthStore(_session_factory)
+    app.dependency_overrides[get_cg_audio_asset_resolver] = lambda: _default_audio_resolver(
+        _session_factory
+    )
     # WP-06: the public feed catalog / portal display (civiccast.cg.router)
     # defines its own lighter DI seam of the same name to avoid pulling
     # board_router's egress/ffmpeg import chain into the public router --
