@@ -680,7 +680,97 @@ class TestMagicLinkRouter:
             json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
         )
         assert r.status_code == 200
-        assert r.json() == {"sent": True}
+        assert r.json() == {"sent": False}
+
+    def test_default_sender_does_not_report_delivery_without_real_mail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CIVICCAST_PROVIDER_MAIL", raising=False)
+        app, _, _, _ = _build()
+        app.dependency_overrides.pop(get_magic_link_email_sender)
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload(enabled=True))
+
+        response = client.post(
+            "/api/public/paywall/magic-link",
+            json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"sent": False}
+
+    @pytest.mark.parametrize(
+        ("resident_url", "expected_base", "scope_kind", "expected_route"),
+        [
+            (None, "https://station.example", "asset", "watch/vid-1"),
+            ("https://watch.example", "https://watch.example", "series", "redeem"),
+        ],
+    )
+    def test_real_mail_sends_portal_link_and_reports_success(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        resident_url: str | None,
+        expected_base: str,
+        scope_kind: str,
+        expected_route: str,
+    ) -> None:
+        from civiccast.subscribe.smtp import SmtpMailbox
+
+        delivered: list[tuple[str, str]] = []
+        monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
+        monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://station.example")
+        if resident_url is None:
+            monkeypatch.delenv("CIVICCAST_RESIDENT_PORTAL_URL", raising=False)
+        else:
+            monkeypatch.setenv("CIVICCAST_RESIDENT_PORTAL_URL", resident_url)
+        monkeypatch.setenv("CIVICCAST_SMTP_HOST", "relay.example")
+        monkeypatch.setenv("CIVICCAST_SMTP_FROM", "station@example.com")
+        monkeypatch.setattr(
+            SmtpMailbox,
+            "send_magic_link",
+            lambda self, *, email, link_url: delivered.append((email, link_url)),
+            raising=False,
+        )
+        app, _, _, _ = _build()
+        app.dependency_overrides.pop(get_magic_link_email_sender)
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload(enabled=True))
+
+        response = client.post(
+            "/api/public/paywall/magic-link",
+            json={"email": "viewer@example.com", "scope_kind": scope_kind, "scope_id": "vid-1"},
+        )
+
+        assert response.json() == {"sent": True}
+        assert len(delivered) == 1
+        assert delivered[0][0] == "viewer@example.com"
+        assert delivered[0][1].startswith(f"{expected_base}/#/{expected_route}?token=")
+        assert "token" not in response.text
+
+    def test_mail_failure_reports_not_sent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from civiccast.subscribe.smtp import SmtpMailbox
+
+        monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
+        monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://station.example")
+        monkeypatch.setenv("CIVICCAST_SMTP_HOST", "relay.example")
+        monkeypatch.setenv("CIVICCAST_SMTP_FROM", "station@example.com")
+
+        def refused(self, *, email: str, link_url: str) -> None:
+            raise OSError("relay unavailable")
+
+        monkeypatch.setattr(SmtpMailbox, "send_magic_link", refused, raising=False)
+        app, _, _, _ = _build()
+        app.dependency_overrides.pop(get_magic_link_email_sender)
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload(enabled=True))
+
+        response = client.post(
+            "/api/public/paywall/magic-link",
+            json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"sent": False}
 
     def test_mint_does_not_echo_token(self) -> None:
         app, _, _, captured = _build()
@@ -721,7 +811,7 @@ class TestMagicLinkRouter:
         # Now verify the link.
         r = client.get("/api/public/paywall/verify", params={"token": token})
         assert r.status_code == 200
-        assert r.json() == {"allowed": True, "reason": None}
+        assert r.json() == {"allowed": True, "email": "viewer@example.com"}
         # And the access decision now allows.
         r = client.get(
             "/api/public/paywall/access",

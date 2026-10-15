@@ -279,7 +279,11 @@ export function PaywallGate({ assetId, children }: PaywallGateProps) {
       setLinkError(null)
       setLinkSubmitting(true)
       try {
-        await requestMagicLink(trimmed, 'asset', assetId)
+        const result = await requestMagicLink(trimmed, 'asset', assetId)
+        if (!result.sent) {
+          setLinkError('We could not send a sign-in link right now. Please try again in a moment.')
+          return
+        }
         setLinkSent(true)
       } catch {
         setLinkError(

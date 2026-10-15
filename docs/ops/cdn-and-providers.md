@@ -196,6 +196,16 @@ options. A mock is never a silent fallback.
 | `webhook` | No credentials (each subscription carries its own sealed signing secret). Optional `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` (30 default). Delivery: POST of the canonical JSON payload with `X-CivicCast-Signature: sha256=<hmac>`; failures queue durably and the webhook retry worker re-delivers with backoff (`CIVICCAST_WEBHOOK_RETRY_WORKER=inline\|off`, `CIVICCAST_WEBHOOK_RETRY_POLL_SECONDS` 60, `CIVICCAST_WEBHOOK_RETRY_BACKOFF_SECONDS` 120, `CIVICCAST_WEBHOOK_RETRY_MAX_ATTEMPTS` 8; see `docs/ops/background-workers.md`). |
 | `local_nas` | `CIVICCAST_NAS_ARCHIVE_PATH` — the mounted archive directory (local mount or UNC path; the OS mount is the transport, covering SMB/NFS appliances). No credentials. Each publish approval writes `archive/{asset_id}` (canonical, overwritten on republish) plus `snapshots/{asset_id}/{timestamp}` (write-once per run); each copy is fsynced and independently sha256 read-back verified — no proof is minted on a mismatch. |
 
+For paywall sign-in links in post-Beta 18 source, select `CIVICCAST_PROVIDER_MAIL=real`
+and configure the SMTP variables above. Set `CIVICCAST_RESIDENT_PORTAL_URL`
+to the public resident portal address, or `CIVICCAST_PUBLIC_BASE_URL` when the
+portal is hosted at that site's root. HTTPS is required for a remote address;
+loopback HTTP is accepted for local development. A link request returns
+`{"sent":false}` if mail or the public address is unavailable or the relay
+rejects the message. `{"sent":true}` means the relay accepted it, not that
+the recipient's mailbox delivered it. This wiring does not enable protected
+paid access; the player gate and purchase workflow remain incomplete.
+
 Full-media publishing: when the publish approval can resolve the asset's
 local recording file (live recordings via the finalization job), the real
 Internet Archive and YouTube adapters receive the actual media

@@ -25690,7 +25690,7 @@
           "paywall"
         ],
         "summary": "Email a single-use magic-link to the viewer",
-        "description": "Mint a token + invoke the email sender. The token is never echoed.\n\nSlice-5 hook: ``sender`` is the SMTP delivery seam. The default\nsender is a no-op so the contract is exercised in tests without\npulling in SMTP. The production wiring plugs in an SMTP-backed\nsender behind the same protocol.\n\nQ-5 fix: per-IP rate limit (5 / 60s) to prevent the endpoint being\nused as an email-spam relay once SMTP is wired.\n\nQ-9 fix: the response shape is identical (``{\"sent\": true}`` 200)\nwhether or not the station has a paywall configured. An anonymous\ncaller cannot probe \"is the paywall on?\" via the status code.\n\nE-1 BLOCKER fix: the request model rejects ``scope_kind=\"all\"``; we\nadditionally route through :meth:`mint_magic_link_for_public` which\nre-validates the same rule.",
+        "description": "Mint a token + invoke the email sender. The token is never echoed.\n\n``sent`` is true only after the configured SMTP relay accepts the message.\n\nQ-5 fix: per-IP rate limit (5 / 60s) to prevent the endpoint being\nused as an email-spam relay once SMTP is wired.\n\nThe response shape remains identical whether or not the paywall is\nconfigured. The boolean truthfully reports delivery, without a token.\n\nE-1 BLOCKER fix: the request model rejects ``scope_kind=\"all\"``; we\nadditionally route through :meth:`mint_magic_link_for_public` which\nre-validates the same rule.",
         "operationId": "public_magic_link_api_public_paywall_magic_link_post",
         "requestBody": {
           "content": {
@@ -25704,7 +25704,7 @@
         },
         "responses": {
           "200": {
-            "description": "Magic-link mint accepted (always sent=True for shape-valid input)",
+            "description": "Magic-link delivery status",
             "content": {
               "application/json": {
                 "schema": {
@@ -25754,7 +25754,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PublicAccessDecision"
+                  "$ref": "#/components/schemas/MagicLinkVerificationResponse"
                 }
               }
             }
@@ -49257,14 +49257,36 @@
         "properties": {
           "sent": {
             "type": "boolean",
-            "title": "Sent",
-            "default": true
+            "title": "Sent"
           }
         },
         "additionalProperties": false,
         "type": "object",
+        "required": [
+          "sent"
+        ],
         "title": "MagicLinkResponse",
-        "description": "Confirmation envelope for ``POST /api/public/paywall/magic-link``.\n\nWe deliberately do NOT echo the token here \u2014 the viewer receives it\nvia email; surfacing it on the response would defeat the channel-\nseparation that makes magic-links a defense against credential\nstuffing. Returning the same shape on success + \"no config yet\" would\nalso surface a tiny configuration probe; we return 409 from the\nhandler in that case so the client gets a distinct status."
+        "description": "Confirmation envelope for ``POST /api/public/paywall/magic-link``.\n\nWe deliberately do NOT echo the token here \u2014 the viewer receives it\nvia email; surfacing it on the response would defeat the channel-\nseparation that makes magic-links a defense against credential\nstuffing. The delivery boolean reports whether the configured relay\naccepted the message."
+      },
+      "MagicLinkVerificationResponse": {
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Allowed",
+            "default": true
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email"
+        ],
+        "title": "MagicLinkVerificationResponse"
       },
       "ManagedStorageStatusReport": {
         "properties": {

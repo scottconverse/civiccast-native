@@ -23,6 +23,7 @@ export type PortalRoute =
       page: number
     }
   | { view: 'watch'; assetId: string }
+  | { view: 'redeem' }
   | { view: 'schedule'; channel: string }
 
 export function parseHashRoute(hash: string): PortalRoute {
@@ -48,6 +49,7 @@ export function parseHashRoute(hash: string): PortalRoute {
   if (segments[0] === 'watch' && segments[1]) {
     return { view: 'watch', assetId: decodeURIComponent(segments[1]) }
   }
+  if (segments[0] === 'redeem') return { view: 'redeem' }
   if (segments[0] === 'schedule') {
     const params = new URLSearchParams(queryString)
     return { view: 'schedule', channel: params.get('channel') ?? 'public' }
