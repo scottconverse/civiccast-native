@@ -45,6 +45,8 @@ def downgrade() -> None:
     # Restore the old check only after changing new-source rows to an old,
     # truthful empty/manual state. Downgrade never silently leaves an invalid row.
     table = sa.table("cg_zone_configs", sa.column("content_source", sa.String()))
-    op.execute(table.update().where(table.c.content_source == "live_video").values(content_source="manual"))
+    op.execute(
+        table.update().where(table.c.content_source == "live_video").values(content_source="manual")
+    )
     _set_source_constraint(_OLD_SOURCES)
     op.drop_column("cg_zone_configs", "live_source_id", schema=_schema())

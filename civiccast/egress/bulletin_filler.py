@@ -711,9 +711,7 @@ def build_board_live_video_provider(session_factory: Any) -> BoardLiveVideoProvi
     source_store = LiveSourceStore(session_factory)
 
     def resolve(channel_id: str, config: EgressConfig) -> tuple[GraphicsOverlayLayer, ...]:
-        board = build_board_snapshot_from_store(
-            board_store, channel_id, now=datetime.now(UTC)
-        )
+        board = build_board_snapshot_from_store(board_store, channel_id, now=datetime.now(UTC))
         if board is None:
             return ()
         profile = config.canonical_profile

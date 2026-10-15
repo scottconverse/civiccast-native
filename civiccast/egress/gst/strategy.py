@@ -1049,7 +1049,9 @@ class GstPlayoutStrategy:
             channel_dir.mkdir(parents=True, exist_ok=True)
             path = channel_dir / "board-live-reservation.png"
             write_rgba_png(path, 1, 1, b"\0\0\0\0")
-            layers = (GraphicsOverlayLayer(name="board-live-reservation", image_path=str(path), alpha=0),)
+            layers = (
+                GraphicsOverlayLayer(name="board-live-reservation", image_path=str(path), alpha=0),
+            )
         if leg is None:
             if not layers:
                 return None

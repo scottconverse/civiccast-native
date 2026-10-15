@@ -1460,7 +1460,10 @@ class GstPlayoutEngine:
             if caps is None or caps.get_size() == 0:
                 return
             structure = caps.get_structure(0)
-            if structure.get_name() != "application/x-rtp" or structure.get_string("media") != "video":
+            if (
+                structure.get_name() != "application/x-rtp"
+                or structure.get_string("media") != "video"
+            ):
                 return
             if pad.link(sink) != Gst.PadLinkReturn.OK:
                 print("WARN: failed to link RTSP video into board decoder", flush=True)

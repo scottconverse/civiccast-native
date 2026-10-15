@@ -36,8 +36,9 @@ struct PlayerView: View {
                     .onDisappear { player.pause() }
             } else {
                 VStack(spacing: 16) {
-                    if status == nil { ProgressView("Preparing stream…") }
-                        .controlSize(.large)
+                    if status == nil {
+                        ProgressView("Preparing stream…").controlSize(.large)
+                    }
                     if let status {
                         Text(status)
                             .font(.title3)

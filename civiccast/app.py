@@ -2328,6 +2328,7 @@ def create_app() -> FastAPI:
     # registration order matters) so it is OUTERMOST and refuses a mutating
     # request in maintenance mode before staff-auth/rate-limit bookkeeping runs.
     app.middleware("http")(_maintenance_guard_middleware)
+
     @app.middleware("http")
     async def _packaged_tv_public_app_cors(request: Request, call_next: Any) -> Response:
         """Permit packaged TV shells to read only the public app contract.

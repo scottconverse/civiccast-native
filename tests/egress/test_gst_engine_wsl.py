@@ -2071,10 +2071,24 @@ def test_board_live_video_is_visible_above_the_board_raster(tmp_path: Path) -> N
         port = port_probe.getsockname()[1]
     sender_log = (tmp_path / "sender.log").open("wb")
     sender = subprocess.Popen(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi",
-         "-i", f"color=c=red:s={width}x{height}:r=30", "-c:v", "libx264",
-         "-preset", "ultrafast", "-f", "mpegts",
-         f"srt://127.0.0.1:{port}?mode=listener&latency=100000"],
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=red:s={width}x{height}:r=30",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-f",
+            "mpegts",
+            f"srt://127.0.0.1:{port}?mode=listener&latency=100000",
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=sender_log,
@@ -2083,10 +2097,12 @@ def test_board_live_video_is_visible_above_the_board_raster(tmp_path: Path) -> N
         sources=(
             graphmod.PlaylistLeg(
                 label="program",
-                subchains=((
-                    _E("videotestsrc", props={"is-live": True, "pattern": 2}),
-                    _E("capsfilter", props={"caps": caps}),
-                ),),
+                subchains=(
+                    (
+                        _E("videotestsrc", props={"is-live": True, "pattern": 2}),
+                        _E("capsfilter", props={"caps": caps}),
+                    ),
+                ),
                 subchain_kinds=("cg",),
             ),
         ),
@@ -2129,9 +2145,7 @@ def test_board_live_video_is_visible_above_the_board_raster(tmp_path: Path) -> N
         sender_log.close()
     logtext = log.read_text(encoding="utf-8", errors="replace")
     assert rc == 0, logtext
-    raw = _ffmpeg_last_frame_rgb24(
-        out_ts, tmp_path / "frame.raw", width=width, height=height
-    )
+    raw = _ffmpeg_last_frame_rgb24(out_ts, tmp_path / "frame.raw", width=width, height=height)
     assert raw is not None, logtext
     stride = width * 3
 
