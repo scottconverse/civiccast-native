@@ -265,6 +265,14 @@ The **Alerts** screen can hold destinations of three kinds: email, text message 
 
 > **Beta 17 status:** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), sign-in link emails are not sent, and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
 
+## Station import from Cablecast {#station-import-cablecast}
+
+A **Setup admin** can open **Setup → Import station** to bring Cablecast show and schedule metadata into CivicCast. Enter the Cablecast API URL and, if that server requires them, its username and password. Choose **Preview import** first. The preview lists shows and schedule entries to add, along with conflicts and skipped records; it does not change CivicCast data. The password is cleared from the screen after the preview.
+
+Review the proposed rows and acknowledge them before choosing **Apply this import**. The screen reports the created show and schedule counts and any rows that failed. **Import history** lists batches, and **Roll back this batch** removes the rows created by that batch after a second confirmation. If an Apply request reports an error, check batch history before retrying because some rows may already have been committed. Import progress names the current phase; the server does not provide a percentage.
+
+This workflow imports metadata and media references, not the media files themselves. Check that referenced media is available to the new station before scheduling it on air. The screen supports Cablecast; other vendor file adapters are separate workflows.
+
 ## External agenda import
 
 The agenda screen can look up a meeting in an outside agenda system and import it. This is **off by default**. To turn it on, set `CIVICCAST_AGENDA_SOURCE` to `legistar`, `primegov`, `civicclerk` or `js_portal`, then restart the service. The other settings are `CIVICCAST_AGENDA_SOURCE_CLIENT`, `CIVICCAST_AGENDA_SOURCE_TOKEN` and `CIVICCAST_AGENDA_SOURCE_TIMEOUT_S` (default 10 seconds). A value other than those (or `off`) is rejected with a message listing the allowed values.
