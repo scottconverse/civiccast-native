@@ -285,7 +285,6 @@ class TestTranscodeDispatch:
     ) -> None:
         runtime = tmp_path / "Program Files" / "CivicCast (Native)" / "runtime"
         runtime.mkdir(parents=True)
-        monkeypatch.chdir(runtime)
         program_data = tmp_path / "ProgramData"
         monkeypatch.setenv("PROGRAMDATA", str(program_data))
         monkeypatch.setenv("CIVICCAST_SUPERVISED", "1" if supervised else "0")
@@ -300,6 +299,9 @@ class TestTranscodeDispatch:
         media_file = tmp_path / "meeting.mp4"
         media_file.write_bytes(b"\x00")
         _seed_asset(engine, file_path=str(media_file))
+        # Model the installed cwd without changing the process cwd, which mutmut
+        # uses to resolve its relative source paths while instrumenting calls.
+        monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: runtime))
         worker = MediaLifecycleWorker(
             session_factory,
             settings=MediaLifecycleWorkerSettings.from_env(),
