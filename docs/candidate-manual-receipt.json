@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "source_sha": "410aa89c74f86fe86882a6877a5e21343a3a3b30",
+  "candidate_version": "1.0.0-beta.19",
+  "workflow_run_id": "38863449723",
+  "manual_source_sha256": "d437dacb71e8946a9ea0c61d18fdd2cfc08c05a57d51810356f42a5404dec9f0",
+  "render_manifest_sha256": "bb200fa861fa3eac0275868429359abfaf7fe15bc2f9f5d6e55dedad269dae56",
+  "files": [
+    {
+      "filename": "USER-MANUAL.pdf",
+      "sha256": "b3ec990ababe5e14108ee64eef08c32d7bba264275b37a84fb2d09cfcba4d451",
+      "size_bytes": 7231892
+    },
+    {
+      "filename": "USER-MANUAL.docx",
+      "sha256": "39549070fdf570aaf268136fd326c8b90e75d1f8805dca65b836b65076f928af",
+      "size_bytes": 5599158
+    }
+  ]
+}
