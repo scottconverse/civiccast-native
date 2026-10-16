@@ -777,8 +777,11 @@ def graph_from_config(
     common_caps = (
         f"video/x-raw,width={profile.width},height={profile.height},framerate={profile.fps}/1"
     )
+    # EOS tail padding pushes PCM silence without GstAudioMeta. Keep selector
+    # inputs interleaved: planar PCM requires metadata even for silent buffers.
     common_audio_caps = (
-        f"audio/x-raw,rate={profile.audio_sample_rate},channels={profile.audio_channels}"
+        f"audio/x-raw,rate={profile.audio_sample_rate},channels={profile.audio_channels},"
+        "layout=interleaved"
     )
     program_segments = source_plan.segments
     if len(program_segments) > MAX_PLAYLIST_SUBCHAINS:

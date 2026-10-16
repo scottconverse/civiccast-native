@@ -132,6 +132,17 @@ PATH, or None if no such strategy is available in this deployment. See
 _LOG = logging.getLogger(__name__)
 
 
+def _is_ready_generated_slate(plan: EgressSourcePlan) -> bool:
+    """The built-in plain slate is canonical and extended by stream copy."""
+    return bool(plan.segments) and all(
+        segment.kind == "slate"
+        and segment.source_ref == "civiccast-slate"
+        and segment.inpoint_seconds is None
+        and segment.outpoint_seconds is None
+        for segment in plan.segments
+    )
+
+
 def _default_independent_slate_strategy() -> EncoderStrategy | None:
     """Best-effort construction of an ffmpeg-PATH-independent encoder, used only
     as the last-resort slate retry after a ``FfmpegNotFoundError`` (K2-1 follow-up,
@@ -2751,14 +2762,7 @@ class EgressDaemon:
                     prepared_reload.target_state,
                 )
             elif slate_first_handoff or (
-                using_fallback_slate
-                and all(
-                    segment.kind == "slate"
-                    and segment.source_ref == "civiccast-slate"
-                    and segment.inpoint_seconds is None
-                    and segment.outpoint_seconds is None
-                    for segment in source_plan.segments
-                )
+                using_fallback_slate and _is_ready_generated_slate(source_plan)
             ):
                 # The restart-recovery hand-off already airs its generated filler
                 # directly. A cold start's built-in plain slate is equally ready:
@@ -5888,7 +5892,13 @@ class EgressDaemon:
         # PREVIOUS plan once this one lands.
         prepared_plan_dir: Path | None = None
         preparation_report: SourcePreparationReport | None = None
-        if self._source_preparer is not None:
+        if target_state == "FALLBACK_SLATE" and _is_ready_generated_slate(source_plan):
+            # As on startup, the generated plain slate is ready to air. Repeating
+            # its hour-long conform here leaves an ended short programme holding
+            # the engine's black safety leg until preparation finally completes.
+            # Mixed/trimmed plans, custom slates and bulletin audio still prepare.
+            self._last_loudness_lufs.pop(channel_id, None)
+        elif self._source_preparer is not None:
             # Retain per-channel elapsed preparation evidence while the
             # production automation loop runs this work in the background.
             prepare_started = time.monotonic()

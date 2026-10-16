@@ -1668,9 +1668,11 @@ def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
     assert strategy.switch_at_end_of_current_calls == [True]
 
 
+@pytest.mark.parametrize("generated_slate", [False, True])
 def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    generated_slate: bool,
 ) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -1678,14 +1680,30 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
     started: list[_FakeProcess] = []
     strategy = _FakeContentReloadStrategy(processes, started)
+    prepared: list[str] = []
+
+    def render(args: list[str]) -> Any:
+        Path(args[-1]).write_text("fake canonical TS", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    fallback_plan = (
+        SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=render)(_config())
+        if generated_slate
+        else _source_plan_with_label(tmp_path, "CivicCast filler")
+    )
+    fallback_label = fallback_plan.segments[0].label
+
+    def prepare(plan: EgressSourcePlan, _config: EgressConfig) -> SourcePreparationReport:
+        prepared.append(plan.segments[0].label)
+        return SourcePreparationReport(source_plan=plan, records=())
+
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
-        fallback_source_provider=lambda _config: _source_plan_with_label(
-            tmp_path, "CivicCast filler"
-        ),
+        fallback_source_provider=lambda _config: fallback_plan,
         encoder_strategy=strategy,
+        source_preparer=prepare,
     )
 
     daemon.process_once("gov")
@@ -1698,7 +1716,8 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     store.enqueue_command(_command("reload"))
     daemon.process_once("gov")
 
-    assert strategy.reload_calls == ["CivicCast filler"]
+    assert prepared == ["Terminal program"] + ([] if generated_slate else [fallback_label])
+    assert strategy.reload_calls == [fallback_label]
     assert strategy.switch_at_end_of_current_calls == [True]
     assert len(started) == 1
 
@@ -1722,7 +1741,7 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "FALLBACK_SLATE"
-    assert state.current_source_label == "CivicCast filler"
+    assert state.current_source_label == fallback_label
     assert state.pid == 111
     assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
     assert sink_states == ["FALLBACK_SLATE"]

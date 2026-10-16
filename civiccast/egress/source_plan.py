@@ -419,7 +419,10 @@ class ScheduleSourcePlanProvider:
         )
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
-        return self.plan_at(channel_id, self._now_provider())
+        # Ordinary starts and slate polling must wait for the published start.
+        # Absorbing a future item here airs it early, then the next boundary
+        # resolves that same occurrence again and replays it.
+        return self.plan_at(channel_id, self._now_provider(), gap_absorb_seconds=0.0)
 
     def plan_at(
         self,
@@ -427,6 +430,7 @@ class ScheduleSourcePlanProvider:
         boundary_at: datetime,
         *,
         min_plan_seconds: float | None = None,
+        gap_absorb_seconds: float | None = None,
     ) -> EgressSourcePlan | None:
         """Build the plan active at an explicit scheduled boundary.
 
@@ -434,6 +438,8 @@ class ScheduleSourcePlanProvider:
         future rollover boundary. Ordinary starts continue through ``__call__``
         and therefore retain wall-clock join-in-progress behavior.
 
+        The configured ``gap_absorb_seconds`` applies by default to this explicit
+        boundary; ordinary ``__call__`` resolution overrides it to zero.
         With ``gap_absorb_seconds`` set (U26), a boundary that lands in a small
         gap between two items -- or a few seconds inside the next item's slot,
         when the published rows overlap (U52) -- resolves to that item rather
@@ -461,7 +467,9 @@ class ScheduleSourcePlanProvider:
             gap_tolerance=self._gap_tolerance,
             loop_schedule=self._loop_schedule,
             max_segment_seconds=self._max_segment_seconds,
-            gap_absorb_seconds=self._gap_absorb_seconds,
+            gap_absorb_seconds=(
+                self._gap_absorb_seconds if gap_absorb_seconds is None else gap_absorb_seconds
+            ),
             media_duration_resolver=self._media_duration_resolver,
         )
 

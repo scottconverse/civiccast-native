@@ -668,3 +668,6 @@ def test_graph_from_config_wires_audio() -> None:
     program, slate = graph.sources
     assert program.audio_tail and program.audio_tail[0].factory == "audioconvert"
     assert slate.audio and slate.audio[0].factory == "audiotestsrc"
+    for tail in (program.audio_tail, slate.audio):
+        caps = next(spec.props["caps"] for spec in tail if spec.factory == "capsfilter")
+        assert "layout=interleaved" in caps
