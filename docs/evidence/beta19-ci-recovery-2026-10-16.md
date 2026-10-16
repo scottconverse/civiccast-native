@@ -49,3 +49,26 @@ They do not renew the historical native decision-gate spike or pre-login
 LocalSystem/service acceptance, establish an installed Beta 19 station result,
 or prove every board gain, RTSP and reload failure mode. Historical claim
 wording and its original external evidence remain unchanged.
+
+## Installed-package finding
+
+The public installer `62cd8d9b43c8ce823e90b5aa0e2f7b1fedb233353dd96c843063cd328f83f17e`
+completed a clean Windows Sandbox installation on October 16. Its restricted
+`NT SERVICE\CivicCastSupervisor` service started, health reported Beta 19 and
+schema `0094_cg_live_video_zone` current, and the operator page returned HTTP 200.
+First-administrator setup and bundled Help also responded successfully.
+
+Actual operation exposed a separate product defect: the background media
+transcoder defaulted to the runtime working directory inside Program Files.
+The restricted service correctly received `PermissionError: [WinError 5]`.
+The correction uses `%ProgramData%\CivicCast\data\transcodes` in supervised
+operation, preserving explicit overrides and the development default. The
+new path regression failed before correction; all 43 affected worker tests
+passed afterward. This correction changes shipped application bytes and
+requires a separately identified corrected candidate.
+
+The guest crashed at 00:45 MDT before output and uninstall verification.
+Windows recorded `ContainerCrashDump`; its underlying cause is not established.
+Neither operation nor uninstall passed. The original public artifacts remain
+unchanged. The local Beta 14 station was restarted while correction proceeds;
+its upgrade remains pending successful clean-candidate checks.

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Fix background transcoding under the restricted Windows service account:
+  generated files now default to the writable station data directory instead
+  of the protected application runtime. Explicit output paths are preserved.
+- Correct upgrade guidance and refresh source Help to match the installer flow.
+
 ## [1.0.0-beta.19] - 2026-10-15
 
 Beta 19 completes the remaining Sprint 5

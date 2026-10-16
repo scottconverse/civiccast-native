@@ -161,6 +161,13 @@ archival verification gate (CLAUDE.md §4.6). Env-gated
 `retention_worker.py` / `media_integrity_worker.py`); see its docstring for
 the full `CIVICCAST_MEDIA_LIFECYCLE_*` / `CIVICCAST_TRANSCODE_*` env vars.
 
+The installed supervised service writes transcodes beneath
+`%ProgramData%\CivicCast\data\transcodes` when
+`CIVICCAST_TRANSCODE_OUTPUT_ROOT` is unset. This uses the existing service-writable
+station data tree rather than the read-only installation runtime. An explicit
+output-root setting takes precedence; unsupervised development keeps its
+`civiccast-data/transcodes` working-directory default.
+
 **Transcode defaults and resource posture (ADR 0007 amendment,
 2026-08-24):** the default seed set is a single web-friendly, resolution-
 aware H.264 rendition (`DEFAULT_TRANSCODE_FORMATS`) — no GPL encoder, and
