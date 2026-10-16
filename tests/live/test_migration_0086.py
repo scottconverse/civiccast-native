@@ -58,14 +58,15 @@ def test_single_head() -> None:
     materialized. #131 merged 0083_caption_review_language to main, so this
     revision parents on 0083 -- the sole other head at merge time. WP-08's
     0087_retention_terms (#142) re-parented onto this revision, and 0088 adds
-    the caption-health rule seed; it remains the repo-wide single head. This test checks
+    the caption-health rule seed. Beta 19 advances the single head through
+    notification outcomes and board audio/video to 0094. This test checks
     that this revision is still reachable and is not itself a second head.
     This assertion is what makes a future stray second head a loud failure
     rather than a silent one.
     """
     script = ScriptDirectory.from_config(_cfg("sqlite://"))
     heads = list(script.get_heads())
-    assert heads == ["0092_notification_delivery_outcomes"], (
+    assert heads == ["0094_cg_live_video_zone"], (
         f"expected exactly one head, found {heads!r}"
     )
     assert script.get_revision(_REVISION) is not None, f"{_REVISION!r} must still be reachable"

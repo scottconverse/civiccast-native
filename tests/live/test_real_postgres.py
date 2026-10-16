@@ -261,8 +261,9 @@ class TestSingleAlembicHead:
     <commit-sha>") so future grep'ers see the history of advances and
     don't have to git-blame to reconstruct it."""
 
-    def test_alembic_heads_returns_single_head(self, postgres_url) -> None:
-        cfg = _make_cfg(postgres_url)
+    def test_alembic_heads_returns_single_head(self) -> None:
+        # Graph inspection does not connect to a database.
+        cfg = Config(str(ALEMBIC_INI))
         script = ScriptDirectory.from_config(cfg)
         heads = script.get_heads()
         assert len(heads) == 1, (
@@ -412,8 +413,9 @@ class TestSingleAlembicHead:
         # so 0083 was the sole other head when this branch re-parented onto
         # it. 0087 added retention-term authoring; 0088 seeds live-caption health.
         # 0089 adds unverified remote-guest media-control request state.
-        assert heads[0] == "0092_notification_delivery_outcomes", (
-            f"Expected head '0092_notification_delivery_outcomes'; got {heads[0]!r}."
+        # Beta 19 adds board-audio gain (0093) and live-video zones (0094).
+        assert heads[0] == "0094_cg_live_video_zone", (
+            f"Expected head '0094_cg_live_video_zone'; got {heads[0]!r}."
         )
 
 

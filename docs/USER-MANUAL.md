@@ -3341,11 +3341,11 @@ If CivicCast (Native) is already running, setup says "CivicCast (Native) is runn
 
 If WebView2 is missing, setup installs the full offline copy it carries (the build configuration says "offlineInstaller", installed silently). The details list should show "Installing WebView2...", then "WebView2 installed successfully". The setup text also defines a line "Downloading WebView2 bootstrapper...", but that belongs to a download mode this build does not use, so we do not expect to see it; we could not confirm the exact lines on screen. On failure: "Failed to install WebView2! The app can't run without it. Try restarting the installer."
 
-#### Step 2: The "Already Installed" page (only if CivicCast is on the computer)
+#### Step 2: The installed-version check
 
 Before the normal setup pages or prerequisite installers, setup checks the installed CivicCast version. If the installed version is newer, setup exits with code 129 before installing prerequisites, stopping the service, replacing application files, or changing station data. Keep using the installed version, or use its complete matching signed setup kit if it needs repair. If setup cannot safely read or compare the installed version, it exits with code 130 before changing the installation; follow the message and contact support if it persists.
 
-If that check passes, NSIS may show its **Already Installed** page with the installed version and choices such as **Add/Reinstall components** and **Uninstall CivicCast (Native)**. For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. The older silent-installer downgrade message is historical; the current setup refuses a downgrade in the early version check for both graphical and silent setup.
+If that check passes, setup continues. The native installer skips the generic **Already Installed** page and upgrades in place without calling the old uninstaller first. The current setup refuses a downgrade in the early version check for both graphical and silent setup.
 
 #### Step 3: Choose the install folder
 
@@ -9119,8 +9119,8 @@ Do this once before the first public meeting, and again after any reinstall.
 
 - [ ] Read the release notes and the verification record for the version you are installing. Note what was and was not proven.
 - [ ] Choose a time when no meeting is scheduled and no channel is needed.
-- [ ] Take your own backup of the media, of `station-state.json` and of anything else you rely on, and run the restore drill the same day ([G.7](#g-drill)).
-- [ ] Prepare matching installer resources with `scripts\download_windows_release_artifacts.ps1 -Install`; it verifies and assembles the signed station bundle from the release manifest and archive parts. The R9 field attempt used an earlier public asset set that lacked those resources and failed activation.
+- [ ] Confirm a current backup of the database, station settings and required media, and keep its recovery instructions available. If the installed version has **Station backup and restore**, save the media roots before creating an encrypted archive and verify an off-station copy ([station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md)). For an older version without that feature, use the station's existing backup process; do not assume a newer backup command is installed. Confirm existing media backups are current rather than copying the entire library again unnecessarily. The database drill in [G.7](#g-drill) is a separate check, not the backup itself.
+- [ ] Prepare matching installer resources with `scripts\download_windows_release_artifacts.ps1 -IncludePacks` (download only); it verifies and assembles the signed station bundle from the release manifest and archive parts. The R9 field attempt used an earlier public asset set that lacked those resources and failed activation.
 - [ ] Readiness, Update and rollback panel: save the path to the installer you would roll back to (the field is labelled **Rollback artifact path**; its own example is an older installer) with **Save rollback artifact**, then run **Run rollback rehearsal**, then **Run update preflight**.
 - [ ] On Readiness, **Open maintenance window** (60 minutes). It needs the update preflight and a passed rollback rehearsal first. During the upgrade itself the service holds the station in maintenance mode, and changes are refused with HTTP 503.
 - [ ] Note the free disk space.
@@ -9135,7 +9135,7 @@ What CivicCast's database drill and backup-storage probe do and do not establish
 - Its drill backs up the real database, restores it into a completely fresh database, and checks row counts, content checksums and that the program's own stores can read the restored data.
 - It does not replicate your media: the drill records a list of files and a hash of a bounded sample, and says you still need your own file-level backup of media.
 - The Setup/System Health backup-storage probe writes, copies and checksums a small manifest; it does not copy or restore station data. The database drill is separate.
-- No screen or command restores a backup over the live station. The drill restores into a scratch copy.
+- The drill restores into a scratch copy. To restore an encrypted station archive, use the separate offline `civiccast backup restore` command with CivicCast stopped; see the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md).
 
 Checklist:
 

@@ -12,11 +12,13 @@ def test_public_copy_legal_blocks_high_risk_replacement_framing(tmp_path: Path) 
 
     violations = evaluate_public_copy_legal(tmp_path)
 
-    assert len(violations) == 2
+    # README permits factual vendor names for the station-import workflow;
+    # replacement framing must still fail independently of that allowance.
+    assert len(violations) == 1
     assert violations[0].path == "README.md"
     assert violations[0].line == 1
-    assert violations[0].phrase == "Cablecast"
-    assert violations[1].phrase == "Cablecast " + "replacement"
+    assert violations[0].phrase == "Cablecast " + "replacement"
+    assert violations[0].kind == "high-risk phrase"
 
 
 def test_public_copy_legal_blocks_non_allowlisted_spec_sections(tmp_path: Path) -> None:
@@ -163,13 +165,15 @@ def test_canonical_disclaimer_does_not_hide_other_vendor_mentions(tmp_path: Path
         "named vendor. Those names are trademarks of their owners; references to "
         "other products are for compatibility and comparison only."
     )
-    readme = tmp_path / "README.md"
-    readme.write_text(notice + " We also integrate with Cablecast.\n", encoding="utf-8")
+    pitch = tmp_path / "docs" / "marketing" / "pitch.md"
+    pitch.parent.mkdir(parents=True)
+    pitch.write_text(notice + " We also integrate with Cablecast.\n", encoding="utf-8")
 
     violations = evaluate_public_copy_legal(tmp_path)
 
     assert len(violations) == 1
     assert violations[0].phrase == "Cablecast"
+    assert violations[0].path == "docs/marketing/pitch.md"
 
 
 def test_high_risk_framing_is_blocked_even_in_vendor_allowlisted_paths(

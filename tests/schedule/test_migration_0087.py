@@ -27,7 +27,7 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 _PARENT_REVISION = "0086_live_source_probe_state"
 _REVISION = "0087_retention_terms"
-_CURRENT_HEAD = "0092_notification_delivery_outcomes"
+_CURRENT_HEAD = "0094_cg_live_video_zone"
 
 _NEW_COLUMNS = ("retention_term_unit", "retention_term_value", "retention_anchor_at")
 
