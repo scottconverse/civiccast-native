@@ -45,6 +45,9 @@ class _FakePad:
         self.peer: _FakePad | None = None
         self.unlinked_with: list[_FakePad] = []
 
+    def get_name(self) -> str:
+        return self.name
+
     def link(self, other: _FakePad) -> int:
         self.peer = other
         other.peer = self
@@ -241,6 +244,8 @@ def _bare_engine(module: types.ModuleType) -> Any:
     engine.pipeline = _FakePipeline()
     engine._collecting = None
     engine._source_leg_seq = 0
+    engine._board_live_concat_kinds = {}
+    engine._program_video_concat = None
     return engine
 
 
@@ -252,6 +257,8 @@ def _bare_engine_with_override_style_pipeline(module: types.ModuleType) -> Any:
     engine.pipeline = _FakeOverrideStylePipeline()
     engine._collecting = None
     engine._source_leg_seq = 0
+    engine._board_live_concat_kinds = {}
+    engine._program_video_concat = None
     return engine
 
 

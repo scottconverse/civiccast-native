@@ -1515,14 +1515,17 @@ def test_a_boundary_at_a_closing_slot_whose_media_is_gone_resolves_the_next_item
     assert plan.segments[0].inpoint_seconds is None
 
 
-def test_a_boundary_inside_the_gap_resolves_the_next_item(tmp_path: Path) -> None:
+@pytest.mark.parametrize("previous_end_seconds_ago", [0, 3600])
+def test_a_boundary_inside_the_gap_resolves_the_next_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous_end_seconds_ago: int
+) -> None:
     """The bare-gap form: the instant is between two items, nothing covers it."""
 
     start = datetime(2026, 9, 25, 3, 35, tzinfo=UTC)
     items = [
         _schedule_item(
             asset_id="weather",
-            scheduled_at=start - timedelta(seconds=300),
+            scheduled_at=start - timedelta(seconds=300 + previous_end_seconds_ago),
             duration_seconds=300,
         ).model_copy(update={"asset_title": "Longmont Weather :16"}),
         _schedule_item(
@@ -1532,11 +1535,21 @@ def test_a_boundary_inside_the_gap_resolves_the_next_item(tmp_path: Path) -> Non
         ).model_copy(update={"asset_title": "City Council"}),
     ]
     provider = _gap_absorb_provider(tmp_path, items, {"weather": 300.0, "council": 1800.0})
+    monkeypatch.setattr(provider, "_now_provider", lambda: start)
+
+    # Ordinary slate polling must wait, even with an old published item in
+    # the log. Gap absorption belongs to an explicit programme boundary.
+    assert provider("gov") is None
 
     plan = provider.plan_at("gov", start)
 
     assert plan is not None
     assert [segment.label for segment in plan.segments] == ["City Council"]
+    monkeypatch.setattr(provider, "_now_provider", lambda: start + timedelta(seconds=6))
+    due_plan = provider("gov")
+    assert due_plan is not None
+    assert [segment.label for segment in due_plan.segments] == ["City Council"]
+    assert due_plan.segments[0].inpoint_seconds is None
 
 
 def test_a_gap_beyond_the_absorb_window_still_falls_back(tmp_path: Path) -> None:

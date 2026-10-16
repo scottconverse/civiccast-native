@@ -87,6 +87,7 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from civiccast.native.supervisor.install_layout import default_civiccast_data_root
 from civiccast.schedule.media_lifecycle_models import (
     ARCHIVE_TARGET_INTERNET_ARCHIVE,
     DEFAULT_TRANSCODE_FORMATS,
@@ -778,11 +779,14 @@ class MediaLifecycleWorker:
                 session.commit()
                 return 0, 0, 0
 
-            output_root = (
-                Path(self._settings.transcode_output_root)
-                if self._settings.transcode_output_root
-                else Path.cwd() / "civiccast-data" / "transcodes"
-            )
+            if self._settings.transcode_output_root:
+                output_root = Path(self._settings.transcode_output_root)
+            elif os.environ.get("CIVICCAST_SUPERVISED") == "1":
+                # The installed runtime is read-only to the service account;
+                # its existing writable station data tree owns generated media.
+                output_root = default_civiccast_data_root() / "data" / "transcodes"
+            else:
+                output_root = Path.cwd() / "civiccast-data" / "transcodes"
             for job in pending:
                 asset = session.get(Asset, job.asset_id)
                 if asset is None:

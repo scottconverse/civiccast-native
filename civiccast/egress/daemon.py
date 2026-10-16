@@ -132,6 +132,17 @@ PATH, or None if no such strategy is available in this deployment. See
 _LOG = logging.getLogger(__name__)
 
 
+def _is_ready_generated_slate(plan: EgressSourcePlan) -> bool:
+    """The built-in plain slate is canonical and extended by stream copy."""
+    return bool(plan.segments) and all(
+        segment.kind == "slate"
+        and segment.source_ref == "civiccast-slate"
+        and segment.inpoint_seconds is None
+        and segment.outpoint_seconds is None
+        for segment in plan.segments
+    )
+
+
 def _default_independent_slate_strategy() -> EncoderStrategy | None:
     """Best-effort construction of an ffmpeg-PATH-independent encoder, used only
     as the last-resort slate retry after a ``FfmpegNotFoundError`` (K2-1 follow-up,
@@ -2693,7 +2704,7 @@ class EgressDaemon:
                 # source label BEFORE preparation so the screen never says
                 # Stopped during a start. The early slate flips above already
                 # wrote FALLBACK_SLATE with their own last_error -- leave those
-                # in place (the slate's prepare is a cache hit anyway).
+                # in place while its worker is started.
                 self._write_state(
                     channel_id,
                     "STARTING",
@@ -2714,8 +2725,8 @@ class EgressDaemon:
                 # caption storage refused and demanded the fallback slate, so
                 # this start must air what it resolved, not the plan it was
                 # handed. Release the held plan (the caller dropped its own
-                # reference) and fall through to the ordinary preparation of
-                # the slate. ``resolved_plan`` above makes every OTHER
+                # reference) and fall through to the resolved fallback below.
+                # ``resolved_plan`` above makes every OTHER
                 # resolution failure mode unreachable here.
                 self._release_prepared_restart_plan(
                     channel_id,
@@ -2750,24 +2761,18 @@ class EgressDaemon:
                     prepared_plan_dir,
                     prepared_reload.target_state,
                 )
-            elif slate_first_handoff:
-                # The restart-recovery hand-off's fallback plan is ALREADY an airing
-                # artifact: a filler provider hands back a plan whose segments are
-                # MPEG-TS files its own generator rendered (`bulletin_filler.py` ->
-                # `SlateSourceGenerator._render_fill` / `_render_rotation`). Sending
-                # that plan through `_PreparationRequest` is what made this hand-off
-                # state-only: the request is the SLATE's OWN conform -- loudness probe
-                # included -- so no worker was launched until it returned, and the
-                # slate that exists to COVER the conform was waiting on it. On the
-                # station (C2, 2026-09-26) that read `FALLBACK_SLATE` with `pid=-` and
-                # three channels dark for 3 m 02 s.
-                #
-                # Skipping the yield lets this generator complete on its first
-                # `next()`: `_drive_preparation` turns that `StopIteration` into a
-                # normal return, so the slate worker is launched in the SAME
-                # `process_once`, and the `SLATE_FIRST` result below hands the program
-                # over to the async reload path -- which is where the program's conform
-                # belongs.
+            elif slate_first_handoff or (
+                using_fallback_slate and _is_ready_generated_slate(source_plan)
+            ):
+                # The restart-recovery hand-off already airs its generated filler
+                # directly. A cold start's built-in plain slate is equally ready:
+                # SlateSourceGenerator renders the canonical profile, then extends
+                # the horizon by stream copy. Re-conforming that hour-long silent
+                # fill kept the worker absent until the encode finished or timed out.
+                # Skip preparation only for this untrimmed generated slate; ordinary
+                # programs, custom fallback providers and bulletin audio retain their
+                # preparation/loudness handling. The slate-first program hand-off
+                # still belongs to the async reload path after this worker starts.
                 #
                 # `prepared_plan_dir` stays None, so the reload path has no directory of
                 # ours to release out from under the airing slate, and the loudness
@@ -2818,8 +2823,9 @@ class EgressDaemon:
             # Hostile-review follow-up (third pass), P0: captured right here,
             # BEFORE the encoder-unavailable retry below gets a chance to flip
             # using_fallback_slate again -- this records whether the preparer
-            # (just above) ran against a plan that was ALREADY the fallback
-            # slate (an early flip: force_fallback_slate, caption-readiness
+            # (just above, if required for this provider) ran against a plan
+            # that was ALREADY the fallback slate (an early flip:
+            # force_fallback_slate, caption-readiness
             # refusal, or source_plan is None, all above) versus the program
             # plan. The distinction matters because the tracking decision at
             # the end of this method used to release prepared_plan_dir on
@@ -5886,7 +5892,13 @@ class EgressDaemon:
         # PREVIOUS plan once this one lands.
         prepared_plan_dir: Path | None = None
         preparation_report: SourcePreparationReport | None = None
-        if self._source_preparer is not None:
+        if target_state == "FALLBACK_SLATE" and _is_ready_generated_slate(source_plan):
+            # As on startup, the generated plain slate is ready to air. Repeating
+            # its hour-long conform here leaves an ended short programme holding
+            # the engine's black safety leg until preparation finally completes.
+            # Mixed/trimmed plans, custom slates and bulletin audio still prepare.
+            self._last_loudness_lufs.pop(channel_id, None)
+        elif self._source_preparer is not None:
             # Retain per-channel elapsed preparation evidence while the
             # production automation loop runs this work in the background.
             prepare_started = time.monotonic()

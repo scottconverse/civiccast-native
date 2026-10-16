@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+- Permit the restricted Windows service account to connect to its worker control
+  pipe, and bound shutdown when a worker never connects.
+- Start the generated plain fallback slate directly instead of re-encoding
+  its hour-long fill before output can begin. Programme preparation is unchanged.
+- Apply the same generated-slate shortcut when returning from a programme,
+  avoiding prolonged black output while an already usable slate is reprocessed.
+  Custom fallback media, bulletins and trimmed programmes retain preparation.
+- Normalize selector input audio to interleaved PCM so short silence buffers
+  can bridge unequal audio/video endings without terminating the playback worker.
+- Respect scheduled start times when leaving slate; retain short-gap absorption
+  for explicit programme-boundary planning without starting and replaying future items.
+- Fix background transcoding under the restricted Windows service account:
+  generated files now default to the writable station data directory instead
+  of the protected application runtime. Explicit output paths are preserved.
+- Correct upgrade guidance and refresh source Help to match the installer flow.
+
 ## [1.0.0-beta.19] - 2026-10-15
 
 Beta 19 completes the remaining Sprint 5

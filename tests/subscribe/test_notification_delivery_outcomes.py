@@ -40,6 +40,7 @@ _WP05_TABLES = {"notification_delivery_outcomes", "notification_delivery_attempt
 _PRIOR_TABLE = "subscription_webhook_retries"
 _REVISION = "0092_notification_delivery_outcomes"
 _PARENT = "0091_programlog_local_anchor"
+_CURRENT_HEAD = "0094_cg_live_video_zone"
 
 
 def _cfg(url: str) -> Config:
@@ -57,11 +58,11 @@ def _tables(url: str) -> set[str]:
 
 
 def test_alembic_graph_still_has_exactly_one_head() -> None:
-    """0085 must not fork the graph -- `alembic upgrade head` is the install path."""
+    """Notification outcomes must not fork the graph used by `upgrade head`."""
 
     heads = tuple(ScriptDirectory.from_config(_cfg("sqlite://")).get_heads())
-    assert heads == (_REVISION,), (
-        f"expected the single head to be {_REVISION}; got {sorted(heads)}. "
+    assert heads == (_CURRENT_HEAD,), (
+        f"expected the single head to be {_CURRENT_HEAD}; got {sorted(heads)}. "
         "Re-parent the newest migration onto the single current head before "
         "merging -- two heads break `alembic upgrade head`, which is the "
         "installer's own storage-setup path."

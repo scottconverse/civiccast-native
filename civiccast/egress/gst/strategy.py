@@ -316,10 +316,9 @@ class WorkerPipeSession:
 class WindowsWorkerPipeServer:
     """Real Win32 duplex named-pipe SERVER for one channel's D2 worker-control
     seam (design.md sec4): the strategy creates+owns this pipe; the worker
-    connects as CLIENT. Explicit SDDL (SYSTEM only -- the service runs as
-    LocalSystem for the beta per spec D4, so SYSTEM alone is 'the service
-    identity'; when D4's tracked least-privilege virtual-account follow-up lands,
-    this SDDL needs that account's SID added), ``FILE_FLAG_FIRST_PIPE_INSTANCE``
+    connects as CLIENT. Explicit SDDL permits SYSTEM and the creating process's
+    token user (the installed service's virtual account, or the development
+    caller), ``FILE_FLAG_FIRST_PIPE_INSTANCE``
     (squat detection -- raises, does not silently proceed), 16 KiB frame cap
     (``WORKER_PIPE_FRAME_CAP``).
 
@@ -328,18 +327,16 @@ class WindowsWorkerPipeServer:
     *instantiated* on Windows, but the module must still import cleanly
     everywhere (CI runs the pure envelope/replay tests on both OSes).
 
-    NOTE (disclosed gap): this class is written to the design's exact contract
-    but is NOT exercised by any test in this unit -- proving a real named pipe
-    round trip (SD readback, squat detection with a second process, frame-cap
-    enforcement over the wire) is explicitly the windows-native CI job / dev-box
-    tier per design.md sec5, not the pure-logic tier this unit's tests cover.
+    A focused Windows test exercises the default DACL and real duplex round
+    trip. Squat detection with a second process and frame-cap enforcement over
+    the wire remain the windows-native tier per design.md sec5.
     """
 
     def __init__(
         self,
         channel_id: str,
         *,
-        security_descriptor_sddl: str = "D:P(A;;GA;;;SY)",
+        security_descriptor_sddl: str | None = None,
     ) -> None:
         self.channel_id = channel_id
         self.pipe_name = worker_pipe_name(channel_id)
@@ -360,8 +357,23 @@ class WindowsWorkerPipeServer:
         import win32pipe
         import win32security
 
+        sddl = self._security_descriptor_sddl
+        if sddl is None:
+            import win32api
+
+            token = win32security.OpenProcessToken(
+                win32api.GetCurrentProcess(), win32security.TOKEN_QUERY
+            )
+            try:
+                sid, _attributes = win32security.GetTokenInformation(token, win32security.TokenUser)
+                caller_sid = str(win32security.ConvertSidToStringSid(sid))
+            finally:
+                token.Close()
+            sddl = "D:P(A;;GA;;;SY)"
+            if caller_sid != "S-1-5-18":
+                sddl += f"(A;;GA;;;{caller_sid})"
         sd = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
-            self._security_descriptor_sddl,
+            sddl,
             win32security.SDDL_REVISION_1,
         )
         sa = win32security.SECURITY_ATTRIBUTES()
@@ -479,15 +491,14 @@ class WindowsWorkerPipeServer:
             self._unblock_accept()
             acquired = self._accepting.acquire(timeout=_WORKER_PIPE_CLOSE_TIMEOUT_S)
             if not acquired:
-                with contextlib.suppress(pywintypes.error):
-                    win32pipe.DisconnectNamedPipe(handle)
-                acquired = self._accepting.acquire(timeout=_WORKER_PIPE_CLOSE_TIMEOUT_S)
-            if not acquired:
+                # DisconnectNamedPipe also blocks behind a synchronous accept
+                # on this handle. Retain it rather than wedging the caller;
+                # a replacement may fail closed on FIRST_PIPE_INSTANCE.
                 logger.error(
                     "worker pipe %s accept did not stop within %.1fs; leaving its handle open "
-                    "rather than blocking in CloseHandle",
+                    "rather than blocking in DisconnectNamedPipe or CloseHandle",
                     self.pipe_name,
-                    2 * _WORKER_PIPE_CLOSE_TIMEOUT_S,
+                    _WORKER_PIPE_CLOSE_TIMEOUT_S,
                 )
                 return
 

@@ -400,6 +400,10 @@ entries:
   # acceptance; native retirement unblocks inactive legs before NULL. Current
   # local evidence: docs/evidence/f2-local-2026-09-11/VERIFICATION.md.
   # Historical external installer/spike evidence is not promoted by this rebind.
+  # Beta 19 current-source tripwire review, 2026-10-16:
+  # docs/evidence/beta19-ci-recovery-2026-10-16.md records native live-board,
+  # clean worker-stop and graph producer results for the four changed inputs.
+  # This rebind does not renew historical spike or installed-service evidence.
   - id: native-decision-gate
     claim: >-
       A decision-gate spike on real Windows hardware exercised the
@@ -1081,19 +1085,19 @@ entries:
       # historical hardware/service acceptance; the Beta14 host install remains pending.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 5b66c0aed93303befe20b60078af935b50d12a35
+          blob: 295135425c3fdd323167e5addb63e4966b09434b
         # Sprint 3: current-source bindings reviewed for output DSP and EOS
         # preservation; focused native results: .agent-runs/native-windows/
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 92d501252f80a9a167b56448d97156e8ce785bd1
+          blob: ba27385ef7bd1861f640d94b5074f53913236864
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 67e7973d82f2d2b85cd14870c3ac91ab64873bc9
+          blob: 54fc1e5dd16c1fcdbe237b713dd3a9ed9ebbe638
         - path: civiccast/egress/gst/control.py
           # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
           # restart timeline floor; source tests cover long-running drift.
@@ -1103,7 +1107,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: c98fe4778149e46340b7bace05baf8af38ea9bd0
+        blob: 7fdcb5ea16f8c0f5916787fff085523539d22cc7
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1136,7 +1140,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 67e7973d82f2d2b85cd14870c3ac91ab64873bc9
+          blob: 54fc1e5dd16c1fcdbe237b713dd3a9ed9ebbe638
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -1177,6 +1181,9 @@ entries:
   # 3b4b24511c711fcc023cbf865f412687a7bf4e19 (that commit IS in this
   # branch's ancestry — 3ca1d44d descends from 115531df, which is where
   # this evidence file was added).
+  # The same bounded Beta 19 producer record updates current-source tripwires
+  # only; pre-login/LocalSystem acceptance remains historical and unrenewed.
+  # See docs/evidence/beta19-ci-recovery-2026-10-16.md.
   - id: session0-service-broadcast
     claim: >-
       A temporary LocalSystem Windows service running the then-unmodified
@@ -2006,19 +2013,19 @@ entries:
       # historical hardware/service acceptance; the Beta14 host install remains pending.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 5b66c0aed93303befe20b60078af935b50d12a35
+          blob: 295135425c3fdd323167e5addb63e4966b09434b
         # Sprint 3: current-source bindings reviewed for output DSP and EOS
         # preservation; focused native results: .agent-runs/native-windows/
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 92d501252f80a9a167b56448d97156e8ce785bd1
+          blob: ba27385ef7bd1861f640d94b5074f53913236864
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 67e7973d82f2d2b85cd14870c3ac91ab64873bc9
+          blob: 54fc1e5dd16c1fcdbe237b713dd3a9ed9ebbe638
         - path: civiccast/egress/gst/control.py
           # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
           # restart timeline floor; source tests cover long-running drift.
@@ -2028,7 +2035,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: c98fe4778149e46340b7bace05baf8af38ea9bd0
+        blob: 7fdcb5ea16f8c0f5916787fff085523539d22cc7
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
