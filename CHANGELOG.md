@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Permit the restricted Windows service account to connect to its worker control
+  pipe, and bound shutdown when a worker never connects.
 - Start the generated plain fallback slate directly instead of re-encoding
   its hour-long fill before output can begin. Programme preparation is unchanged.
 - Fix background transcoding under the restricted Windows service account:
