@@ -36,7 +36,7 @@ from civiccast.egress.models import (
     EgressStateRow,
 )
 from civiccast.egress.preparer import PreparedSegmentRecord, SourcePreparationReport
-from civiccast.egress.source_plan import ScheduleSourcePlanProvider
+from civiccast.egress.source_plan import ScheduleSourcePlanProvider, SlateSourceGenerator
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.supervisor import PlayoutSupervisor
 from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
@@ -1145,17 +1145,38 @@ def test_daemon_logs_last_error_at_info_on_fallback_slate_transition(
     ), [r.getMessage() for r in info_records]
 
 
-def test_daemon_runs_fallback_slate_provider_when_no_source_plan(tmp_path: Path) -> None:
+@pytest.mark.parametrize("generated_slate", [False, True])
+def test_daemon_runs_fallback_slate_provider_when_no_source_plan(
+    tmp_path: Path, generated_slate: bool
+) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
     captured: dict[str, list[str]] = {}
     process = _FakeProcess()
+    prepared: list[EgressSourcePlan] = []
+
+    def render(args: list[str]) -> Any:
+        Path(args[-1]).write_text("fake canonical TS", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    fallback_plan = (
+        SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=render)(_config())
+        if generated_slate
+        else _slate_plan(tmp_path)
+    )
+    expected_label = fallback_plan.segments[0].label
+
+    def prepare(plan: EgressSourcePlan, _config: EgressConfig) -> SourcePreparationReport:
+        prepared.append(plan)
+        return SourcePreparationReport(source_plan=plan, records=())
+
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _channel_id: None,
-        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        fallback_source_provider=lambda _config: fallback_plan,
+        source_preparer=prepare,
         ffmpeg_starter=lambda args: captured.setdefault("args", args) and process,
     )
 
@@ -1164,12 +1185,15 @@ def test_daemon_runs_fallback_slate_provider_when_no_source_plan(tmp_path: Path)
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "FALLBACK_SLATE"
-    assert state.current_source_label == "Fallback slate"
+    assert state.current_source_label == expected_label
+    assert state.pid == process.pid
+    assert prepared == ([] if generated_slate else [fallback_plan])
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
     assert state.current_proof_event_id is not None
     assert any("egress-source-plan.ffconcat" in arg for arg in captured["args"])
     proof_event = store.recent_proof_events("gov", 1)[0]
     assert proof_event.state == "FALLBACK_SLATE"
-    assert proof_event.source_label == "Fallback slate"
+    assert proof_event.source_label == expected_label
     assert "entered fallback slate" in proof_event.machine_summary
     assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
 
