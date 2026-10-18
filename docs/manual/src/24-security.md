@@ -132,7 +132,7 @@ The computer's owner or an authorized local Windows administrator can reset the 
 3. Enter the new password twice at the hidden prompts (12–256 characters). Never put it in command arguments, environment variables, a script or a ticket. Cancelling or mismatching the prompts changes nothing.
 4. After success, run `Start-Service CivicCastSupervisor`, sign in with the displayed existing username and new password, then open **Station Profile → Security → Regenerate recovery kit**. Save the new kit safely; all previous recovery codes are invalid.
 
-The command checks the actual elevated Windows token, the stopped supervisor's supported service identity, and its registered environment. It holds the supervisor's exclusive Windows mutex throughout recovery, so service starts and another recovery cannot write concurrently. It targets the protected `station-state.json` from the service environment or an absolute local `CIVICAST_STATION_STATE_PATH`; the invoking user's profile and environment are ignored. Relative, network, linked and junction paths are refused. Custom service identities are not supported by this recovery procedure.
+The command checks the actual elevated Windows token, the stopped supervisor's supported service identity, and its registered environment. It holds the supervisor's exclusive Windows mutex throughout recovery, so service starts and another recovery cannot write concurrently. It targets the protected `station-state.json` from the service environment or an absolute local `CIVICCAST_STATION_STATE_PATH`; the invoking user's profile and environment are ignored. Relative, network, linked and junction paths are refused. Custom service identities are not supported by this recovery procedure.
 
 Before changing credentials it creates an ACL-protected `*.before-admin-reset.bak` beside the state file, then replaces the state atomically. The backup contains old credential hashes and session hashes: keep it restricted, do not attach it to support requests, and remove it after confirming access and your normal station backup. Restoring it also restores the old credentials and sessions. A missing or corrupt state file is refused, not reinitialized. If recovery reports a failure, retain the backup, correct the reported condition and retry; restart the supervisor when maintenance is complete. No database password or DPAPI secret is read; the new password is never echoed, logged or stored in plaintext.
 
@@ -173,7 +173,7 @@ The web API has distinct groups of paths. Which group a path is in decides who m
 | --- | --- | --- |
 | `/api/staff/*` | Staff hostname from an allowed CIDR in Caddy mode, plus a staff bearer token and role | Staff sign-in and operator actions. The public hostname does not forward this path group. |
 | `/api/setup/*` | Station computer only; some post-setup actions also require a staff token | First setup, first-admin sign-in and recovery. Caddy refuses these paths. |
-| `/api/public/*` | Anyone who can reach the public hostname or local listener | Resident features.
+| `/api/public/*` | Anyone who can reach the public hostname or local listener | Resident features. |
 | `/api/webhooks/stripe` | Stripe, with a signature | Payment events. |
 | `/media/*` | Anyone | Media files for the portal. |
 | `/ap/*` | Anyone | ActivityPub (federation) endpoints. Federation mode is `disabled` unless `CIVICCAST_ACTIVITYPUB_MODE` is set. |
@@ -281,7 +281,7 @@ The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-
 
 ## Package status and verification
 
-This chapter describes the Beta 19 edition. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+This chapter describes the unpublished Beta 20 candidate edition. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 ### Report a security problem
 

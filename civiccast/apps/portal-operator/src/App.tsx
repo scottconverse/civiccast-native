@@ -62,6 +62,7 @@ const StationProfileScreen = lazy(() => import('./screens/StationProfileScreen')
 const CommissioningWizardScreen = lazy(() => import('./screens/CommissioningWizardScreen').then((module) => ({ default: module.CommissioningWizardScreen })))
 const BackupScreen = lazy(() => import('./screens/BackupScreen').then((module) => ({ default: module.BackupScreen })))
 const StationImportScreen = lazy(() => import('./screens/StationImportScreen').then((module) => ({ default: module.StationImportScreen })))
+const StationFederationScreen = lazy(() => import('./screens/StationFederationScreen').then((module) => ({ default: module.StationFederationScreen })))
 const NetworkSettingsScreen = lazy(() => import('./screens/NetworkSettingsScreen').then((module) => ({ default: module.NetworkSettingsScreen })))
 const StaffAccountsScreen = lazy(() => import('./screens/StaffAccountsScreen').then((module) => ({ default: module.StaffAccountsScreen })))
 
@@ -352,6 +353,7 @@ function AppContent() {
         <Route path="/staff-accounts" element={<StaffAccountsScreen api={staffAccountsApi} />} />
         <Route path="/backups" element={<BackupScreen />} />
         <Route path="/station-import" element={<StationImportScreen />} />
+        <Route path="/stations" element={<StationFederationScreen />} />
         <Route path="/network" element={<NetworkSettingsScreen />} />
         <Route path="/commissioning" element={<CommissioningWizardScreen />} />
         <Route path="/custom-fields" element={<CustomFieldsScreen />} />

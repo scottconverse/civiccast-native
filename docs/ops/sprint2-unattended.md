@@ -1,5 +1,11 @@
 # Sprint 2 — unattended station operation
 
+> Historical implementation record. The checkpoints below describe work at that time.
+> These features subsequently shipped in Beta 16 and remain in Beta 19; use the
+> [current published package record](../releases/v1.0.0-beta.19-verification.md)
+> for that package identity and its results. Earlier unreleased/pending statements
+> are historical, not current outstanding tasks.
+
 Status: implementation and focused checks complete; CI and merge pending; unreleased.
 Branch: `codex/sprint2-unattended`.
 Starting source: `2c77a448d2cab6d98302dc456f947593492a5d94` (Sprint 1, PR #245).

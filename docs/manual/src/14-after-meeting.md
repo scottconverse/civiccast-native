@@ -111,13 +111,13 @@ The preview has video playback controls. Use **Play selected trim** to inspect t
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 
-> **Note:** A Beta 15 field run found generated caption cues before and after one trimmed playback range. The report did not establish the resident player's subtitle offset or a general behavior; retest the mapping against the package in use. This is a Beta 17 follow-up, not a confirmed Beta 16 defect. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** A Beta 15 field run found generated caption cues before and after one trimmed playback range. The report did not establish the resident player's subtitle offset or a general behavior; retest the mapping against the package in use. The follow-up was recorded for Beta 17; this observation does not establish a defect in the current package. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 If saving fails with a message about another writer, someone else changed the video while you were editing. Close the editor, open the video again and redo your change. If the video is already on a schedule item that is committed to air, the save is refused with the "cannot be edited ... already published" message described under [Edit a video's public details](#ch-after-meeting).
 
 ## Package a video for playback
 
-1. On the Assets screen, find a Validated or Recorded row that has a stored source file and says **Not packaged yet**.
+1. On the Assets screen, find a Validated or Recorded row with a stored source file and no streamable copy. An unpackaged Validated row says **Not packaged yet**; an unpackaged Recorded row says **Not servable yet**.
 2. Click **Package for playback**. The button says "Packaging..." while it works.
 
 You should see the Status change to **Packaged**. This needs the publish_operator or setup_admin role; otherwise the row says "A publish operator or setup administrator must package this recording."
@@ -191,7 +191,7 @@ This queue is for recorded-caption jobs. Ordinary live captions go to the broadc
 1. In the left menu, click **Review queue**. It opens on the **Pending** tab. The other tabs are **All**, **Edited**, **Approved** and **Rejected**, and a **Search** box above them filters by asset ID or caption text.
 2. To work on one language, click **English** or **Spanish** in the **Language** row. **All languages** shows both.
 3. Each card is one cue. It shows the recording's asset ID, the cue's time range, a language badge (EN or ES) and a status. The left box **Machine cue** is the computer's text and cannot be changed. The right box **Reviewed text** is yours to edit.
-4. If the cue is wrong, change the **Reviewed text**, then click **Save edit**. The status becomes **Edited**.
+4. If the cue is wrong, change the **Reviewed text**, then click **Save edit**. The status becomes **Edited**, and the card leaves **Pending**. If you want that correction included in an AI summary, switch to **Edited** and click **Approve** on the saved cue. Complete the audio-evidence check below if the cue has low confidence.
 5. If the cue is right, click **Approve**. The status becomes **Approved**.
 6. If the cue should not be shown at all, click **Reject**.
 
@@ -207,7 +207,7 @@ What each button really does:
 
 Approved and Edited cues both become captions, using the reviewed text. Rejected cues are left out. Pending cues hold their language's track back; selected Spanish review does not hold reviewed English back when **Attach English after its review** is selected.
 
-> **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. After **Save edit**, the cue is already counted as decided. Click **Approve** afterward only if you need the status to read Approved (see the summary section, which uses Approved cues only).
+> **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. **Save edit** counts as a decision for the caption track. For AI summaries, open **Edited** and approve the saved correction as well; the console's summary workflow uses Approved cues only.
 
 > **Warning:** **Reject** asks no question and discards the reviewed text. A rejected cue can be approved again later, which then approves the machine's original text, not your earlier correction.
 
@@ -243,7 +243,7 @@ CivicCast can write a draft summary of a meeting from its approved caption lines
 
 ### Make a summary
 
-1. Approve at least some caption cues for the recording in the Review queue. Only **Approved** cues are used. Cues that are Edited but not Approved are not used.
+1. Approve at least some caption cues for the recording in the Review queue. This console workflow uses only **Approved** cues. If you corrected cues with **Save edit**, open **Edited** and click **Approve** on those saved corrections, completing the low-confidence audio-evidence check when required. Edited cues that have not been Approved are excluded from the summary.
 2. Open the recording's detail page and find the **AI summary** card, under the **Offline caption jobs** card.
 3. Click **Generate summary**. The chip reads "queued" and then "generating…". The screen says generating locally can take 1-6 minutes on a CPU-only station, and you can close the tab; the job keeps running.
 4. When it finishes the card says "Summary generated. Review it in Summary review".
@@ -254,7 +254,7 @@ If there are no approved cues the card says "No committed transcript cues yet. A
 
 Local generation checks memory before loading the summary model and reserves 8 GiB for station operation. A resource-deferral message explains how to recover; wait for memory to become available or choose a smaller model before retrying. CivicCast unloads the local generation model after the request completes.
 
-> **Note:** In one Beta 15 field run, 12.7 GiB was available against an 8 GiB model request plus an 8 GiB broadcast reserve, so the safeguard deferred generation. The guard worked, but summary editing, approval, export and publication were not completed in that run. Usability and full-workflow follow-up is recorded for Beta 17; this observation does not establish a Beta 16 defect. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** In one Beta 15 field run, 12.7 GiB was available against an 8 GiB model request plus an 8 GiB broadcast reserve, so the safeguard deferred generation. The guard worked, but summary editing, approval, export and publication were not completed in that run. Usability and full-workflow follow-up was recorded for Beta 17; this observation does not establish a defect in the current package. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
 2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.

@@ -40,6 +40,8 @@ end function
 sub init()
     m.channels = []
     m.replays = []
+    m.catalogReady = false
+    m.pendingLaunchArgs = invalid
     m.statusLabel = m.top.findNode("statusLabel")
     m.channelList = m.top.findNode("channelList")
     m.artwork = m.top.findNode("artwork")
@@ -55,6 +57,8 @@ end sub
 ' --- Channel-list fetch -----------------------------------------------------
 
 sub fetchConfig()
+    m.catalogReady = false
+    m.replays = []
     body = getJson(getApiBaseUrl() + "/api/public/app/config")
     if body = invalid then
         showEmptyState("Could not reach the CivicCast public API. Check network access and the station's API URL, then retry.")
@@ -95,12 +99,21 @@ sub fetchConfig()
 
     fetchReplays()
     renderChannels("")
+    m.catalogReady = true
+    openDeepLink()
+end sub
+
+sub onLaunchArgsChanged()
+    m.pendingLaunchArgs = m.top.launchArgs
     openDeepLink()
 end sub
 
 sub openDeepLink()
-    args = m.top.launchArgs
+    if m.catalogReady <> true then return
+    args = m.pendingLaunchArgs
     if args = invalid or not isAssocArray(args) then return
+    ' Consume once, including an unknown id, so a catalog refresh cannot replay it.
+    m.pendingLaunchArgs = invalid
     target = args.contentid
     if target = invalid or target = "" then return
     for each replay in m.replays

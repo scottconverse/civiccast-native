@@ -1,7 +1,13 @@
 # CivicCast Release Policy
 
-> **Release state:** v1.0.0-beta.13 is the current GitHub pre-release,
-> published October 11, 2026. The 26-asset release includes the signed
+> **Release state:** [v1.0.0-beta.19](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19)
+> is the current published GitHub pre-release. Its
+> [verification record](../releases/v1.0.0-beta.19-verification.md) describes
+> the exact public package and its evidence limitations; an owner-held
+> corrected candidate does not replace the published package until publication.
+>
+> **Historical Beta 13 evidence:** v1.0.0-beta.13 was published October 11,
+> 2026. The 26-asset release includes the signed
 > installer, runtime packs, manual assets, checksums, sidecar, release-matched
 > downloader, station bundle manifest and multipart station archive. The
 > [verification record](../releases/v1.0.0-beta.13-verification.md) binds the

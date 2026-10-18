@@ -6,9 +6,9 @@ This chapter covers the work you do before a meeting starts and before a program
 
 You need to be signed in to the operator console ([Chapter 2](#ch-signing-in) shows how). The left-hand menu groups the screens in this chapter in two sections: **Run Meeting** (Schedule, Auto-schedule, Program Guide, Recording) and **Review Records** (Contributors, Agendas).
 
-What you can do on each screen depends on your role. The table shows who can look and who can change things. Your station administrator gives out roles ([Appendix: roles](#app-roles) lists all of them).
+What you can do on each screen depends on your role. The table shows who can load its data and who can change things. Sidebar visibility is separate: Schedule, Program Guide and Contributors appear for every signed-in person. Your station administrator gives out roles ([Appendix: roles](#app-roles) lists all of them).
 
-| Screen | Who can open it | Who can make changes |
+| Screen | Who can load its data | Who can make changes |
 | --- | --- | --- |
 | Schedule | Publish operator, setup admin, support admin | Publish operator, setup admin |
 | Program Guide | Any signed-in person | Meeting operator, support admin |

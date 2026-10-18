@@ -1,5 +1,11 @@
 # Station operations implementation — October 13, 2026
 
+> Historical implementation record. The checkpoints below describe work at that time.
+> These features subsequently shipped in Beta 16 and remain in Beta 19; use the
+> [current published package record](../releases/v1.0.0-beta.19-verification.md)
+> for that package identity and its results. Earlier unreleased/pending statements
+> are historical, not current outstanding tasks.
+
 Status: complete for the four selected implementation goals; unreleased.
 Branch: `codex/station-operations-1-0`.
 Baseline: corrected Beta 15, `431585942c9ced93e730b1e6b506c707a6adecb8`.

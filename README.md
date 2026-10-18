@@ -6,9 +6,9 @@ system. Staff use one operator console; residents watch through a separate
 portal. Optional cloud services may charge their own usage fees, while CivicCast
 has no per-minute software fee.
 
-## Current release
+## Current source candidate
 
-`v1.0.0-beta.19` completes Sprint 5. It adds remote guests in channel output, bulletin-board video and audio, and fuller native viewer apps to the publication, import and underwriting features shipped in Beta 17 and 18. The [roadmap](docs/ROADMAP.md) tracks the scope.
+`v1.0.0-beta.20` is an unpublished candidate consolidating Sprint 6 preparation, output, webhook, Roku and station-integration changes. Installation verification is pending. The [roadmap](docs/ROADMAP.md) tracks the scope.
 
 ## Current published package
 
@@ -18,7 +18,13 @@ checksums. The [Beta 19 verification record](docs/releases/v1.0.0-beta.19-verifi
 identifies the exact package and its scoped verification results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
 for Beta 19 operation, use the manual bundled on that release page. The
-[source manual](docs/USER-MANUAL.md) describes the same edition.
+[source manual](docs/USER-MANUAL.md) also documents unreleased Sprint 6 changes;
+use the bundled manual for the published installer. [Sprint 6](docs/ops/sprint6.md)
+tracks preparation improvements, webhook and Roku corrections, and station integrations.
+
+The working manual also corrects older operating instructions and refreshes the
+CLI/API/settings references. These documentation corrections are prepared for the
+next authorized package; they do not replace the Help inside an existing installation.
 
 Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
 captions, with supported NVIDIA CUDA applying to Whisper only. The native

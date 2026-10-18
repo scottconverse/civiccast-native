@@ -79,6 +79,19 @@ def test_invalid_confirmation_token_is_actionable() -> None:
         confirm_subscription("not-a-token", store=InMemorySubscribeStore())
 
 
+def test_webhook_signup_does_not_return_endpoint_ownership_proof() -> None:
+    created = create_webhook_subscription(
+        SubscriptionWebhookRequest(
+            webhook_url="https://example.org/civiccast-hook",
+            target_type="channel",
+            target_id="government",
+        ),
+        store=InMemorySubscribeStore(),
+    )
+    assert created.confirmation_token is None
+    assert created.unsubscribe_token is None
+
+
 def test_encrypted_handle_is_not_plaintext() -> None:
     store = InMemorySubscribeStore()
     created = create_email_subscription(
@@ -112,8 +125,12 @@ def test_webhook_notification_signs_payload_and_tamper_fails() -> None:
             target_id="government",
         ),
         store=store,
+        webhook_client=webhooks,
     )
-    confirm_subscription(created.confirmation_token or "", store=store)
+    assert created.confirmation_token is None
+    challenge = webhooks.requests[0]
+    assert challenge["url"] == "https://example.org/civiccast-hook"
+    confirm_subscription(challenge["confirmation_token"], store=store)
     payload = NotificationPayload(
         asset_id="council-2026-05-14",
         title="Council",
@@ -134,9 +151,51 @@ def test_webhook_notification_signs_payload_and_tamper_fails() -> None:
         record.encrypted_webhook_secret or "",
         aad=f"{record.subscription_id}:secret",
     )
+    assert secret == challenge["signing_secret"]
+    assert len(secret) >= 43
     assert signature == sign_payload(payload.model_dump(mode="json"), secret)
     tampered = payload.model_copy(update={"title": "Changed"})
     assert signature != sign_payload(tampered.model_dump(mode="json"), secret)
+
+
+def test_webhook_remains_inactive_until_endpoint_confirms() -> None:
+    store = InMemorySubscribeStore()
+    webhooks = LocalWebhookClient()
+    created = create_webhook_subscription(
+        SubscriptionWebhookRequest(
+            webhook_url="https://example.org/hook", target_type="channel", target_id="government"
+        ),
+        store=store,
+        webhook_client=webhooks,
+    )
+    payload = NotificationPayload(
+        asset_id="meeting",
+        title="Meeting",
+        portal_url="https://example.org/watch/meeting",
+        published_at=datetime.now(UTC),
+    )
+    assert dispatch_notifications(payload, store=store, webhook_client=webhooks).sent == 0
+    assert len(webhooks.requests) == 1  # Only the ownership challenge.
+    challenge = webhooks.requests[0]
+    confirm_subscription(challenge["confirmation_token"], store=store)
+    assert dispatch_notifications(payload, store=store, webhook_client=webhooks).sent == 1
+    assert store.get(created.subscription_id).status == "confirmed"
+
+
+def test_webhook_confirmation_rejects_a_forged_ownership_token() -> None:
+    store = InMemorySubscribeStore()
+    created = create_webhook_subscription(
+        SubscriptionWebhookRequest(
+            webhook_url="https://example.org/hook", target_type="channel", target_id="government"
+        ),
+        store=store,
+    )
+    forged = signed_token(
+        {"subscription_id": created.subscription_id, "action": "confirm"},
+        load_subscription_secrets().token_secret,
+    )
+    with pytest.raises(ValueError, match="confirmation is invalid"):
+        confirm_subscription(forged, store=store)
 
 
 def test_subscription_rss_is_valid_no_pii_feed() -> None:

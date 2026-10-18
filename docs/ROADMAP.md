@@ -3,6 +3,19 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
+## Completed Sprint 6 source work (unreleased)
+
+[Sprint 6](ops/sprint6.md) addresses remaining webhook, Roku and documentation
+corrections, preparation efficiency and retry scheduling, hardware-aware encoding,
+and CivicCast station connections. Catalog sharing and central channel management
+are implemented. The owner deferred TownLight (formerly CivicSuite) integration,
+including TownLight: Station, to 2.0. This work does not change the published
+Beta 19 package until a separately authorized release.
+
+The [documentation correction](ops/manual-reconciliation-2026-10-17.md) reconciles
+operating instructions and generated references for that next package. Existing
+release evidence retains its original identity.
+
 ## Beta 19 release
 
 The [published Beta 19 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19) connects remote guests to channel output, adds live

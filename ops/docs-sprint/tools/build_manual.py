@@ -89,7 +89,15 @@ WIN_PATH = re.compile(
 def wrap_paths(body: str) -> str:
     """Generated tables hold bare Windows paths; LaTeX reads a backslash as a command, so put them in code spans."""
     out = []
+    in_code = False
     for line in body.splitlines():
+        if FENCE.match(line):
+            in_code = not in_code
+            out.append(line)
+            continue
+        if in_code:
+            out.append(line)
+            continue
         parts = re.split(r"(`[^`]*`)", line)
         out.append("".join(p if p.startswith("`") else WIN_PATH.sub(r"`\1`", p) for p in parts))
     return "\n".join(out)
@@ -201,7 +209,7 @@ def main():
         "title: CivicCast User Manual\n"
         f"subtitle: For station staff, volunteers and city IT staff - {VERSION} (native Windows line)\n"
         "author: The CivicCast Authors\n"
-        "date: 2026-10-15\n"
+        "date: 2026-10-17\n"
         "urlcolor: blue\n"
         "toccolor: black\n"
         "---\n\n"

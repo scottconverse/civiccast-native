@@ -222,8 +222,8 @@ This routine uses checks that exist in beta.11.
 2. Check the size of `ollama.log`; it is not rotated. The control-plane and PostgreSQL raw output logs rotate at 10 MiB and retain ten older files.
 3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The native live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
-5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
-6. Copy the things the drill does not back up (see below) to storage that is not on this computer.
+5. Check the latest encrypted `.ccbackup` station archive and its verification result in **Backup and restore**. Keep a copy on separate storage; the optional database drill is not a station backup.
+6. Check which media roots your station archive includes. Back up any excluded media separately; follow the station-backup workflow below rather than assuming the database drill includes those files.
 
 ## Manage disk and cache
 
@@ -290,7 +290,7 @@ The scheduled passphrase is stored separately from the archive and schedule. Kee
 
 The drill command is:
 
-```powershell
+```text
 civiccast dr run-drill --out <dir> [--backup-dir <dir>] [--work-dir <dir>] [--database-url <url>] [--media-root <dir>]
 ```
 
@@ -393,7 +393,7 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ## Package status and verification
 
-This chapter describes the Beta 19 edition. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
+This chapter describes the unpublished Beta 20 candidate edition. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ## Related
 

@@ -33,6 +33,11 @@ What it does:
   Roku content-ID deep links, and retains the native player options for
   audio and captions.
 
+Startup content-ID arguments and `roInputEvent` messages received while the
+app is running use the same scene callback. A request waits for the channel
+and replay catalog, then is consumed once; a later catalog refresh does not
+replay it. The main message port receives both screen and input events.
+
 ## Platform publication
 
 Store metadata, a Roku developer account, and on-device certification are

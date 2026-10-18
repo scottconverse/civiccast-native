@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import socket
 from contextlib import suppress
@@ -157,6 +158,10 @@ def signup_email(
     "/webhook",
     response_model=SubscriptionPublicResponse,
     summary="Start webhook subscription opt-in",
+    responses={
+        400: {"description": "A public HTTPS webhook endpoint is required"},
+        502: {"description": "Endpoint confirmation could not be delivered"},
+    },
 )
 def signup_webhook(
     payload: SubscriptionWebhookRequest,
@@ -164,9 +169,28 @@ def signup_webhook(
     store: SubscribeStore = Depends(get_subscribe_store),
     secrets: SubscriptionSecrets = Depends(get_subscribe_secrets),
     limiter: SubscribeRateLimiter = Depends(get_subscribe_rate_limiter),
+    registry: ProviderRegistry = Depends(get_provider_registry),
 ) -> SubscriptionPublicResponse:
     _enforce_signup_rate_limit(request, limiter, channel="webhook")
-    return create_webhook_subscription(payload, store=store, secrets=secrets)
+    try:
+        return create_webhook_subscription(
+            payload,
+            store=store,
+            secrets=secrets,
+            webhook_client=registry.resolve(PROVIDER_KIND_WEBHOOK),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="Use a public HTTPS webhook endpoint."
+        ) from exc
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Webhook confirmation delivery failed (%s).", type(exc).__name__
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="The webhook confirmation could not be delivered. Check the endpoint and register again.",
+        ) from exc
 
 
 @public_router.get(

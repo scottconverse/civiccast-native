@@ -1,6 +1,6 @@
 # Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; the Beta 19 edition needs its own package record. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; the unpublished Beta 20 candidate needs its own package record. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ## Historical Beta 11: three channels, 72 hours, 99.78% live caption-input coverage
 
@@ -62,6 +62,6 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ## H.6 How to use this evidence
 
-Read sections H.1 through H.5 as historical evidence for their named builds and runs. For Beta 19, use the current operating chapters and its matching package record; keep each measured result associated with its recorded source and run.
+Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the unpublished Beta 20 candidate, use the current operating chapters; installation verification is pending; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->

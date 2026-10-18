@@ -14,6 +14,8 @@ sub Main(args as Dynamic)
     screen = CreateObject("roSGScreen")
     port = CreateObject("roMessagePort")
     screen.setMessagePort(port)
+    input = CreateObject("roInput")
+    input.SetMessagePort(port)
 
     ' Pass any launch args (Roku passes the contentId, mediaType, source from
     ' deep-link suspends here) into the Scene so the supports_input_launch=1
@@ -27,6 +29,8 @@ sub Main(args as Dynamic)
         msgType = type(msg)
         if msgType = "roSGScreenEvent"
             if msg.isScreenClosed() then return
+        else if msgType = "roInputEvent"
+            if msg.IsInput() then scene.launchArgs = msg.GetInfo()
         end if
     end while
 end sub

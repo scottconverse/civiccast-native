@@ -15,6 +15,7 @@ when the operator UI needs live progress. The signature is forward-compatible.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -23,6 +24,7 @@ import threading
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import cache
 from pathlib import Path
 from typing import IO, Final
@@ -231,6 +233,61 @@ def probe_video_dimensions(path: Path) -> tuple[int, int] | None:
     if width <= 0 or height <= 0:
         return None
     return width, height
+
+
+def probe_canonical_video(path: Path, *, width: int, height: int, fps: int) -> bool:
+    """Conservatively approve video passthrough; unknown metadata requires encode.
+
+    Copy preserves the source's GOP and bitrate. Audio is handled independently.
+    Rotated, interlaced, anamorphic or variable-rate sources still need filters.
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,width,height,pix_fmt,sample_aspect_ratio,field_order,r_frame_rate,avg_frame_rate:stream_tags=rotate:stream_side_data=rotation",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if completed.returncode != 0:
+            return False
+        stream = json.loads(completed.stdout)["streams"][0]
+        return bool(
+            stream.get("codec_name") == "h264"
+            and stream.get("width") == width
+            and stream.get("height") == height
+            and stream.get("pix_fmt") == "yuv420p"
+            and stream.get("sample_aspect_ratio") == "1:1"
+            and stream.get("field_order") == "progressive"
+            and Fraction(stream.get("r_frame_rate", "0")) == fps
+            and Fraction(stream.get("avg_frame_rate", "0")) == fps
+            and float(stream.get("tags", {}).get("rotate", 0)) == 0
+            and all(
+                float(item.get("rotation", 0)) == 0 for item in stream.get("side_data_list", [])
+            )
+        )
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        ZeroDivisionError,
+    ):
+        return False
 
 
 def probe_media_duration_seconds(path: Path) -> float | None:

@@ -931,7 +931,8 @@ function EgressConfigPanel({
             <span>
               <span className="font-medium">Allow software (CPU) encoding fallback</span>
               <span className="block text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-                When no hardware video encoder is present, encode H.264 on the CPU (slower).
+                Automatic H.264 tries NVIDIA, then Windows hardware, then the CPU.
+                For an explicitly configured hardware encoder, this setting allows CPU fallback (slower).
                 Applies to H.264 only &mdash; HEVC/H.265 always requires a hardware encoder.
               </span>
             </span>

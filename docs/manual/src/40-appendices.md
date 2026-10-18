@@ -17,7 +17,7 @@ Replace `doctor` with any command from the tables below. Add `--help` after any 
 
 ## Before you run a command
 
-1. **Use an Administrator PowerShell for anything that touches the station's data.** The station's database address is stored in the Windows registry at `HKLM\SOFTWARE\CivicCast\Native` (value `DatabaseUrl`), and only the SYSTEM account and Administrators can read it.
+1. **Use an Administrator PowerShell for anything that touches the station's data.** The station's database address is stored in the Windows registry at `HKLM\SOFTWARE\CivicCast\Native` (value `DatabaseUrl`). SYSTEM, Administrators and the restricted station service identity can read it.
 2. **The `token` commands need the database address in the shell.** They print "DATABASE_URL must point at the CivicCast database before running staff token lifecycle commands." when it is missing. Set the environment variable `DATABASE_URL` for that PowerShell window from the registry value (the value contains the database password; do not paste it into tickets or chat).
 3. **A command that changes something changes the live station.** `token revoke` cannot be undone; issue a new token instead.
 
@@ -45,6 +45,8 @@ Nearly every command accepts `--json`. It prints one machine-readable record ins
 | `civiccast token issue` | Make an access token for a script or tool (see [Appendix B](#app-api)). | The secret is printed once. Default scope is `operator`, which means all five roles; narrow it with `--scopes`. |
 | `civiccast token list`, `revoke`, `rotate` | See, retire or replace tokens. | `list` never shows secrets. Needs `DATABASE_URL`. |
 | `civiccast dr run-drill --out <folder>` | Run the real disaster-recovery drill: back up the database, restore it into a fresh copy, test crash recovery. | The same drill is a button on the Readiness screen. Read [Appendix G](#app-checklists). |
+| `civiccast backup create`, `verify`, `inventory` | Create or check an encrypted `.ccbackup` archive and inspect its stored paths. | The command prompts for its passphrase; retain it separately from the archive. |
+| `civiccast backup restore` | Restore onto a prepared station while CivicCast and other writers are stopped. | Requires explicit target path mappings and `--confirmation RESTORE`; see [Chapter 12](#ch-operations). |
 | `civiccast cable doctor` | Run the read-only cable-headend readiness checks. | `--profile` defaults to `public-meetings`. |
 | `civiccast cable commission` | Run the whole cable commissioning flow. | Sends a test signal to the headend address you give it. Do not run it while that channel is live. |
 | `civiccast live-takeover state`, `take`, `return` | Check, begin or end a live takeover of one channel from the command line. | Uses the same takeover service and readiness gate as the Channels screen. |
@@ -54,7 +56,7 @@ Nearly every command accepts `--json`. It prints one machine-readable record ins
 
 ## Full command tables
 
-The tables below are generated from the program itself. Root will regenerate this include from the current source when assembling the manual.
+The tables below are generated from the program itself.
 
 <!-- INCLUDE: ops/docs-sprint/inventory/generated/cli.md -->
 
@@ -66,7 +68,7 @@ CivicCast's web pages are built on an HTTP API: the operator console and the res
 
 ## Where it is
 
-On the station itself the API answers at `http://127.0.0.1:8000`. The program binds to the loopback address only, so it cannot be reached from other computers as installed, even though setup also opens Windows Firewall port TCP 8000 (see [Appendix D](#app-files)). Reaching it from elsewhere on the network needs something that you add, such as a reverse proxy. The same server serves the operator console at `/operator/` and the resident portal at `/`.
+On the station itself the API answers on the configured loopback address, by default `http://127.0.0.1:8000`. Network Settings also supports `::1`. The application stays loopback-only; remote access uses a separately deployed HTTPS reverse proxy. Network Settings generates a Caddy configuration with separate public and CIDR-restricted staff hostnames (see [Appendix D](#app-files)). Do not publish application port 8000 directly. The same application serves the operator console at `/operator/` and the resident portal at `/`.
 
 ## The three groups of routes
 
@@ -85,13 +87,14 @@ Other protocol and utility routes include `/health`, federation discovery and Ac
 
 1. **Staff routes need a bearer token.** Send the header `Authorization: Bearer <token>` with every request. A request with no header gets HTTP 401 and does not count against the lock-out limit.
 2. **Where tokens come from.**
-   - Sign in as the first admin: `POST /api/setup/login` from the station computer returns an `operator_console_token`. This is what the console does. The same call from another computer is refused with HTTP 403.
+   - Staff sign in at `/login` using `POST /api/staff/auth/login`. This checks their account and returns a station-local console session token. Remote access uses the CIDR-restricted staff hostname when configured.
+   - The first admin uses `POST /api/setup/login` on the station computer. It returns an `operator_console_token`; the same call from another computer is refused with HTTP 403.
    - Or issue a token with `civiccast token issue` ([Appendix A](#app-cli)). The console has no screen for pasting such a token in; it is for scripts and tools.
    - Or list tokens in the `CIVICCAST_STAFF_TOKENS` setting (an older method; the server cannot revoke these, so you retire one by changing the setting). On a station that has its database token store, as the native station does, these entries are honored only when `CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB=1` is also set.
 3. **A token carries scopes, and scopes become roles.** `admin` and `operator` mean all five roles; `setup_admin`, `meeting_operator`, `records_clerk`, `publish_operator` and `support_admin` (also written `setup`, `meeting`, `records`, `publish`, `support`) mean one role each. A token with no scopes has no roles.
 4. **Each route names the roles that may use it.** A signed-in caller with the wrong role gets HTTP 403: "This action requires one of these CivicCast roles: ..." followed by the role names in alphabetical order.
 5. **Rate limit.** Ten failed token checks in 60 seconds from one client address earns HTTP 429 ("Too many failed staff authentication attempts. Wait and retry.") with a `Retry-After` header. The numbers are settings (`CIVICCAST_AUTH_RATE_LIMIT`, `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS`). A caller that sends the exact right token is not blocked by other people's failures.
-6. **Read versus write.** In beta.11 almost every `/api/staff/` route that changes something requires a role. The staff routes with no role requirement are all reads (lists, status, thumbnails) plus `POST /api/staff/auth/sign-out`; for those any valid token is enough. In the console this shows up as screens a role can open but cannot use ([Appendix F](#app-roles)).
+6. **Read versus write.** Staff routes enforce their own roles; some reads accept any valid staff token, while sensitive reads and writes name allowed roles. Staff login is the account-authentication entry point, not an operation requiring an existing bearer token. Menu visibility does not grant permission to use an API ([Appendix F](#app-roles)).
 7. **Maintenance mode.** While the service holds the station in maintenance mode (the installer does this during an upgrade, and during a hand-over between CivicCast editions), every request that changes data (POST, PUT, PATCH, DELETE) is refused with HTTP 503 and the body `{"error": "maintenance"}`. Reads still work.
 
 > **Note:** A Beta 11 console limitation was the lack of a screen for creating operators or assigning roles. The Beta 18 source includes **Staff accounts** for creating staff users and assigning roles; see [Security and privacy](#ch-security).
@@ -170,6 +173,11 @@ The station sets these when it starts the control plane. Do not set them yoursel
 
 `CIVICCAST_CAPTION_TAP` is the one exception: if you set it to the exact word `off` in the service environment, the service passes that through and live caption audio tapping stays off; any other value leaves the normal behavior.
 
+`CIVICCAST_CAPTION_RUNTIME=faster-whisper` identifies the Whisper runtime used
+for recorded captions and fallback. Separately, `CIVICCAST_LIVE_CAPTION_ENGINE`
+defaults to `whistle` on a native station; IT can explicitly select `whisper`.
+These settings describe different parts of the caption path.
+
 ### A few settings worth knowing
 
 Each default below is read from the code. The full list follows in the generated table.
@@ -185,6 +193,8 @@ Each default below is read from the code. The full list follows in the generated
 | `CIVICCAST_TS_RELAY` | Cable relay mode: `auto`, `on` or `off`. | auto |
 | `CIVICCAST_TS_RELAY_BASE_PORT` | First local UDP port used by the cable relay. | 17800 |
 | `CIVICCAST_LIVE_SOURCE_READINESS_TTL_SECONDS` | How long a "Delivering" source check stays fresh on the Live screen (clamped 5 to 300). | 30 |
+| `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` | Deadline for a Whisper fallback recognition request. | 120 |
+| `CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL` | Commissioned MediaMTX public WHIP endpoint for Remote Contribution. | unset |
 | `CIVICCAST_STAFF_TOKENS` | Older way to list staff tokens, one entry per token. | unset |
 | `CIVICCAST_STATION_NAME`, `CIVICCAST_STATION_TZ`, `CIVICCAST_STATION_MEDIA_LIBRARY`, `CIVICCAST_STATION_RECORDINGS`, `CIVICCAST_STATION_BACKUPS` | Overrides for what Station Profile shows. | per Station Profile |
 | `CIVICCAST_ACTIVITYPUB_*` | Federation switches (mode, handle, base URL, key path). Off by default; see [Chapter 15](#ch-integrations). | off |
@@ -195,7 +205,7 @@ Each default below is read from the code. The full list follows in the generated
 
 How to read it. **Name**: exactly as the code reads it. **Prod refs**: how many places in the product source (tests excluded) use the name; a count of 1 or 2 means a narrow setting. **First location**: where to look in the source. **Documented**: whether the name appears in a prose document in the repository. **Notes**: only the one-C rows have a note.
 
-A few rows are not real settings. Names ending in an underscore (for example `CIVICCAST_FASTLY_`) are family prefixes written in code comments. `CIVICCAST_ALERT` is the name of an installer script macro, not a setting. 412 names appear: 396 with the correct spelling and 16 with one C.
+A few rows are not real settings. Names ending in an underscore (for example `CIVICCAST_FASTLY_`) are family prefixes written in code comments. `CIVICCAST_ALERT` is the name of an installer script macro, not a setting. The generated table lists the names found in this source edition, including legacy one-C spellings; it is not a list of recommended settings.
 
 <!-- INCLUDE: ops/docs-sprint/inventory/generated/env-vars.md -->
 
@@ -221,6 +231,7 @@ Everything here is program files. Changing it needs Administrator rights, and un
 | `<I>\packs\native-server-binaries\payload\` | PostgreSQL programs, and `tsduck\bin\tsp.exe` when TSDuck is shipped. |
 | `<I>\packs\.station-cache\` | The cache of the large AI-model packs that setup unpacked from. About 21 GB, according to setup's own text. |
 | `<I>\packs\captions-floor\` | The standard (Medium) caption model. |
+| `<I>\packs\captions-whistle\` | The signed Whistle model and CPU engine for native live captions. |
 | `<I>\dependencies\ffmpeg\bin\` | `ffmpeg.exe` and `ffprobe.exe`. |
 | `<I>\dependencies\ollama\` | The Ollama AI engine (version 0.30.6). |
 | `<I>\dependencies\cuda\` | Optional graphics-card libraries. |
@@ -235,7 +246,9 @@ This is everything that belongs to your station. **Uninstalling does not delete 
 
 | Path | What is in it |
 | --- | --- |
-| `data\pgdata\` | The PostgreSQL database cluster: all station records. Locked down to the system and administrators. |
+| `data\pgdata\` | The PostgreSQL database cluster: all station records. Accessible to SYSTEM, administrators and the restricted station service identity. |
+| `profile\` | The restricted service account's CivicCast profile, including `station-state.json` and related station files unless explicitly relocated. |
+| `install-transaction\` | Automatic installer recovery snapshots and recovery records. Preserve it when recovery has not completed. |
 | `data\uploads\` | Media uploaded by operators, and recordings that finish into the library (`CIVICCAST_UPLOAD_DIR`). |
 | `data\egress\` | The playout engine's working folder: the plans, the prepared copies of programs, and the HLS web output. |
 | `data\egress\conform-cache\` | The conform cache: prepared, ready-to-play copies of long programs. Limited to `CIVICCAST_CONFORM_CACHE_GB`, default 60 GB. |
@@ -248,7 +261,7 @@ This is everything that belongs to your station. **Uninstalling does not delete 
 | `upgrade\` | `upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md` from the last upgrade. |
 | `provision\` | `PROVISION-RECOVERY.md`, `OWNERSHIP-RECOVERY.md`, `ownership-observation.txt` and the database set-up journal. |
 
-> **For IT staff:** Setup and Station Profile show **Installation**, **Database** and **Media uploads** from the installed service's resolved configuration. Native first-run storage defaults are under `C:\ProgramData\CivicCast\data`; existing saved storage choices remain explicit station settings. Use the displayed runtime paths when locating the actual files. Include `station-state.json` in backups as well: `CIVICCAST_STATION_STATE_PATH` can relocate it, and the fallback location is `%LOCALAPPDATA%\CivicCast\` for the account running the service.
+> **For IT staff:** Setup and Station Profile show **Installation**, **Database** and **Media uploads** from the installed service's resolved configuration. Native first-run storage defaults are under `C:\ProgramData\CivicCast\data`; existing saved storage choices remain explicit station settings. Use the displayed runtime paths when locating the actual files. Include `station-state.json` in backups as well: `CIVICCAST_STATION_STATE_PATH` can relocate it. The restricted native service uses `C:\ProgramData\CivicCast\profile`; other runtime accounts can use their `%LOCALAPPDATA%\CivicCast\` fallback.
 
 ### Per-user files from the first-run wizard
 
@@ -261,7 +274,7 @@ This is everything that belongs to your station. **Uninstalling does not delete 
 
 | Key | What |
 | --- | --- |
-| `HKLM\SOFTWARE\CivicCast\Native` | `DatabaseUrl` (readable only by SYSTEM and Administrators; it holds the database password) and `InstalledVersion`. |
+| `HKLM\SOFTWARE\CivicCast\Native` | `DatabaseUrl` (readable by SYSTEM, Administrators and the restricted station service identity; it holds the database password) and `InstalledVersion`. |
 | `HKLM\SOFTWARE\CivicCast` | `ActiveRuntime` (which CivicCast edition owns the machine), `Maintenance`, `NativeUninstallPostclearPending`. |
 | `HKLM\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor` | The Windows service. Its `Environment` value is where the product's code comments say service settings go; we found no installer code that creates it ([Appendix C](#app-settings)). |
 
@@ -300,11 +313,11 @@ Control it from an Administrator PowerShell: `Get-Service CivicCastSupervisor`, 
 
 ## Ports
 
-The "Address" column is the network address the program listens on. `127.0.0.1` means only programs on the same computer can connect.
+The "Address" column is the network address the program listens on. `127.0.0.1` and `::1` mean only programs on the same computer can connect.
 
 | Port | Protocol | Who listens | Address | What it is for |
 | --- | --- | --- | --- | --- |
-| 8000 | TCP | The control plane (`uvicorn civiccast.app:create_app`) | `127.0.0.1` | The operator console (`/operator/`), the resident portal (`/`) and the whole API. |
+| 8000 | TCP | The control plane (`uvicorn civiccast.app:create_app`) | Configured `127.0.0.1` or `::1` | The operator console (`/operator/`), the resident portal (`/`) and the whole API; remote HTTPS access goes through Caddy. |
 | 5432, or the first free of 5433, 5434, 5435, 5544 | TCP | PostgreSQL | `127.0.0.1` | The database. Setup picks the first free port in that order and records it in the database address; the service reads the port from there. |
 | 11434 | TCP | The Ollama AI engine | `127.0.0.1` | The local AI engine used for meeting summaries and Spanish translation. |
 | 38474 | TCP | `CivicCast Native.exe` | `127.0.0.1` | A "one copy at a time" lock for the setup program. Not for any other use. |
@@ -314,7 +327,7 @@ The "Address" column is the network address the program listens on. `127.0.0.1` 
 
 There is **no** CivicCast listener on any non-loopback address in the supervisor's normal configuration.
 
-> **Known issue (beta.11):** Setup adds a Windows Firewall rule named "CivicCast (Native) Portal/API (TCP 8000)" that allows inbound TCP 8000 on all network profiles for `<I>\runtime\python.exe`. But the control plane listens only on `127.0.0.1`, and no setting changes that. As built, other computers on the network cannot open the console or the portal even though the firewall rule is open. If residents or staff need to reach the station from other computers, that has to be done with something you add in front of it (a reverse proxy on the same machine, for example). Test it before promising it to anyone.
+> **For IT staff:** A firewall rule does not make the loopback-bound application remotely reachable. Use **Network access** to choose IPv4 or IPv6 loopback and generate the Caddy configuration. IT must deploy Caddy, valid certificates and the intended public/staff network access. Test both hostnames from their intended networks; first-admin setup and recovery remain local-only.
 
 ### Connections the station makes outward
 
@@ -507,6 +520,7 @@ When setup fails it ends with a number. Interactive setup shows a message box (n
 | 133 | uninstall | The service stop was not confirmed; files were kept. | Stop the service or reboot, then uninstall again. |
 | 134 | uninstall | Teardown incomplete. | Remove the leftovers by hand (services.msc, firewall, registry). |
 | 135 | database | The older WSL edition of CivicCast is registered on this machine. | Uninstall it or run its `cutover-to-native`, then run setup again. |
+| 136 | installer recovery | Setup could not prepare, complete or resume automatic restoration. | Keep station data and `install-transaction` intact. Read `install-progress.log` and `install-transaction\recovery-error.txt`; restart Windows or retry setup so recovery can retry, then contact support if it repeats. |
 
 Code 123 hides a second number from the activation step: 66 (pack or index missing or not trusted), 67 (anything wrong after the packs were verified, including too little free disk space, an extraction failure, a missing file or a self-test that did not pass), 78 (the embedded signing key was refused: download setup again), 64 or 65 (a defective setup program). The self-test runs a short check of the program, PostgreSQL, ffmpeg, Ollama, a caption transcription and three AI requests; each AI request may take up to 300 seconds on a slow machine.
 
@@ -572,6 +586,10 @@ CivicCast has five roles. A role is a set of things a person is allowed to do. T
 | --- | --- | --- | --- | --- | --- | --- |
 | Help | Manual | Y | Y | Y | Y | Y |
 | Setup | First Setup | Y | Y | Y | Y | Y |
+| Setup | Staff accounts | Y | - | - | - | - |
+| Setup | Backup and restore | Y | - | - | - | Y |
+| Setup | Import station | Y | - | - | - | - |
+| Setup | Network access | Y | - | - | - | Y |
 | Setup | Control Room Setup | Y | - | - | - | - |
 | Setup | Station Profile | Y | Y | - | - | Y |
 | Setup | Cable Commissioning | Y | - | - | - | Y |
@@ -583,6 +601,7 @@ CivicCast has five roles. A role is a set of things a person is allowed to do. T
 | Run Meeting | Control Room | Y | Y | Y | Y | Y |
 | Run Meeting | Remote Contribution | Y | Y | - | - | Y |
 | Run Meeting | Channels | Y | Y | Y | Y | Y |
+| Run Meeting | Other stations | Y | Y | - | Y | Y |
 | Run Meeting | CG Board | Y | Y | Y | Y | Y |
 | Run Meeting | CG Designer | Y | - | - | Y | Y |
 | Run Meeting | Schedule | Y | Y | Y | Y | Y |
@@ -616,8 +635,8 @@ Two extra pages are not in the menu: an asset's detail page and its full-screen 
 
 | Role | Opens, but is refused |
 | --- | --- |
-| Records clerk | Alerts (the list returns HTTP 403 and shows "Alerts could not load."); Federation Approve, Reject and Block (HTTP 403). |
-| Publish operator | Alerts (list returns HTTP 403). Federation moderation is allowed. |
+| Records clerk | Alerts event list (HTTP 403); Federation Approve, Reject and Block (HTTP 403). The coarse runtime-safe-to-air signal is readable. |
+| Publish operator | Alerts event list (HTTP 403). Federation moderation and the coarse runtime-safe-to-air signal are allowed. |
 | Setup admin on its own | Federation Approve, Reject and Block (403). Key generation is allowed. |
 | Support admin | Alerts rule and destination changes (Save, Add destination, Delete return 403); the feed buttons on Readiness are disabled. |
 | Meeting operator | Alerts rule and destination changes (an access note); Readiness restore, update and support-bundle controls are disabled with notes. |
@@ -626,7 +645,7 @@ When the server refuses a role, the screen often prints the raw role ids ("This 
 
 ## Who can do the key tasks
 
-From the current beta.11 server's checks. Read "any signed-in role" as: the server only needs a valid token, and no particular role.
+The table summarizes the task permissions described in this manual. Read "any signed-in role" as: the server only needs a valid token, and no particular role. Sensitive reads can still require a named role; menu visibility alone is not permission.
 
 | Task | Allowed roles |
 | --- | --- |
@@ -658,6 +677,13 @@ From the current beta.11 server's checks. Read "any signed-in role" as: the serv
 | Add an emergency alert source or a manual alert | Setup admin |
 | Create, change or delete an alert destination; change an alert rule | Setup admin |
 | Read alert rules and destinations | Setup admin, Support admin |
+| Read or acknowledge alert events | Setup admin, Meeting operator, Support admin |
+| Read the coarse runtime-safe-to-air signal | All five operator roles |
+| Manage staff accounts and assigned roles | Setup admin |
+| Configure, create, verify or schedule station backups | Setup admin, Support admin |
+| Configure Network access | Setup admin, Support admin |
+| Browse Other stations | Setup admin, Meeting operator, Publish operator, Support admin |
+| Send Other stations Start/Stop commands | Setup admin, Meeting operator; the remote token must also permit commands |
 | Change which AI model does a job; set a provider key | Setup admin |
 | Create, edit and delete agendas and agenda items | Meeting operator, Records clerk |
 | Paywall settings and comp passes | Setup admin |
@@ -671,9 +697,9 @@ From the current beta.11 server's checks. Read "any signed-in role" as: the serv
 
 ## Role by API area
 
-This role-by-area matrix is a Beta 11 source snapshot and has not been independently rechecked for Beta 12. For each area it lists routes with a role requirement and which roles may call them; a dash means none in that snapshot. Routes with no role requirement are reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
+This role-by-area matrix is a Beta 11 source snapshot and has not been regenerated for the current edition. For each area it lists routes with a role requirement and which roles may call them; a dash means none in that snapshot. Routes with no role requirement are reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
 
-How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not a Beta 16 authorization measurement. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
+How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not a current-package authorization measurement. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
 
 | Area | Gated routes | S | M | R | P | A |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -728,7 +754,7 @@ How this was made: the application was loaded and each route's role requirement 
 
 > **Note:** Alerts, Reports and a few areas were not tested here beyond reading the role requirement. This table says who the server lets in, not whether the screen works for them. "Role-gated" does not include checks written inside a route's own code.
 
-<!-- SOURCES: inventory/screens/_shell-navigation-and-roles.md sections 1-6; civiccast/apps/portal-operator/src/components/shell/Sidebar.tsx:88-205 (menu and visibility; re-read for this appendix, 37 entries); civiccast/auth/roles.py:14-100; civiccast/auth/models.py; civiccast/installer/station_state.py:795-811; civiccast/cli.py:2065-2090; role-by-API tables computed by loading civiccast.app.create_app() and reading every route's require_any_role dependency (495 route-method pairs; 421 under /api/staff; 342 gated, 79 not gated; the 79 are 78 GET reads and POST /api/staff/auth/sign-out); key-task table from the same scan; inventory section 6 (visible but forbidden) -->
+<!-- SOURCES: inventory/screens/_shell-navigation-and-roles.md sections 1-6; civiccast/apps/portal-operator/src/components/shell/Sidebar.tsx:88-205 (menu visibility; current source has 42 entries); civiccast/auth/roles.py:14-100; civiccast/auth/models.py; civiccast/installer/station_state.py:795-811; civiccast/cli.py:2065-2090; role-by-API tables computed by loading civiccast.app.create_app() and reading every route's require_any_role dependency (495 route-method pairs; 421 under /api/staff; 342 gated, 79 not gated; the 79 are 78 GET reads and POST /api/staff/auth/sign-out); key-task table from the same scan; inventory section 6 (visible but forbidden) -->
 
 # Appendix G: Checklists {#app-checklists}
 
@@ -759,7 +785,7 @@ Do this once before the first public meeting, and again after any reinstall.
 - [ ] Station Profile: station name, time zone, default channel, public web address and the three storage folders look right and have space.
 - [ ] Station Profile: decide the **Show live captions on air** switch (off by default). Turning it off stops recognition on the next tap-worker scan and removes caption routing when each channel next starts. Turning it on resumes recognition on the next scan; stop and start each channel before expecting captions in its video. Whistle is the native CPU primary; NVIDIA/CUDA is optional Whisper acceleration.
 - [ ] AI Models: the caption, summary and translation models are the ones you intend. Remember that a local change takes effect the moment the choice changes.
-- [ ] First Setup: **Verify backup** succeeded for your backup folder. This only proves CivicCast can write a small test file there; it does not copy your data. Arrange your own backups ([G.7](#g-drill)).
+- [ ] First Setup: **Verify backup** succeeded for your backup folder; this only checks storage. On **Backup and restore**, configure an encrypted station archive, select media roots and retention, create and verify a backup, and retain its passphrase separately ([G.7](#g-drill)).
 - [ ] Readiness: no required row is red; read every row in "Required before broadcast" (First admin, Recovery kit, Durable records storage, Backup, Camera or meeting source, Local recording, Resident portal, Station policy).
 - [ ] Readiness: press **Check broadcast readiness** and read the result. It creates a short private test session and recording on channel `government`.
 - [ ] Channels: every channel you plan to air has an outgoing-feed configuration, and you have pressed **Start** once and seen the state change to On air, then **Stop** and seen Stopped.
@@ -785,9 +811,9 @@ Do this once before the first public meeting, and again after any reinstall.
 
 - [ ] Readiness: the banner and top card are green or yellow with a reason you understand. Press **Check broadcast readiness** (needs the Meeting operator role).
 - [ ] Missing Media: no meeting on this week's schedule is missing its video.
-- [ ] Schedule or Program Guide: tonight's programs and the recording schedule are present. Remember the UTC rules above.
+- [ ] Schedule or Program Guide: tonight's programs and the recording schedule are present. Check the station-local time and the older weekly-recording UTC exception above.
 - [ ] Channels: the commit list shows tonight's programs; press **Approve & put on air** for those that need it. The program airs at its scheduled time, not at the click.
-- [ ] Channels: check what **Keep this channel on air** is set to before you press Stop on a feed; if it is on, the station starts the feed again.
+- [ ] Channels: **Stop** or **Finish current item, then stop** suppresses automatic starts for this service session. To remain off across a service or computer restart, ask a Setup admin to untick **Keep this channel on air**.
 - [ ] Control Room (if used): start in Test mode. An On-Air session lasts 30 minutes, then must be reopened.
 - [ ] Remote Contribution (if used): open the room, send single-use guest links (they expire after 4 hours).
 - [ ] Captions: check the Captions row on the channel card (On, or Off because of the station profile).
@@ -828,7 +854,7 @@ Do this once before the first public meeting, and again after any reinstall.
 - [ ] Run the weekly self-check (**Run weekly self-check now**) and read its result.
 - [ ] Look at free space and at the conform cache folder `C:\ProgramData\CivicCast\data\egress\conform-cache` against its limit.
 - [ ] Open `C:\ProgramData\CivicCast\logs\supervisor.log` and scan for repeated restarts of a child program.
-- [ ] Check **Check backup storage** on Readiness, and confirm your own backup ran ([G.7](#g-drill)).
+- [ ] Check **Check backup storage** on Readiness and confirm the scheduled station archive completed and verifies. A storage probe alone is not a backup ([G.7](#g-drill)).
 - [ ] Analytics: audience counts and any gaps.
 - [ ] Retention: Media Lifecycle Settings still match your retention rules and watch folders are working.
 - [ ] Tokens: `civiccast token list` and revoke any you no longer need ([Appendix A](#app-cli)).
@@ -850,7 +876,7 @@ Do this once before the first public meeting, and again after any reinstall.
 
 - [ ] Read the release notes and the verification record for the version you are installing. Note what was and was not proven.
 - [ ] Choose a time when no meeting is scheduled and no channel is needed.
-- [ ] Take your own backup of the media, of `station-state.json` and of anything else you rely on, and run the restore drill the same day ([G.7](#g-drill)).
+- [ ] Create and verify a `.ccbackup` station archive, check its selected media roots and path inventory, retain its passphrase and recovery kit separately, and run the database drill the same day ([G.7](#g-drill)). Keep separate copies of files outside the archive.
 - [ ] Prepare matching installer resources with `scripts\download_windows_release_artifacts.ps1 -Install`; it verifies and assembles the signed station bundle from the release manifest and archive parts. The R9 field attempt used an earlier public asset set that lacked those resources and failed activation.
 - [ ] Readiness, Update and rollback panel: save the path to the installer you would roll back to (the field is labelled **Rollback artifact path**; its own example is an older installer) with **Save rollback artifact**, then run **Run rollback rehearsal**, then **Run update preflight**.
 - [ ] On Readiness, **Open maintenance window** (60 minutes). It needs the update preflight and a passed rollback rehearsal first. During the upgrade itself the service holds the station in maintenance mode, and changes are refused with HTTP 503.
@@ -859,14 +885,28 @@ Do this once before the first public meeting, and again after any reinstall.
 - [ ] If setup fails, note the exit number ([Appendix E](#app-status)) and read `install-progress.log`. For upgrade failures, check the failed-run engine log and journal under `install-transaction\failure-diagnostics` when present. Follow Appendix E: exit 128 requires archiving or moving the stale journal aside; if restoration did not finish, keep `install-transaction` and station data intact before retrying setup.
 - [ ] After: Readiness is green, the version in the top bar changed, **Run post-update proof**, then run the go-live items that touch channels and captions.
 
-## G.7 Disaster-recovery drill {#g-drill}
+## G.7 Station backups and disaster-recovery drill {#g-drill}
 
-What CivicCast's database drill and backup-storage probe do and do not establish:
+Use **Backup and restore** for encrypted `.ccbackup` archives containing the
+database, configured station state, portable credentials and selected media
+roots. Configure a schedule and retention, verify archives, and save the
+passphrase separately. An archive cannot restore files it did not include;
+inspect its inventory before relying on it. Reinstall program files, packs
+and models from a matching installer.
+
+Restore is an offline maintenance operation: stop CivicCast and other writers,
+prepare the replacement database and service, then use `civiccast backup inventory`
+and `civiccast backup restore` with explicit target mappings and
+`--confirmation RESTORE`. Do not overlay a running station. A database restore
+can finish before a later file copy fails; keep the archive and correct the
+reported path or permission problem before retrying. See [Chapter 12](#ch-operations).
+
+The database drill and backup-storage probe are separate checks:
 
 - Its drill backs up the real database, restores it into a completely fresh database, and checks row counts, content checksums and that the program's own stores can read the restored data.
-- It does not replicate your media: the drill records a list of files and a hash of a bounded sample, and says you still need your own file-level backup of media.
+- The drill does not replicate your media: it records a list of files and a hash of a bounded sample. Include the required media roots in station archives or maintain a separate file backup.
 - The Setup/System Health backup-storage probe writes, copies and checksums a small manifest; it does not copy or restore station data. The database drill is separate.
-- No screen or command restores a backup over the live station. The drill restores into a scratch copy.
+- The drill restores into a scratch copy; it is not the offline station-archive restore command.
 
 Checklist:
 
@@ -876,7 +916,7 @@ Checklist:
 - [ ] Read the report. Keep it with the date.
 - [ ] Prove your media backup: restore a few files to another folder and play them.
 - [ ] Prove the recovery kit: you can find it and the codes without the station computer. Do not use up a recovery code for practice unless you intend to.
-- [ ] Rehearse a full rebuild on a spare machine: install the same setup, restore the database and media by the procedure your IT person writes, sign in, and run the go-live list.
+- [ ] Rehearse a full rebuild on a spare machine: install the same setup, use the offline station-archive restore with reviewed path mappings, sign in, and run the go-live list. Record any required files outside the archive.
 - [ ] Record how long it took and what surprised you; fix the procedure.
 
 <!-- SOURCES: inventory/screens/health.md (controls, check names, Machine health, self-check, update/rollback panel); inventory/screens/live.md (flow, 30 s freshness, 50 GiB, 1.1.1.1/8.8.8.8, refresh loses session); inventory/screens/setup.md and station-profile.md (Verify backup only probes a folder; storage defaults; live captions default off); inventory/screens/channels.md (commit panel, Keep this channel on air); inventory/screens/controlroom.md (30 min); inventory/screens/remotecontribution.md (invite 4 h); inventory/screens/recording.md, guide.md, schedule.md, alerts.md, epg.md, autoschedule.md (time zones); inventory/screens/_shell-signin-and-session.md (recovery kit, 8 codes, nav lock); inventory/screens/installer-install-layout.md sections 7-8 (upgrade behavior); docs/releases/v1.0.0-beta.10-verification.md (proof status); civiccast/dr/__init__.py:1-70 (drill, media manifest not replication); civiccast/egress/preparer.py:23 (60 GB); civiccast/app.py:724 (maintenance 503) -->
@@ -901,7 +941,7 @@ Affidavit
 :   On the Underwriting screen, a per-sponsor proof-of-airing report used for billing.
 
 Agenda
-:   A numbered list of items for one recorded meeting, each optionally tied to a moment in the video. Once published it is shown with the recording on the public watch page (we could not confirm in testing exactly where on that page).
+:   A numbered list of items for one recorded meeting, each optionally tied to a moment in the video. Once published it appears beside the player on the public watch page, or below it on a phone.
 
 AI engine
 :   The Ollama program the station runs on the same computer for meeting summaries and Spanish translation. It listens only on the station computer. See *Ollama*.
@@ -1004,7 +1044,7 @@ Contributor
 :   An outside producer who sends in a program through the public "Submit a program" form. Staff review these on the Contributors screen.
 
 Control plane
-:   The main CivicCast program: the web server and playout engine, listening at `127.0.0.1:8000`.
+:   The main CivicCast program: the web server and playout engine, listening on configured IPv4 or IPv6 loopback, normally `127.0.0.1:8000`.
 
 Control Room
 :   The screen for driving production equipment (switchers, cameras, recorders) with one-press *cues*. Different from Control Room Setup.
@@ -1062,7 +1102,7 @@ Embargo
 :   A scheduled release moment for an approved recording, with no length.
 
 Emergency alert
-:   A public-safety alert pulled in from a feed. The code puts severe and extreme ones on air automatically, as a crawl or overlay, on every channel that is on air. A full-screen *forced slate* always needs an operator.
+:   A public-safety alert pulled in from a configured feed. Polling and automatic display are off by default. IT must enable `CIVICCAST_EAS` and `CIVICCAST_EAS_AUTO_SURFACE` before applicable severe or extreme alerts can surface automatically. With inline GStreamer presentation enabled before channel start, the emergency layer is drawn into output video; the resident portal also polls its applicable notice. A full-screen *forced slate* requires explicit operator confirmation. CivicCast is not a certified EAS device.
 
 Environment variable
 :   A named setting handed to a program when it starts, such as `CIVICCAST_CONFORM_CACHE_GB`. See [Appendix C](#app-settings).
@@ -1181,11 +1221,11 @@ Live takeover
 Local AI
 :   AI models that run on the station computer. Hosted models are separate and may incur charges under the provider's current pricing and account terms.
 
-Loopback (127.0.0.1)
+Loopback (127.0.0.1 or ::1)
 :   An address that means "this computer only". A program listening there cannot be reached from the network.
 
 LUFS
-:   A unit of perceived loudness. Spoken programs are leveled toward -16 LUFS when prepared for air.
+:   A unit of perceived loudness. Preparation follows the channel target; streaming commonly uses -16 LUFS and ATSC cable profiles use -24 LUFS. Different output regimes can have separate targets.
 
 **M**
 
@@ -1312,7 +1352,7 @@ Retention
 :   How long an asset is kept, set by rules (including by *meeting body*). The Media Lifecycle Settings screen says nothing is deleted automatically: expired assets are flagged for a records clerk to review.
 
 Reverse proxy
-:   A program in front of a web server that passes requests to it. You need one to let other computers reach a station that listens only on `127.0.0.1`.
+:   A program in front of a web server that passes requests to it. CivicCast's application stays on IPv4 or IPv6 loopback. Network Settings generates a Caddy configuration for HTTPS public and CIDR-restricted staff hostnames; IT deploys and commissions that proxy.
 
 Role
 :   A set of permissions. CivicCast has five. See [Appendix F](#app-roles).
@@ -1451,7 +1491,10 @@ WebVTT
 :   A text format for captions that web players read.
 
 Whisper (faster-whisper)
-:   The speech-to-text model that makes captions. The Medium model is the standard; Large v3 is optional.
+:   The engine used for recorded captions, native live fallback, or explicitly selected live-primary operation. Medium is the standard installed Whisper model; Large v3 is optional. Native live captions default to Whistle instead.
+
+Whistle
+:   The native live-caption primary, using the local CPU engine and model. Primary inference is serialized across station channels. Failures use Whisper fallback while bounded probes try to restore Whistle automatically; neither engine guarantees captions under overload.
 
 WSL (Windows Subsystem for Linux)
 :   The Windows feature the older CivicCast edition ran on. The current CivicCast line is native Windows.
@@ -1499,7 +1542,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 | Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-beta.11 | Apache-2.0 | The station itself. |
+| CivicCast program and web portals | 1.0.0-beta.20 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
@@ -1517,6 +1560,14 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 | Web portal libraries | pinned | Not restated here | React, React Router, TanStack Query and hls.js in the portal bundles. |
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
 | NVIDIA CUDA and cuDNN libraries (optional GPU pack) | optional | NVIDIA's end-user license terms | Faster captions on an NVIDIA graphics card. The pack carries reference texts, not NVIDIA's copyrighted text. |
+
+Remote Contribution separately downloads pinned VDO.Ninja source and the
+Windows MediaMTX relay when its install action is requested; these are not
+universal installed runtime components. The source pins and verifies the
+downloads (`civiccast/installer/contribution_install.py` and
+`mediamtx_install.py`); MediaMTX's license file is checksum-verified with the
+executable. Consult each fetched component's included license and source
+record. Installing them does not commission public HTTPS, WHIP or TURN access.
 
 > **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of an installed package are in its `LICENSE-BOM.md` files and matching verification record; use those for that package's component inventory.
 
@@ -1546,12 +1597,14 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the Beta 19 edition. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) applies to that earlier signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual covers the unpublished Beta 20 candidate edition. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) applies to that earlier signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.19** | — | Edition covered by this manual; see its matching package record | Completes Sprint 5 remote-guest output, bulletin-board video/audio and native viewer source apps. |
+| **v1.0.0-beta.20** | — | Unpublished candidate edition; installation verification is pending | Consolidates Sprint 6 preparation, output, webhook, Roku and station-integration changes. |
 | **v1.0.0-beta.18** | 2026-10-15 | Published package; historical record | Guided Cablecast station import; see its verification record. |
+| **v1.0.0-beta.17** | 2026-10-15 | Superseded by beta.18 | Published signed package; fresh Sandbox install and service checks passed, while the product-engine TSDuck probe timed out. See the [matching verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md). |
+| **v1.0.0-beta.16** | 2026-10-14 | Superseded by beta.17 | Published signed package with recorded clean install, Beta 15 upgrade, restricted service identity, installed runtime smoke and uninstall checks in a Windows 11 Hyper-V guest. See the [matching verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md). |
 | **v1.0.0-beta.15** | — | Published package; historical record | Package observations and limits are in the Beta 15 verification record; no extended soak or normal cross-version upgrade is claimed. |
 | **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
 | v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |
@@ -1589,7 +1642,8 @@ Every screen of the operator console, then the resident portal pages and the set
 | Manual | Help | All | Operator manual | [Chapter 2](#ch-signing-in) |
 | First Setup | Setup | All | First setup and admin sign-in | [Chapter 2](#ch-signing-in) |
 | Staff accounts | Setup | S | Staff accounts | [Chapter 2](#ch-signing-in) and [Chapter 11](#ch-configuration) (Part II) |
-| Backup and restore | Setup | S, A | Station backup and restore | [Chapter 13](#ch-operations) (Part II) |
+| Backup and restore | Setup | S, A | Station backup and restore | [Chapter 12](#ch-operations) (Part II) |
+| Import station | Setup | S | Import station | [Chapter 15](#ch-integrations) (Part II) |
 | Network access | Setup | S, A | Network Settings | [Chapter 11](#ch-configuration) (Part II) |
 | Control Room Setup | Setup | S | Control Room — setup | [Chapter 11](#ch-configuration), Configuring the station (Part II) |
 | Station Profile | Setup | S, M, A | | [Chapter 11](#ch-configuration), Configuring the station (Part II) |
@@ -1602,6 +1656,7 @@ Every screen of the operator console, then the resident portal pages and the set
 | Control Room | Run Meeting | All | Production Control Room | [Chapter 4](#ch-running-meeting) |
 | Remote Contribution | Run Meeting | S, M, A | | [Chapter 4](#ch-running-meeting) |
 | Channels | Run Meeting | All | | [Chapter 4](#ch-running-meeting) |
+| Other stations | Run Meeting | S, M, P, A | Other stations | [Chapter 15](#ch-integrations) (Part II) |
 | CG Board | Run Meeting | All | | [Chapter 4](#ch-running-meeting) |
 | CG Designer | Run Meeting | S, P, A | CG Board Designer | [Chapter 4](#ch-running-meeting) |
 | Schedule | Run Meeting | All | | [Chapter 3](#ch-before-meeting) |
@@ -1627,7 +1682,7 @@ Every screen of the operator console, then the resident portal pages and the set
 | Emergency Alerts | System Health | S, M, A | | [Chapter 8](#ch-something-wrong) |
 | Federation | System Health | All | ActivityPub federation | [Chapter 8](#ch-something-wrong); setup detail in [Chapter 15](#ch-integrations) (Part II) |
 
-That is 40 menu entries in six sections. Two more pages are reached from the Assets list and are not in the menu: **asset detail** (`#/assets/<asset id>`) and the full-screen **trim editor** (`#/assets/<asset id>/trim`); both are in [Chapter 5](#ch-after-meeting). An address the console does not know shows "Page not found" with buttons for Manual, First Setup, Recording, Reports and Readiness. A few old or short addresses forward to the right screen (for example `/docs` and `/manual` to Manual, `/sign-in` and `/staff-login` to the staff sign-in page at `/login`, `/readiness` to Readiness, `/today` to Schedule, `/archive` to Assets).
+That is 42 menu entries in six sections. Two more pages are reached from the Assets list and are not in the menu: **asset detail** (`#/assets/<asset id>`) and the full-screen **trim editor** (`#/assets/<asset id>/trim`); both are in [Chapter 5](#ch-after-meeting). An address the console does not know shows "Page not found" with buttons for Manual, First Setup, Recording, Reports and Readiness. A few old or short addresses forward to the right screen (for example `/docs` and `/manual` to Manual, `/sign-in` and `/staff-login` to the staff sign-in page at `/login`, `/readiness` to Readiness, `/today` to Schedule, `/archive` to Assets).
 
 > **Known issue (beta.11):** The top bar clock always says "Next No events scheduled" and the pill "No live meeting broadcast", whatever the schedule holds. They are placeholders. Use Schedule and Channels for the real answers.
 
@@ -1646,4 +1701,6 @@ These need no sign-in. They are covered in [Chapter 6](#ch-publishing).
 
 Covered in Part II, [Chapter 10](#ch-installing) (Installing, first run, upgrading, uninstalling): the Windows setup program (`setup.exe`) with its pre-install checks, pack staging, upgrade and database, activation and self-test, and service and finish steps; and the first-run wizard windows "Checking This Computer", "What CivicCast Needs" and "Downloading" (or "Setting Up"). Setup exit codes are in [Appendix E](#app-status).
 
-<!-- SOURCES: civiccast/apps/portal-operator/src/components/shell/Sidebar.tsx:88-205 (37 entries, labels, sections, role gates; re-read); inventory/screens/_shell-navigation-and-roles.md sections 1-2 (aliases, extra routes, Page not found); page titles from the first lines of inventory/screens/{setup,controlroomsetup,paywall,live,cgdesigner,guide,recording,contribute,health,alerts,activitypub}.md and _shell-navigation-and-roles.md SHELL-02/03; chapter assignments follow the chapter map in MANUAL-STYLE.md section 9 and each inventory's "What it is for"; inventory/screens/public-*.md (portal pages); inventory/screens/installer-*.md (setup windows) -->
+<!-- SOURCES: civiccast/apps/portal-operator/src/components/shell/Sidebar.tsx:88-205 (42 entries, labels, sections and role gates); inventory/screens/_shell-navigation-and-roles.md sections 1-2 (aliases, extra routes, Page not found); page titles from the first lines of inventory/screens/{setup,controlroomsetup,paywall,live,cgdesigner,guide,recording,contribute,health,alerts,activitypub}.md and _shell-navigation-and-roles.md SHELL-02/03; chapter assignments follow the chapter map in MANUAL-STYLE.md section 9 and each inventory's "What it is for"; inventory/screens/public-*.md (portal pages); inventory/screens/installer-*.md (setup windows) -->
+
+<!-- Current correction sources: civiccast/cli.py:139 and civiccast/dr/station_backup_cli.py:42-118 (backup CLI); civiccast/auth/router.py:92-161 (login/accounts); civiccast/dr/station_backup_router.py:19-23 (backup roles); civiccast/native/network.py:69-85,271-320 (loopback/Caddy); civiccast/native/service_identity.py:9-22 (ACL); civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:360 (exit 136); civiccast/apps/portal-operator/src/components/shell/Sidebar.tsx:98-190 (42 entries); civiccast/alerting/router.py:137,453,470 (runtime signal versus event permissions); civiccast/captions/whistle.py:68 and civiccast/ai_models/runtime.py:167-170 (caption settings); civiccast/installer/contribution_install.py and mediamtx_install.py (separately fetched components); docs/releases/release-truth.yaml (Beta 16/17 historical status). -->

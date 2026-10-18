@@ -397,11 +397,10 @@ def sink_element_spec(
             uri = _append_query_param(uri, "passphrase", passphrase)
         return ElementSpec("srtsink", props={"uri": uri})
     if spec.kind == "hls":
-        # DEFECT A: no native GStreamer element in the shipped runtime can
-        # actually write HLS segments + a manifest (verified empirically —
-        # see civiccast.egress.hls_relay's module docstring: no hlssink/
-        # hlssink2/hlssink3/splitmuxsink ships, and gst-libav's avmux_hls
-        # writes zero files through a filesink). ``HlsRelaySupervisor.apply``
+        # The current runtime stages hlssink3, but this graph deliberately
+        # retains the supervised relay and its caption/retention/restart
+        # behavior. See docs/ops/sprint6-gstreamer-alternatives.md.
+        # ``HlsRelaySupervisor.apply``
         # runs before graph assembly (civiccast.egress.daemon._start /
         # _try_content_reload, mirroring civiccast.egress.ts_relay) and
         # rewrites a configured ``hls`` sink to an ordinary ``local-ts`` udp

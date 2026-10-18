@@ -9,12 +9,17 @@ accepted it with 200 OK, and ``sink_element_spec`` had no branch for it. This
 module is the other half of the real fix: it makes an ``hls`` sink on the
 GStreamer engine genuinely produce a servable manifest + segments.
 
-**Why not a native GStreamer HLS element.** The task that opened this defect
+**Current architecture.** The current closure includes ``hlssink3``. The relay
+remains responsible for caption-preserving HLS, publication/segment lifetime
+and restart recovery; plugin availability alone does not replace those paths.
+See ``docs/ops/sprint6-gstreamer-alternatives.md`` for the current decision.
+
+**Historical runtime limitation.** The task that opened this defect
 assumed the shipped runtime carries ``hlssink2``. It does not — verified
 empirically against the real installed closure
 (``C:\\Program Files\\CivicCast (Native)\\runtime\\dependencies\\gstreamer\\lib\\gstreamer-1.0``):
 ``gst-inspect-1.0`` lists no ``hlssink``/``hlssink2``/``hlssink3`` element at
-all (no ``gsthls*.dll`` is shipped) and no ``splitmuxsink``/``multifilesink``
+all (no ``gsthls*.dll`` was shipped then) and no ``splitmuxsink``/``multifilesink``
 (no ``gstmultifile.dll``). The only HLS-shaped element present is
 ``avmux_hls`` (gst-libav wrapping FFmpeg's HLS muxer, rank ``marginal``), and
 a live pipeline test (``avmux_hls ! filesink``, both audio+video fed, run to

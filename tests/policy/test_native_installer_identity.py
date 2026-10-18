@@ -2600,51 +2600,35 @@ def test_civiccast_step_prefixes_every_breadcrumb_with_a_runtime_timestamp() -> 
     )
 
 
-def test_gauntlet_harness_breadcrumb_matchers_are_unanchored() -> None:
-    """Matcher-safety proof for the P3 timestamp prefix: every known consumer
-    of $COMMONPROGRAMDATA\\CivicCast\\install-progress.log must match
-    breadcrumb tokens WITHOUT a start-of-line/string anchor, or a leading
-    `[timestamp] ` prefix would break it. Pinned directly against the actual
-    gauntlet harness file (not re-derived from memory), so a future harness
-    edit that adds an anchored matcher is caught here rather than live."""
-    harness = Path(r"C:\CivicCastProof\sandbox-shared\gauntlet-run18\install_gauntlet.ps1")
-    if not harness.exists():
-        import pytest
+def test_repository_install_progress_matchers_accept_timestamp_prefix() -> None:
+    """Protect today's repository-owned parser, not the external July gauntlet.
 
-        pytest.skip(f"gauntlet harness not present on this machine: {harness}")
-    text = harness.read_text(encoding="utf-8", errors="replace")
-
-    # The breadcrumb-derived variables: each is built by joining lines read
-    # from $ProgressLog (install-progress.log) -- see the assignments
-    # ($row2Tail/$upgradeCrumbs/$crumbs/$retryTail = (Get-Content
-    # $ProgressLog ...) -join ...). Only -match lines testing THESE
-    # variables are breadcrumb matchers; a coincidental -match elsewhere
-    # (e.g. validating a DatabaseUrl registry value) is a different question
-    # this fix does not touch and must not be flagged.
-    breadcrumb_vars = ("row2Tail", "upgradeCrumbs", "crumbs", "retryTail")
-    match_lines = [
-        line
-        for line in text.splitlines()
-        if "-match" in line and any(var in line for var in breadcrumb_vars)
-    ]
-    assert match_lines, (
-        "expected at least one -match line against a breadcrumb-derived "
-        f"variable ({breadcrumb_vars}) in the gauntlet harness -- if this is "
-        "empty, the sanity check below would pass vacuously"
+    The old run18 harness parsed d4-provision; the maintained sandbox reporter
+    parses d3 routing, d4 activation, postinstall outcomes and alerts. Exercise
+    its actual regexes with both plain and timestamp-prefixed breadcrumbs.
+    These patterns use syntax shared by Python and PowerShell's .NET regexes;
+    this check does not claim to execute the sandbox reporting workflow.
+    """
+    source = (ROOT / "sandbox-lab/scripts/In-Sandbox-Report.ps1").read_text(encoding="utf-8")
+    capture = source.split("function Invoke-InstallProgressCapture {", 1)[1].split(
+        "# <gate-a-audit-MA-25> The clean lane", 1
+    )[0]
+    samples = (
+        ("d3Match", "step d3-engine: evidence route=UPGRADE engine_exit=0", ("UPGRADE", "0")),
+        ("d4Match", "step d4-activate-station: returned 0", ("0",)),
+        ("poMatch", "postinstall: SUCCESS", ("SUCCESS",)),
+        ("stepMatch", "step d4-activate-station: returned 66", ("d4-activate-station", "66")),
     )
-    # Every such line must not anchor with ^ immediately after the opening
-    # quote of its pattern -- an unanchored substring search is what
-    # survives a leading timestamp prefix.
-    anchored = [line for line in match_lines if re.search(r"-match\s+'\^", line)]
-    assert not anchored, (
-        "found an anchored (^-prefixed) -match pattern against breadcrumb "
-        f"text in the gauntlet harness -- a timestamp prefix would break "
-        f"it; offending line(s): {anchored}"
-    )
-    # Sanity: the harness must actually reference known breadcrumb tokens,
-    # so this test would fail loudly (not vacuously pass) if the harness's
-    # breadcrumb matching were ever removed entirely.
-    assert "REFUSED" in text and "step d4-provision: returned 0" in text
+    for variable, breadcrumb, expected_groups in samples:
+        definition = re.search(rf"\${variable} = \[regex\]::Match\(\$line, '([^']+)'\)", capture)
+        assert definition, f"missing repository breadcrumb matcher: {variable}"
+        for prefix in ("", "[2026-10-17 09:00:00] "):
+            matched = re.search(definition.group(1), prefix + breadcrumb)
+            assert matched, f"{variable} rejected breadcrumb prefix {prefix!r}"
+            assert matched.groups() == expected_groups
+    alert = re.search(r"\$line -match '([^']+)'", capture)
+    assert alert, "missing repository alert matcher"
+    assert re.search(alert.group(1), "[2026-10-17 09:00:00] ALERT: setup failed")
 
 
 # ---------------------------------------------------------------------------

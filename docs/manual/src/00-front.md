@@ -47,7 +47,16 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This Beta 19 edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; Use the Beta 19 verification record for claims about its installed package.
+This working source edition also includes unreleased Sprint 6 preparation,
+webhook, Roku and **Other stations** changes. For an installed Beta 19 package,
+use the manual bundled with that release. The source changes have not replaced
+the published installer or its package evidence.
+
+The October 17 documentation correction reconciles operating instructions and
+refreshes the CLI, API and settings references. Existing installed Help may still
+contain the older wording until its application package is updated.
+
+This unpublished Beta 20 candidate edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; use the Beta 19 verification record for claims about its installed package.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 

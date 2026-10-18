@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
+
+- Correct conflicting manual guidance for recorded captions, RTMP, account
+  recovery, channel operation, backups, network access and staff permissions.
+  Refresh reference inventories and align the rendered manual and Help with
+  current source, preserving historical release evidence.
+
+- Browse trusted stations' published programmes and monitor or request channel
+  starts/stops from **Other stations**, with separate remote credentials and
+  local/remote role enforcement. TownLight (formerly CivicSuite) integration is
+  owner-deferred to 2.0 and is not included.
+
+- Copy compatible H.264 video during cold preparation while retaining required
+  audio processing and accurate trims. Prioritize upcoming preparation work and
+  retry recoverable failures with bounded backoff.
+- Select available NVIDIA or Windows hardware for automatic H.264 output while
+  preserving CPU-only operation and explicit encoder choices.
+- Require webhook endpoint ownership confirmation, random signing credentials
+  and public HTTPS destinations; protect delivery against redirects and DNS
+  rebinding. Older identifier-derived subscriptions require registration again.
+- Process Roku launch and subsequent deep links when the catalog is ready.
+- Reconcile architecture, capability and operations guidance; preserve executable
+  Windows examples when assembling the manual and built-in Help.
+
 - Permit the restricted Windows service account to connect to its worker control
   pipe, and bound shutdown when a worker never connects.
 - Start the generated plain fallback slate directly instead of re-encoding

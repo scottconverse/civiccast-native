@@ -116,7 +116,7 @@ You should see the session tag change to **On air**. If the checks fail at this 
 
 > **Known issue (beta.11):** in the code we read, **Start Live Stream** changes the session record and the public status only. It does not start the channel's feed, and it does not put your source on the channel. The error message above says "No broadcast was started", but a successful click does not start one either. To put a camera on a channel, use **Take live** on the Channels screen. If the channel's own feed is running, residents see it whether or not you press **Start Live Stream**.
 
-The nine rows in the checklist are: **Network reachable**, **Recording storage**, **AI runtime**, **Live source**, **Recording target**, **Operator confirmation**, **Syndication**, **Internet Archive** and **NAS handoff**. Only five can stop you from going on air: Network reachable, Recording storage, Live source, Recording target and Operator confirmation. The other four report status and do not block. (AI runtime is optional here; Syndication, Internet Archive and NAS handoff describe what will happen to the recording after the meeting. A row for one of those three can show a red border, with the message that the broadcast can still go ahead.) What the five really test:
+The nine rows in the checklist are: **Network reachable**, **Recording storage**, **AI runtime**, **Live source**, **Recording target**, **Operator confirmation**, **Syndication**, **Internet Archive** and **NAS handoff**. Five must pass before you go on air: Network reachable, Recording storage, Live source, Recording target and Operator confirmation. AI runtime may be **not configured** without blocking, but a probed runtime that **fails** also blocks. Syndication, Internet Archive and NAS handoff report status and never block; they describe what will happen to the recording after the meeting. A row for one of those three can show a red border while the broadcast can still go ahead. What the five required checks test:
 
 | Row | What it checks |
 | --- | --- |
@@ -266,6 +266,7 @@ To undo an approval:
 > **Known issue (beta.11):** four things in this box are loose with words. The tag **Queued to air** means the command was queued, nothing more. The tag "On air (confirmed)" is never shown, because no code sets that state. A row for a future program says "aired &lt;time&gt;" even though it has not played. And if the list of past approvals cannot be loaded (for example, for a role that is not allowed to see it), the box still says "Nothing has been committed to air on this channel yet." instead of showing an error.
 
 Without the Publish operator or Setup admin role, **Review & prepare** is grey and the box says "You can review the schedule here. Putting a program on air or taking it off requires the publish operator or setup admin role."
+
 ## Put a lower-third banner on a channel
 
 A *lower third* is the strip of text across the lower part of the picture, such as "Town Council -- Live". The box **Lower-third banner** on **Channels** holds one line of text for the selected channel.
@@ -429,7 +430,7 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Package note:** Board audio and live-video zones are part of the Beta 19, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
+> **Package note:** Board audio and live-video zones are part of Beta 19, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
 
 ## Bring in remote guests (Remote Contribution)
 
@@ -502,7 +503,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 
 **During the meeting**
 
-12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh them.
+12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh **Live**, which can lose its in-page session. Control Room restores its selected surface and open session after refresh; repeat any cue dry run before firing.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
 14. Admit remote guests one at a time, then click **Put on air** for each guest you want in the live mix. Keep the VDO.Ninja director open and verify the channel output.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.
@@ -512,7 +513,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 16. Return the channel: **Return to schedule**, **Confirm return to schedule**.
 17. Send disconnect requests for remaining guests, verify they left in the director, mark them left, then click **Close room**.
 18. End any Control Room session: click **End session**.
-19. If you want the channel off the air, click **Finish current item, then stop** (or **Stop**) and confirm. If **Keep this channel on air** is ticked, ask your Setup admin to untick it first.
+19. If you want the channel off the air, click **Finish current item, then stop** (or **Stop**) and confirm. This suppresses automatic restarts for the current service session even if **Keep this channel on air** is ticked. Ask a Setup admin to untick that setting only if the channel must stay off across a service or computer restart.
 20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset &lt;id&gt;." Then follow [After the meeting](#ch-after-meeting).
 
 ## If it did not work
@@ -533,7 +534,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | "Production control unavailable — the TSR control service is not running or not configured." | The Control Room helper is down. Tell IT. |
 | "On-Air Mode expired before this cue could fire. Open a new On-Air session to continue." | The 30-minute limit passed. Open a new On-Air session. |
 | "The cue preview is stale ... Dry Run the cue again before Live Fire." | The cue or device changed after your dry run. Click the cue again. |
-| "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
+| "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;." | Another operator owns the surface. Your own open session normally restores after refresh. If the owner is unavailable, a Setup admin or Support admin can confirm a force-close on Control Room to release the lock; this does not undo cues already sent. |
 | "Remote contribution isn't configured yet." | Guest video software has not been set up. Tell IT. |
 | A guest-control notice says **sent, not verified** | The director iframe does not report command completion. Check the guest in the embedded director; use **Mark left after checking** only after verifying they have disconnected. |
 | "Durable storage is not ready. Open Setup and choose Prepare storage ..." | The station's database is not ready. Tell IT. |

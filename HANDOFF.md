@@ -1,6 +1,29 @@
-# Current handoff: Beta 19 published (2026-10-15)
+# Current work: installed-product verification pending (October 17, 2026)
 
-Current branch: `main`. Read current HEAD with `git rev-parse HEAD`.
+Read the compaction handoff:
+`C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CIVICCAST-COMPACTION-HANDOFF-2026-10-17.md`.
+Source/docs checks are complete, but the user requires a consolidated candidate,
+clean install/uninstall/reinstall, full control-by-control walkthrough and then
+upgrade/verification of this host's existing three-channel station. None of those
+new candidate checks has started. No host reboot, new soak or publication.
+
+Sprint 6 documentation item 12 was reopened and corrected: [scope and status](docs/ops/sprint6.md). The earlier blanket completion claim was incorrect; the [October 17 correction receipt](docs/ops/manual-reconciliation-2026-10-17.md) records final source/Help/PDF/Word checks. It adds the remaining
+webhook, Roku and documentation corrections to preparation improvements,
+hardware-aware encoding, architectural assessment and CivicCast multi-station
+integration. The owner selected both catalog sharing and central station management.
+This is source work, not a new published package or production cutover.
+The earlier skipped-test coverage corrections remain in the working tree.
+
+Items 12, 16, 21–25 have source corrections/assessment and focused evidence.
+Item 26's catalog sharing and central channel controls are implemented and
+reviewed. The owner renamed CivicSuite to TownLight and deferred ALL suite
+integration, including TownLight: Station, to 2.0 on October 17. It is not a
+Sprint 6 blocker or an implemented feature. Detailed results and limits
+are in the Sprint 6 record above. No package build or production cutover occurred.
+
+## Published Beta 19 record (2026-10-15)
+
+Publication branch was `main`. Read current branch and HEAD from Git.
 Current published tag: `v1.0.0-beta.19`.
 PR #257: https://github.com/scottconverse/civiccast-native/pull/257;
 merge/tag target `b5204750bd96986dcde1adadffc0fe4b4e81f695`.

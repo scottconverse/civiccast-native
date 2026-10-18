@@ -1,5 +1,11 @@
 # S15 — Playout Engine (GStreamer)
 
+> **Current implementation clarification (Sprint 6, October 17, 2026):**
+> the implemented swap controller is `input-selector`; `fallbackswitch` is
+> not shipped in the installed runtime. `hlssink3` is available, but live HLS
+> continues through the supervised relay. The older design wording below is
+> historical; see [the current alternatives assessment](../../../ops/sprint6-gstreamer-alternatives.md).
+
 > **BUILD STATUS: BUILT & PUSHED — master §10 step 1, code-complete + machine-verified, re-opened and
 > finished with nothing deferred (2026-06-14, `cb634db` on `work/3.0-gstreamer-engine`).** The engine
 > (`civiccast/egress/gst/`): persistent pipeline, element-factory build (no `parse_launch`),

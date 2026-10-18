@@ -57,6 +57,130 @@ def _config() -> EgressConfig:
     )
 
 
+def test_cold_compatible_video_is_copied_while_audio_is_conformed(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        preparer_module, "probe_canonical_video", lambda *a, **kw: True, raising=False
+    )
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda *a: 90.0)
+    source = tmp_path / "compatible.mp4"
+    source.write_bytes(b"media")
+    calls = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **kw: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    plan = EgressSourcePlan(
+        channel_id="gov",
+        segments=[EgressSourceSegment(label="Compatible", path=str(source), duration_seconds=90)],
+    )
+    preparer.prepare(plan, _config())
+    args = calls[0]
+    assert args[args.index("-c:v") + 1] == "copy"
+    assert "-vf" not in args
+    assert args[args.index("-c:a") + 1] == "aac"
+
+
+def test_recoverable_warm_failure_retries_within_minutes(tmp_path, monkeypatch):
+    preparer, jobs, source, key, config = _u29_warm_fixture(
+        tmp_path, monkeypatch, lambda *a, **kw: (_ for _ in ()).throw(OSError("temporarily busy"))
+    )
+    clock = _FakeClock()
+    monkeypatch.setattr(preparer_module, "time", clock)
+    preparer._schedule_warm(key, source, config, _loudness(), False, media_duration_seconds=60)
+    jobs[0]()
+    assert 30 <= preparer._warm_backoff_until[key] - clock.monotonic() <= 300
+    first_delay = preparer._warm_backoff_until[key] - clock.monotonic()
+    clock.advance(first_delay + 1)
+    preparer._schedule_warm(key, source, config, _loudness(), False, media_duration_seconds=60)
+    jobs[1]()
+    assert preparer._warm_backoff_until[key] - clock.monotonic() == first_delay * 2
+    for _ in range(8):
+        assert preparer._record_warm_failure(key) <= 1800
+
+
+def test_streamcopy_never_bypasses_accurate_inpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(preparer_module, "probe_canonical_video", lambda *a, **kw: True)
+    preparer = SourcePreparer(work_dir=tmp_path)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    segment = EgressSourceSegment(
+        label="Trim", path=str(source), inpoint_seconds=0.5, duration_seconds=2
+    )
+    assert not preparer._copy_video(source, _config().canonical_profile, segment)
+
+
+def test_video_copy_preserves_loudness_processing(tmp_path):
+    args = build_conform_source_args(
+        source_path=tmp_path / "source.mp4",
+        output_path=tmp_path / "out.ts",
+        segment=None,
+        profile=_config().canonical_profile,
+        loudness_target_lufs=-24,
+        copy_video=True,
+    )
+    assert args[args.index("-c:v") + 1] == "copy"
+    assert "-vf" not in args
+    assert "loudnorm" in args[args.index("-af") + 1]
+
+
+def test_copy_decision_survives_cache_eviction_between_lookup_steps(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    profile = _config().canonical_profile
+    stat = source.stat()
+    key = (str(source), stat.st_size, stat.st_mtime_ns, profile.width, profile.height, profile.fps)
+
+    class EvictedAfterContains(dict):
+        def __contains__(self, key):
+            found = super().__contains__(key)
+            self.clear()  # deterministic competing-thread eviction after membership
+            return found
+
+    preparer._video_copy_checks = EvictedAfterContains({key: True})
+    monkeypatch.setattr(preparer_module, "probe_canonical_video", lambda *a, **kw: True)
+    assert preparer._copy_video(source, profile, None) is True
+
+
+def test_default_warm_queue_prioritizes_upcoming_work(monkeypatch):
+    import queue
+
+    monkeypatch.setattr(preparer_module, "_warm_worker_started", True)
+    monkeypatch.setattr(preparer_module, "_warm_queue", queue.PriorityQueue())
+
+    def background():
+        pass
+
+    def upcoming():
+        pass
+
+    upcoming._warm_priority = 0
+    preparer_module._default_warm_scheduler(background)
+    preparer_module._default_warm_scheduler(upcoming)
+    queued = preparer_module._warm_queue.get_nowait()
+    assert isinstance(queued, tuple) and queued[-1] is upcoming
+
+
+def test_upcoming_plan_promotes_an_already_queued_background_warm(tmp_path, monkeypatch):
+    import queue
+
+    monkeypatch.setattr(preparer_module, "_warm_worker_started", True)
+    monkeypatch.setattr(preparer_module, "_warm_queue", queue.PriorityQueue())
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    preparer._schedule_warm(key, source, config, _loudness(), False, media_duration_seconds=60)
+    segment = EgressSourceSegment(label="Upcoming", path=str(source), duration_seconds=60)
+    preparer._schedule_plan_warm(config, segment)
+    assert preparer_module._warm_queue.qsize() == 1
+    assert preparer_module._warm_queue.get_nowait()[0] == 0
+
+
 def _source_plan(tmp_path: Path) -> EgressSourcePlan:
     source = tmp_path / "raw-source.mp4"
     source.write_text("fake media", encoding="utf-8")
@@ -3900,7 +4024,7 @@ def test_on_demand_preparation_keeps_the_base_timeout_and_normal_priority(
     assert warm_jobs == []  # an untrimmed airing that populated the cache warms nothing
 
 
-def test_a_failed_warm_backs_off_for_six_hours_and_warns_once(
+def test_a_failed_warm_backs_off_and_warns_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """U29 3c: one failed warm for an asset stops that asset's warms for six
@@ -3967,7 +4091,7 @@ def test_a_failed_warm_backs_off_for_six_hours_and_warns_once(
         assert source.name in message
         assert f"{_U29_LONG_ASSET_SECONDS:g}s" in message  # the asset's duration
         assert f"{expected_timeout:g}s" in message  # the timeout it was given
-        assert "6h" in message  # the backoff window
+        assert "retrying after 60s" in message  # initial bounded retry window
 
     # The window closes: the next airing warms again, and a warm that
     # succeeds clears the backoff entry outright.

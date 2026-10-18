@@ -2651,6 +2651,7 @@ def create_app() -> FastAPI:
     app.include_router(manual_router)
     app.include_router(auth_staff_router)
     from civiccast.dr.station_backup_router import staff_router as station_backup_router
+    from civiccast.federation.router import router as federation_router
     from civiccast.native.network import (
         NetworkSettings,
         NetworkSettingsStore,
@@ -2664,6 +2665,7 @@ def create_app() -> FastAPI:
         NetworkSettings.model_validate_json(active_network) if active_network else NetworkSettings()
     )
     app.include_router(station_network_router)
+    app.include_router(federation_router)
     app.include_router(station_backup_router)
     app.include_router(schedule_public_router)
     # S7 media lifecycle: MUST be registered before schedule_staff_router --

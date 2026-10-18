@@ -17,9 +17,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from importlib import import_module
 
 import httpx
 import pytest
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -31,6 +34,7 @@ from civiccast.subscribe.delivery import LocalWebhookClient
 from civiccast.subscribe.models import (
     NotificationPayload,
     SubscriptionRecord,
+    SubscriptionWebhookRequest,
     WebhookRetryRecord,
 )
 from civiccast.subscribe.retry_worker import (
@@ -39,9 +43,13 @@ from civiccast.subscribe.retry_worker import (
     enqueue_failed_webhook_delivery,
 )
 from civiccast.subscribe.secrets import SubscriptionSecrets
-from civiccast.subscribe.service import dispatch_notifications
+from civiccast.subscribe.service import (
+    confirm_subscription,
+    create_webhook_subscription,
+    dispatch_notifications,
+)
 from civiccast.subscribe.store import InMemorySubscribeStore, PostgresSubscribeStore
-from civiccast.subscribe.webhook import HttpWebhookClient, WebhookSettings
+from civiccast.subscribe.webhook import HttpWebhookClient, PublicWebhookTransport, WebhookSettings
 
 _PAYLOAD = NotificationPayload(
     asset_id="meeting-42",
@@ -54,6 +62,112 @@ _PAYLOAD = NotificationPayload(
 
 
 class TestHttpWebhookClient:
+    def test_refuses_private_destination_before_transport(self) -> None:
+        seen: list[httpx.Request] = []
+        client = HttpWebhookClient(
+            transport=httpx.MockTransport(
+                lambda request: seen.append(request) or httpx.Response(200)
+            )
+        )
+        with pytest.raises(ValueError, match="public"):
+            client.post(url="https://127.0.0.1/admin", payload=_PAYLOAD, secret="secret")
+        assert seen == []
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://hooks.example/hook",
+            "https://user:password@hooks.example/hook",
+            "https://[::1]/hook",
+            "https://169.254.169.254/hook",
+            "https://224.0.0.1/hook",
+        ],
+    )
+    def test_refuses_unsafe_challenge_urls(self, url: str) -> None:
+        client = HttpWebhookClient(
+            transport=httpx.MockTransport(
+                lambda _: pytest.fail("unsafe destination reached transport")
+            )
+        )
+        with pytest.raises(ValueError):
+            client.send_confirmation(url=url, confirmation_token="proof", secret="secret")
+
+    def test_challenge_delivers_ownership_proof_and_secret_only_to_endpoint(self) -> None:
+        seen = []
+        client = HttpWebhookClient(
+            transport=httpx.MockTransport(
+                lambda request: seen.append(request) or httpx.Response(200)
+            )
+        )
+        client.send_confirmation(
+            url="https://hooks.example/hook", confirmation_token="proof", secret="secret"
+        )
+        assert json.loads(seen[0].read()) == {
+            "type": "civiccast.subscription_confirmation",
+            "confirmation_token": "proof",
+            "signing_secret": "secret",
+        }
+
+    def test_redirect_is_a_failure_and_never_followed(self) -> None:
+        seen = []
+        client = HttpWebhookClient(
+            transport=httpx.MockTransport(
+                lambda request: (
+                    seen.append(request)
+                    or httpx.Response(307, headers={"location": "https://127.0.0.1/admin"})
+                )
+            )
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            client.send_confirmation(
+                url="https://hooks.example/hook", confirmation_token="proof", secret="secret"
+            )
+        assert len(seen) == 1
+
+
+class TestPublicWebhookTransport:
+    def test_rejects_dns_with_any_private_answer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *a, **k: [
+                (2, 1, 6, "", ("93.184.216.34", 443)),
+                (2, 1, 6, "", ("127.0.0.1", 443)),
+            ],
+        )
+        monkeypatch.setattr(
+            httpx.HTTPTransport,
+            "handle_request",
+            lambda *a: pytest.fail("unsafe DNS reached socket transport"),
+        )
+        with PublicWebhookTransport() as transport, pytest.raises(ValueError, match="public"):
+            transport.handle_request(httpx.Request("POST", "https://hooks.example/hook"))
+
+    def test_pins_public_ip_with_original_host_and_tls_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        lookups = []
+
+        def lookup(host, port, **kwargs):
+            lookups.append(host)
+            return [(2, 1, 6, "", ("93.184.216.34", port))]
+
+        monkeypatch.setattr("socket.getaddrinfo", lookup)
+        seen = []
+        monkeypatch.setattr(
+            httpx.HTTPTransport,
+            "handle_request",
+            lambda self, request: seen.append(request) or httpx.Response(200),
+        )
+        with PublicWebhookTransport() as transport:
+            transport.handle_request(
+                httpx.Request("POST", "https://hooks.example:8443/hook", content=b"body")
+            )
+        assert lookups == ["hooks.example"]
+        assert str(seen[0].url) == "https://93.184.216.34:8443/hook"
+        assert seen[0].headers["Host"] == "hooks.example:8443"
+        assert seen[0].extensions["sni_hostname"] == "hooks.example"
+        assert seen[0].read() == b"body"
+
     def test_posts_canonical_signed_json(self) -> None:
         seen: list[httpx.Request] = []
 
@@ -178,6 +292,11 @@ class TestWebhookRetryQueueStores:
         engine = create_engine("sqlite:///:memory:", future=True)
         bind_engine(engine)
         Base.metadata.create_all(engine)
+        with (
+            engine.begin() as connection,
+            Operations.context(MigrationContext.configure(connection)),
+        ):
+            import_module("civiccast.subscribe.migrations.versions.0014_subscribe_v08").upgrade()
         try:
 
             @contextmanager
@@ -189,6 +308,34 @@ class TestWebhookRetryQueueStores:
                     sess.close()
 
             store = PostgresSubscribeStore(session_factory)
+            endpoint = LocalWebhookClient()
+            request = SubscriptionWebhookRequest(
+                webhook_url="https://hooks.example/hook",
+                target_type="channel",
+                target_id="government",
+            )
+            created = create_webhook_subscription(
+                request, store=store, secrets=_TEST_SECRETS, webhook_client=endpoint
+            )
+            first = endpoint.requests[-1]
+            create_webhook_subscription(
+                request, store=store, secrets=_TEST_SECRETS, webhook_client=endpoint
+            )
+            latest = endpoint.requests[-1]
+            assert latest["signing_secret"] != first["signing_secret"]
+            with pytest.raises(ValueError, match="confirmation is invalid"):
+                confirm_subscription(
+                    first["confirmation_token"], store=store, secrets=_TEST_SECRETS
+                )
+            confirm_subscription(latest["confirmation_token"], store=store, secrets=_TEST_SECRETS)
+            subscribed = store.get(created.subscription_id)
+            assert subscribed.status == "confirmed"
+            assert (
+                _TEST_SECRETS.secret_box.open(
+                    subscribed.encrypted_webhook_secret, aad=f"{created.subscription_id}:secret"
+                )
+                == latest["signing_secret"]
+            )
             record = store.enqueue_webhook_retry(_retry_record())
             assert store.get_webhook_retry(record.retry_id) == record
             assert store.due_webhook_retries(now=datetime(2026, 6, 11, 12, 30, tzinfo=UTC)) == [
@@ -241,9 +388,19 @@ class TestLoopbackIntegration:
         thread.start()
         try:
             port = server.server_address[1]
-            client = HttpWebhookClient(WebhookSettings(timeout_seconds=10.0))
+
+            class LoopbackTransport(httpx.HTTPTransport):
+                """Map the test's public URL to its socket below the production guard."""
+
+                def handle_request(self, request: httpx.Request) -> httpx.Response:
+                    request.url = request.url.copy_with(scheme="http", host="127.0.0.1", port=port)
+                    return super().handle_request(request)
+
+            client = HttpWebhookClient(
+                WebhookSettings(timeout_seconds=10.0), transport=LoopbackTransport(trust_env=False)
+            )
             signature = client.post(
-                url=f"http://127.0.0.1:{port}/hook",
+                url="https://hooks.example/hook",
                 payload=_PAYLOAD,
                 secret="loopback-hook-secret",
             )
@@ -402,6 +559,36 @@ class TestWebhookRetryWorker:
 
 
 class TestDispatchQueuesFailures:
+    def test_legacy_identifier_derived_secret_never_delivers_or_retries(self) -> None:
+        store = InMemorySubscribeStore()
+        record = _confirmed_webhook_subscription(store)
+        legacy = hashlib.sha256(f"{record.subscription_id}:webhook".encode()).hexdigest()
+        store.update(
+            record.model_copy(
+                update={
+                    "encrypted_webhook_secret": _TEST_SECRETS.secret_box.seal(
+                        legacy, aad=f"{record.subscription_id}:secret"
+                    )
+                }
+            )
+        )
+        client = HttpWebhookClient(
+            transport=httpx.MockTransport(
+                lambda _: pytest.fail("legacy subscription must not reach transport")
+            )
+        )
+        response = dispatch_notifications(
+            _PAYLOAD, store=store, secrets=_TEST_SECRETS, webhook_client=client
+        )
+        assert response.sent == 0
+        assert response.failed == 1
+        worker = WebhookRetryWorker(
+            store, client, _TEST_SECRETS, settings=WebhookRetrySettings(max_attempts=2)
+        )
+        retried = worker.run_once(now=datetime(2099, 1, 1, tzinfo=UTC))
+        assert retried[0].state == "dead_letter"
+        assert "re-registration" in retried[0].last_error
+
     def test_failed_real_webhook_dispatch_counts_failed_and_queues_retry(self) -> None:
         store = InMemorySubscribeStore()
         _confirmed_webhook_subscription(store)

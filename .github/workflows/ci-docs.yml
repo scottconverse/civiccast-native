@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # Documentation render check. Verifies the user manual (and other prose docs)
-# render cleanly to PDF and DOCX via Pandoc. Activates fully when USER-MANUAL.md
-# lands in Sprint 0.1; placeholder-green until then.
+# render cleanly to PDF and DOCX via Pandoc, including the real render tests.
 
 name: ci-docs
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'program/**', 'release/**']
     paths:
       - ".github/workflows/ci-docs.yml"
       - "docs/**"
       - "scripts/render-user-manual.sh"
       - "scripts/render_user_manual.py"
+      - "tests/test_user_manual_render.py"
       - "scripts/generate-openapi-artifacts.py"
       - "civiccast/**"
 
@@ -49,9 +49,7 @@ jobs:
         run: uv sync --all-extras --group dev
 
       - name: Install pandoc and TeX (per ADR 0005)
-        # workflow-cost: local-docker-cache. Self-hosted runner keeps apt
-        # package state warm; paths filters keep this from running on unrelated
-        # PRs.
+        # Reuse this job's real Pandoc/TeX environment for render regressions.
         timeout-minutes: 10
         run: |
           sudo apt-get update -qq
@@ -62,6 +60,28 @@ jobs:
             texlive-fonts-recommended \
             texlive-latex-recommended \
             texlive-latex-extra
+
+      - name: Run real manual render regressions (no skips)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          uv run python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          import pytest
+          nodes = """
+          tests/test_user_manual_render.py::TestUserManualRenderContent::test_renders_to_docx_without_error
+          tests/test_user_manual_render.py::TestUserManualRenderContent::test_plaintext_render_contains_required_headings
+          tests/test_user_manual_render.py::TestUserManualRenderContent::test_docx_artifact_contains_document_payload
+          tests/test_user_manual_render.py::TestUserManualVersionHeaderConsistency::test_fresh_render_running_header_matches_source_and_passes_check_current
+          """.strip().splitlines()
+          code = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-manual-render.xml"])
+          if code:
+              sys.exit(code)
+          cases = list(ET.parse("junit-manual-render.xml").iter("testcase"))
+          assert len(cases) >= len(nodes), "Selected cases did not all execute"
+          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"
+          print(f"Required coverage executed: {len(cases)} passed, no skips")
+          PY
 
       - name: Render USER-MANUAL via scripts/render-user-manual.sh
         run: |
@@ -80,7 +100,9 @@ jobs:
         timeout-minutes: 10
         with:
           name: user-manual
-          path: artifacts/release-preparation/manual/USER-MANUAL.*
+          path: |
+            artifacts/release-preparation/manual/USER-MANUAL.*
+            junit-manual-render.xml
           if-no-files-found: error
           retention-days: 1
 

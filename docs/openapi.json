@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-beta.19"
+    "version": "1.0.0-beta.20"
   },
   "paths": {
     "/health": {
@@ -698,6 +698,256 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/NetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/federation/stations": {
+      "get": {
+        "tags": [
+          "staff",
+          "federation"
+        ],
+        "summary": "Stations",
+        "operationId": "stations_api_staff_federation_stations_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StationSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Stations Api Staff Federation Stations Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/federation/stations/{station_id}/catalog": {
+      "get": {
+        "tags": [
+          "staff",
+          "federation"
+        ],
+        "summary": "Catalog",
+        "operationId": "catalog_api_staff_federation_stations__station_id__catalog_get",
+        "parameters": [
+          {
+            "name": "station_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Station Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationCatalog"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/federation/stations/{station_id}/channels": {
+      "get": {
+        "tags": [
+          "staff",
+          "federation"
+        ],
+        "summary": "Channels",
+        "operationId": "channels_api_staff_federation_stations__station_id__channels_get",
+        "parameters": [
+          {
+            "name": "station_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Station Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationChannels"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/federation/stations/{station_id}/channels/{channel_id}/commands": {
+      "post": {
+        "tags": [
+          "staff",
+          "federation"
+        ],
+        "summary": "Command",
+        "operationId": "command_api_staff_federation_stations__station_id__channels__channel_id__commands_post",
+        "parameters": [
+          {
+            "name": "station_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Station Id"
+            }
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteCommandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteCommandReceipt"
                 }
               }
             }
@@ -29080,6 +29330,12 @@
               }
             }
           },
+          "400": {
+            "description": "A public HTTPS webhook endpoint is required"
+          },
+          "502": {
+            "description": "Endpoint confirmation could not be delivered"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -57001,6 +57257,124 @@
         "title": "RelinkAssetRequest",
         "description": "Request payload for ``POST /api/staff/assets/{asset_id}/relink``."
       },
+      "RemoteChannel": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "current_source_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Source Label"
+          },
+          "last_health_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Health At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel_id",
+          "enabled"
+        ],
+        "title": "RemoteChannel"
+      },
+      "RemoteCommandReceipt": {
+        "properties": {
+          "station_id": {
+            "type": "string",
+            "title": "Station Id"
+          },
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "title": "Action"
+          },
+          "command_id": {
+            "type": "string",
+            "title": "Command Id"
+          },
+          "queued": {
+            "type": "boolean",
+            "const": true,
+            "title": "Queued",
+            "default": true
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "Queued on remote station; refresh status to confirm execution."
+          }
+        },
+        "type": "object",
+        "required": [
+          "station_id",
+          "channel_id",
+          "action",
+          "command_id"
+        ],
+        "title": "RemoteCommandReceipt"
+      },
+      "RemoteCommandRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "title": "Action"
+          },
+          "confirm_stop": {
+            "type": "boolean",
+            "title": "Confirm Stop",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "RemoteCommandRequest"
+      },
       "RemoteGuestSession": {
         "properties": {
           "session_id": {
@@ -59837,6 +60211,47 @@
         ],
         "title": "SessionOpenInput"
       },
+      "SharedProgram": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Published At"
+          },
+          "portal_url": {
+            "type": "string",
+            "title": "Portal Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "title",
+          "duration_seconds",
+          "published_at",
+          "portal_url"
+        ],
+        "title": "SharedProgram"
+      },
       "ShowsReport": {
         "properties": {
           "station_id": {
@@ -62243,6 +62658,32 @@
         "title": "StationBoxProfile",
         "description": "Full cable/PEG appliance-readiness report. Computed, never persisted."
       },
+      "StationCatalog": {
+        "properties": {
+          "station_id": {
+            "type": "string",
+            "title": "Station Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SharedProgram"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "station_id",
+          "items",
+          "truncated"
+        ],
+        "title": "StationCatalog"
+      },
       "StationChannelProfile": {
         "properties": {
           "channel_id": {
@@ -62273,6 +62714,27 @@
         ],
         "title": "StationChannelProfile",
         "description": "Generated local channel profile for first-run commissioning."
+      },
+      "StationChannels": {
+        "properties": {
+          "station_id": {
+            "type": "string",
+            "title": "Station Id"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/RemoteChannel"
+            },
+            "type": "array",
+            "title": "Channels"
+          }
+        },
+        "type": "object",
+        "required": [
+          "station_id",
+          "channels"
+        ],
+        "title": "StationChannels"
       },
       "StationLoginRequest": {
         "properties": {
@@ -62702,6 +63164,42 @@
         ],
         "title": "StationStorageLocations",
         "description": "Local station storage paths created or proposed during first-run setup."
+      },
+      "StationSummary": {
+        "properties": {
+          "station_id": {
+            "type": "string",
+            "title": "Station Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "public_origin": {
+            "type": "string",
+            "title": "Public Origin"
+          },
+          "channel_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Channel Ids"
+          },
+          "control_configured": {
+            "type": "boolean",
+            "title": "Control Configured"
+          }
+        },
+        "type": "object",
+        "required": [
+          "station_id",
+          "label",
+          "public_origin",
+          "channel_ids",
+          "control_configured"
+        ],
+        "title": "StationSummary"
       },
       "StationTimeZone": {
         "properties": {
@@ -63539,7 +64037,7 @@
           "target_id"
         ],
         "title": "SubscriptionWebhookRequest",
-        "description": "Webhook subscription request with URL ownership represented by an opt-in link."
+        "description": "Webhook registration; ownership proof is delivered only to the HTTPS endpoint."
       },
       "SummaryApprovalRequest": {
         "properties": {
