@@ -147,6 +147,7 @@ class FederationService:
                     portal_url=f"{peer.public_origin}/#/watch/{quote(asset.asset_id, safe='')}",
                 )
                 for asset in published[:100]
+                if asset.published_at is not None
             ],
         )
 

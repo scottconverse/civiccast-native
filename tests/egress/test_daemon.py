@@ -1607,6 +1607,7 @@ def test_real_strategy_default_takes_the_seamless_reload_path_env_unset(
         worker_launcher=lambda argv, stdout, stderr: _start_fake_process(pending, started),
         pipe_channel_factory=pipe_channel_factory,  # type: ignore[arg-type]
         is_windows=True,  # exercises the D2 pipe path platform-agnostically
+        encoder_probe=lambda _factory: False,  # no physical GPU/gi in this pipe-path fixture
     )
     assert strategy.supports_content_reload is True  # sanity: the default this test relies on
 

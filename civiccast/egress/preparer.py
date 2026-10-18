@@ -647,7 +647,7 @@ class SourcePreparer:
                 _WARM_FAILURE_BACKOFF_SECONDS * 2 ** (count - 1), _WARM_FAILURE_MAX_BACKOFF_SECONDS
             )
             self._warm_backoff_until[key] = time.monotonic() + delay
-            return delay
+            return float(delay)
 
     def _cache_dir(self) -> Path:
         return self._work_dir / _CACHE_DIR_NAME
@@ -1619,7 +1619,7 @@ class SourcePreparer:
                     self._warming.discard(key)
 
         try:
-            _job._warm_key = key
+            _job.__dict__["_warm_key"] = key
             self._warm_scheduler(_job)
         except Exception:
             with self._warming_guard:
@@ -1905,7 +1905,7 @@ class SourcePreparer:
                     self._warming.discard(key)
 
         try:
-            _job._warm_key = key
+            _job.__dict__["_warm_key"] = key
             self._warm_scheduler(_job)
         except Exception:
             with self._warming_guard:
@@ -2087,7 +2087,7 @@ class SourcePreparer:
                     self._warming.discard(key)
 
         try:
-            _job._warm_priority = 0
+            _job.__dict__["_warm_priority"] = 0
             self._warm_scheduler(_job)
         except Exception:
             with self._warming_guard:
