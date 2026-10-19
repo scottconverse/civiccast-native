@@ -395,7 +395,7 @@ def _drawtext_filter(
     x_expression = f"{x}+{box_width}-mod(t*100,{box_width}+text_w)" if scroll else str(x)
     return (
         f"[{input_label}]drawtext=expansion=none:text='{escaped_text}':"
-        f"x={x_expression}:y={y_position}:"
+        f"x='{x_expression}':y={y_position}:"
         f"fontsize={font_size}:fontcolor=white:box=1:boxcolor=black@0.45[{output_label}]"
     )
 

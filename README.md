@@ -10,6 +10,10 @@ has no per-minute software fee.
 
 `v1.0.0-beta.20` is an unpublished candidate consolidating Sprint 6 preparation, output, webhook, Roku and station-integration changes. Installation verification is pending. The [roadmap](docs/ROADMAP.md) tracks the scope.
 
+The source also corrects a CG ticker filter-expression error found during
+isolated installation checks. The fix has passed a real FFmpeg regression
+check; a replacement signed package and installed confirmation remain pending.
+
 ## Current published package
 
 The signed Beta 19 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19)

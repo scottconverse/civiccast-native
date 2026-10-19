@@ -11,6 +11,8 @@ matching the existing filler plan mechanics).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -274,6 +276,19 @@ class TestDrawtextEscapingIsShared:
 
 
 class TestPreviewArgs:
+    @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="requires real FFmpeg")
+    def test_ticker_preview_renders_with_real_ffmpeg(self, tmp_path: Path) -> None:
+        output = tmp_path / "ticker.png"
+        args = _preview_args(out_path=output)
+        result = subprocess.run(
+            [shutil.which("ffmpeg"), *args],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert output.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
     def test_preview_emits_png_output_format(self) -> None:
         joined = _joined(_preview_args())
         assert "-f" in joined

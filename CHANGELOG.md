@@ -4,6 +4,10 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Quote the CG ticker's horizontal-position expression so FFmpeg treats its
+  comma as part of the scrolling calculation. This corrects text rendering
+  failures that caused board previews to fall back to an image without text.
+
 - Let service permission setup handle Windows cache junctions inside an existing
   station profile without following them or changing their targets' permissions.
   Preserve normal inheritance for root-only grants and protected directory ACLs.

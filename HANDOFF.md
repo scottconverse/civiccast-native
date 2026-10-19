@@ -1,4 +1,28 @@
-# Current checkpoint: October 19, 2026 - CG approval correction
+# Current checkpoint: October 19, 2026 - installed CG ticker rendering correction
+
+Branch fix/beta19-ci-and-install-docs, PR259. Signed dc820a86/build39279693859
+installed successfully in the isolated station with five original API inventory
+hashes preserved. Applicable Windows CI39279691301 attempt2 passed; a6211c7d is
+the subsequent test-format-only checkpoint. Native-ID CG approval now passes.
+
+Actual ticker preview failed with text-omitted. A diagnostic using the installed
+renderer captured FFmpeg rejecting the unquoted comma in the horizontal scroll
+expression. The source now quotes that expression. Existing compositor baseline:
+24 passed. The new real-FFmpeg regression failed before the fix with the same
+filter-parse error; the affected module then passed 25 tests. Replacement signed
+packaging and installed confirmation are required; no replacement build is
+claimed here.
+
+Three real 220-second HLS captures decoded with video/audio; live captions and
+populated as-run reports were observed. Caption transcription errors remain, and
+the 30-second schedule exercised the short-tail skipping policy rather than
+proving both intended programs. New recording capture/stop completed with zero
+reported dropouts. CG output, remaining workflows/federation, same-kit reinstall,
+real host backup and host upgrade remain unresolved. Production remains Beta19;
+no host reboot or publication. Workspace CIVICCAST-CURRENT-WORK.md is the single
+remaining-work list, with exact scope/evidence in replacement-candidate-dc820a86.
+
+# Historical checkpoint: October 19, 2026 - CG approval correction
 
 Branch fix/beta19-ci-and-install-docs, PR259. Base source fe7dc1df3b6543794af13f2ea0fc1b1a38eeabf9 contains the reload correction. The additional CG approval route fix is included with this checkpoint; exact resulting SHA and new build run are recorded in the PR and workspace candidate continuation after dispatch. Earlier checkpoints below are historical.
 
