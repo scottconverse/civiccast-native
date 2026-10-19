@@ -1,3 +1,10 @@
+# Current checkpoint: October 19, 2026 - CG approval correction
+
+Branch fix/beta19-ci-and-install-docs, PR259. Base source fe7dc1df3b6543794af13f2ea0fc1b1a38eeabf9 contains the reload correction. The additional CG approval route fix is included with this checkpoint; exact resulting SHA and new build run are recorded in the PR and workspace candidate continuation after dispatch. Earlier checkpoints below are historical.
+
+Installed51c fetched32 BBC RSS items successfully, but Approve returned404 for a native URL ID. The route now accepts slash-bearing IDs without changing service ownership or role checks. Four focused cases failed before the correction; focused5 and affected22 cases passed afterward. Independent source review found no blocker. Ruff and generated OpenAPI artifact check passed. The generated contract and existing operator steps are unchanged. No installed acceptance of this correction is claimed.
+
+The preceding signed build39276071513 was requested cancelled because it lacks this shipped correction; its observation/download and CI-retry watchers were stopped. No replacement dispatch is claimed in this source checkpoint. Installed CG editing/fetching, empty-period affidavit downloads, Web/PWA build/download, real alert transport and existing unmuted recording playback have scoped passes. Corrected three-channel program run, remaining walkthrough/features, isolated reinstall, real recovery backup and host upgrade remain outstanding. Host unchanged; no reboot or publication. All nine owner outcomes remain required.
 # Current checkpoint: October 19, 2026 - installed reload failure
 
 Branch fix/beta19-ci-and-install-docs; current HEAD 51c886874ea7eeb53457604c1a0ce9689312f543; draft PR259. Exact signed build39257884570 and CI39257879140 succeeded. Verified kit installed in isolated CivicCast-Beta16-Verification with setup exit0, registration0, healthy schema0094 and restricted service identity. Five API collection hashes match preinstall. All three initial HLS playlists and segments returned200. This resolves the installer working-directory failure described below.
