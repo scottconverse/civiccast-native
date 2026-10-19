@@ -1147,7 +1147,9 @@ def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
     assert "ActiveRuntime" in arm, "the message must name the value an administrator has to set"
 
 
-@pytest.mark.skipif(os.name != "nt", reason="executes the real NSIS service-registration cwd handoff")
+@pytest.mark.skipif(
+    os.name != "nt", reason="executes the real NSIS service-registration cwd handoff"
+)
 @pytest.mark.parametrize("exit_code", [0, 70], ids=["success", "registration-failure"])
 def test_service_registration_child_does_not_inherit_install_root_as_its_cwd(
     tmp_path: Path, exit_code: int
@@ -1186,10 +1188,7 @@ def test_service_registration_child_does_not_inherit_install_root_as_its_cwd(
     child_command = f'cmd.exe /d /c cd > "$EXEDIR/{child_cwd_file.name}"'
     if exit_code:
         child_command += f" & exit /b {exit_code}"
-    diagnostic_exec = (
-        "nsExec::ExecToStack "
-        f"'{child_command}'"
-    )
+    diagnostic_exec = f"nsExec::ExecToStack '{child_command}'"
     if wrapper is None:
         # Baseline behavior: run the same child from the install output
         # directory. The assertion below must fail on this path, proving the
@@ -1249,8 +1248,7 @@ def test_service_registration_child_does_not_inherit_install_root_as_its_cwd(
         '!insertmacro CIVICCAST_STEP "step d4-service-registration: child reported: $1"'
     )
     assert restore_at < returned_at < report_at < branch_at, (
-        "restore OUTDIR before recording the captured child output or branching "
-        "on its exit code"
+        "restore OUTDIR before recording the captured child output or branching on its exit code"
     )
     step_logger = _slice(source, "!macro CIVICCAST_STEP TEXT", "!macroend")
     assert "$0" not in step_logger and "$1" not in step_logger, (
