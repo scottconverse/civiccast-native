@@ -57,3 +57,11 @@ The new Windows regression launches a copied Python executable inside the grant 
 Five-lens review: engineering reproductions bind the actual loaded-image failure; UX behavior is installer registration without a new operator control; tests execute a real in-tree interpreter and retain junction/inheritance assertions; changelog and handoff distinguish source proof from candidate acceptance; QA retains the failed candidate and recovery evidence. README, Help and API contracts are unaffected by this internal access correction. Corrected exact-source signing and installed acceptance remain required; no publication or host operation is authorized by this evidence.
 
 The affected claims-evidence/retraction suites also passed (141 tests); touched-file Ruff and diff whitespace checks passed. Guest post-diagnostic inventory again matches all five pre-install record hashes.
+
+## Virtual-environment regression fixture follow-up
+
+Windows job 118022447733 in CI 39241285128 completed with 2267 passes and one failure: the copied interpreter was a virtual-environment launcher, which exited106 with `No pyvenv.cfg file` before exercising the ACL function. Fix the fixture, not the product: copy `sys._base_executable`, retain adjacent Python DLLs, expose the installed pywin32 support-DLL directory, and assert the child interpreter resides inside the tested tree. The project virtual-environment run now passes all 15 tests; a temporary child-only forced-MAXIMUM_ALLOWED probe still fails with CreateFile error 32. Ruff and whitespace checks pass. Root reviewed the diff independently of the worker; there are no production-code or candidate-workflow changes.
+
+The public Legistar live integration also disconnected once; the exact live test passed locally afterward. Fresh CI includes that integration, so the queued old-job-only retry was cancelled before submission. Superseding the old CI via the normal concurrency policy avoids completing a known-failed run before starting the necessary corrected one. Do not claim the unfinished old unit job passed.
+
+Five-lens review: engineering and tests preserve actual in-tree execution and sensitivity; UX/API/Help are unaffected; handoff/evidence explain test-only provenance; QA preserves signed source 8717c2a2 and its running build 39241295587. No signed rebuild or release-readiness claim follows from this correction.

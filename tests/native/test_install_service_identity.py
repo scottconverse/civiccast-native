@@ -325,7 +325,9 @@ def test_grant_tree_opens_running_python_image_with_acl_only_access(tmp_path):
     root = tmp_path / "runtime"
     root.mkdir()
     executable = root / "python.exe"
-    shutil.copy2(sys.executable, executable)
+    base_executable = Path(sys._base_executable)
+    assert base_executable.is_file(), f"Base Python executable not found: {base_executable}"
+    shutil.copy2(base_executable, executable)
     runtime_dlls = list(Path(sys.base_prefix).glob("python*.dll"))
     assert runtime_dlls, "The running Python installation has no adjacent runtime DLLs."
     for runtime_dll in runtime_dlls:
@@ -337,8 +339,15 @@ def test_grant_tree_opens_running_python_image_with_acl_only_access(tmp_path):
     environment["PYTHONPATH"] = os.pathsep.join(
         [str(repo_root), *(entry for entry in sys.path if entry)]
     )
+    pywin32_system32 = next(
+        entry / "pywin32_system32"
+        for entry in map(Path, sys.path)
+        if (entry / "pywin32_system32").is_dir()
+    )
     script = (
-        "import sys; from pathlib import Path; "
+        "import os, sys; from pathlib import Path; "
+        f"pywin32_dlls = os.add_dll_directory({str(pywin32_system32)!r}); "
+        "assert Path(sys.executable).resolve() == Path(sys.argv[1], 'python.exe').resolve(); "
         "from civiccast.native.install_service_identity import _grant_tree; "
         "_grant_tree(Path(sys.argv[1]), 'RX'); print('GRANT_SUCCEEDED')"
     )

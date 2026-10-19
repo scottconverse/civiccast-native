@@ -34,6 +34,21 @@ then verified host recovery backup before host upgrade. No host reboot, publicat
 new soak, or interrupted-install project. Evidence: workspace
 outputs/replacement-candidate-7ad7b44d/vm-check/replacement-install and
 outputs/running-image-acl-review.md; continuity outputs/CIVICCAST-CURRENT-WORK.md.
+## Test-only CI follow-up
+
+The 8717c2a2 Windows CI job 118022447733 passed 2267 native cases but the new
+running-image fixture failed before product code with exit 106, `No pyvenv.cfg file`:
+it copied a virtual-environment launcher. The fixture now copies CPython's base
+executable, exposes the existing pywin32 support-DLL directory, and asserts the
+child runs that copied image inside the grant tree. All 15 cases pass under the
+project virtual environment; forcing old file-access behavior still fails with error 32.
+This changes tests only: preserve signed source 8717c2a2/build 39241295587.
+
+The optional integration job failed a public Legistar disconnect; the exact live
+test subsequently passed locally. Fresh CI for the fixture correction includes
+that job, so the pending old-job retry was cancelled before submission. Normal
+workflow concurrency supersedes the old failing CI; its unfinished unit result
+must not be called a pass. No signed rebuild is required for this follow-up.
 ## Earlier checkpoint (superseded where updated above)
 
 # Current work: Beta 20 installed verification active (October 18, 2026)
