@@ -1,27 +1,33 @@
-# Current checkpoint: October 19, 2026
+# Current checkpoint: October 19, 2026 - service registration correction
 
-Branch: `fix/beta19-ci-and-install-docs`; draft PR 259. Frozen signed-candidate
-source: `c6be85b7b165d43b75f6cc124f26ae918e5830d2`; preparation run
-`39208157501` has passed station signing, exact-source manual rendering, and
-bootstrap signing/verification; binary upload is in progress at this checkpoint.
-No assembled replacement kit or corrected installation is claimed yet.
+Branch: `fix/beta19-ci-and-install-docs`; draft PR 259. Signed source c6be85b7
+built successfully in run 39208157501; the complete kit passed local and guest
+signature/hash/index/manual checks. Its isolated installation failed registration 70.
+Automatic restoration reported success, and five API collection hashes match the
+pre-install snapshot. The guest is healthy; the host remains unchanged.
 
-CI `39208155850` for that source completed with 28 unit failures. Its Windows
-job passed 2,265 native, 35 installer, and 56 media cases without skips/errors.
-The follow-up corrects stale claim bindings, three strategy fixtures, seven
-documentation/policy failures, and tracked manual files using exact hosted
-output. Focused checks passed: 24 claims cases, 10 docs/policy cases, three
-strategy cases, and the source/header/manual artifact check. The local broader
-Windows strategy-module run is not green (20 real-registry environment failures).
-The new bookkeeping revision still needs hosted CI. It changes no application
-or installer bytes and does not relabel the c6be85b7 signed candidate.
+A controlled diagnostic on the restored installation reproduced 70 in unchanged
+service identity migration code. It rejected the profile's Windows-cache-shaped
+Content.IE5 junction targeting INetCache/IE. This follow-up prunes redirected
+descendants during recursive grants, applies bounded native ACL updates, preserves
+protected DACLs and ordinary nonrecursive inheritance, and retains root/ancestor
+redirection rejection. A real-junction regression failed before the correction;
+14 affected Windows tests pass afterward. Independent review found no blocker.
+The original candidate's detailed stderr was not retained; the restored-state
+reproduction establishes the diagnosed failure. The fix still needs a new signed
+candidate and installed acceptance. Do not relabel the c6 kit as corrected.
 
-All nine owner outcomes remain active. Next: complete download/assembly and
-verify the replacement kit, install in the isolated guest, finish functional
-acceptance and isolated uninstall/reinstall, then verify a full host recovery
-backup before the authorized host upgrade. No host reboot or publication.
-Detailed current evidence is in the workspace `outputs/CIVICCAST-CURRENT-WORK.md`.
+Prior revision 4b85a2b CI 39219234054 is fully green, including Windows, unit,
+integration and claims verification; lint and other queried workflows also passed.
+That run predates this fix. Two new Windows cases bring native collection to 2029
+pure / 2270 total / 2267 Windows non-integration; floor 2217 preserves the Windows margin.
+This follow-up needs its own hosted CI. No new installation success is claimed.
 
+All nine owner outcomes remain active: finish the corrected installation and
+functional walkthrough, bounded three-channel and changed-feature acceptance,
+isolated uninstall/reinstall, then a verified host recovery backup before the
+host upgrade. No host reboot, publication, new soak, or interrupted-install project.
+Detailed evidence is in workspace outputs/CIVICCAST-CURRENT-WORK.md.
 ## Earlier checkpoint (superseded where updated above)
 
 # Current work: Beta 20 installed verification active (October 18, 2026)

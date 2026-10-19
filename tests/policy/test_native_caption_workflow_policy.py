@@ -1200,7 +1200,9 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # 2026-10-19 private-file storage adds eight tests; four Windows ACL/DPAPI
     # cases carry windows_only: 2029 pure, 2268 total, 2265 non-integration.
     # Floors 1983 and 2215 retain margins of 46 pure and 50 Windows tests.
-    assert (collect("not windows_only"), collect()) == (2029, 2268)
+    # Two real Windows junction cases add no portable cases: 2029 pure,
+    # 2270 total, 2267 non-integration; Windows floor 2217 keeps the margin.
+    assert (collect("not windows_only"), collect()) == (2029, 2270)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
