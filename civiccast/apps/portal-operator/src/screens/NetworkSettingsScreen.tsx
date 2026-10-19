@@ -33,7 +33,22 @@ function makeDraft(settings: NetworkSettings): NetworkSettingsDraft {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.detail || error.message
+  if (error instanceof ApiError) {
+    if (error.status === 422 && error.detail) {
+      try {
+        const issues: unknown = JSON.parse(error.detail)
+        if (Array.isArray(issues) && issues.some((issue: unknown) =>
+          issue != null && typeof issue === 'object' && 'loc' in issue &&
+          Array.isArray(issue.loc) && issue.loc.at(-1) === 'upstream_port',
+        )) {
+          return 'Listener port must be a whole number between 1024 and 65535.'
+        }
+      } catch {
+        // Plain server guidance is already suitable for the operator.
+      }
+    }
+    return error.detail || error.message
+  }
   if (error instanceof Error) return error.message
   return 'The request could not be completed.'
 }

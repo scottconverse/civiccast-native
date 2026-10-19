@@ -25,7 +25,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from civiccast.app_platform.build_models import AppBuildRecord
@@ -140,7 +140,14 @@ def default_shell_build_runner(shells_dir: Path) -> BuildRunner:
 
     def run(app_target: str, work_dir: Path) -> BuiltArtifact:
         # "node" is resolved from PATH in the build environment.
-        build_cmd = ["node", str(shells_dir / "scripts" / "build-targets.mjs")]
+        job_dir = work_dir.resolve()
+        build_output_dir = job_dir / "shell-build"
+        build_cmd = [
+            "node",
+            str(shells_dir / "scripts" / "build-targets.mjs"),
+            "--out-dir",
+            str(build_output_dir),
+        ]
         try:
             subprocess.run(build_cmd, check=True, cwd=str(shells_dir))  # noqa: S603 - fixed in-tree script, no user input
         except FileNotFoundError as exc:
@@ -150,26 +157,29 @@ def default_shell_build_runner(shells_dir: Path) -> BuildRunner:
         except subprocess.CalledProcessError as exc:
             raise BuildOrchestrationError("app shell build command failed") from exc
         target_dir_name = app_target.replace("_", "-")
-        dist_target = shells_dir / "dist" / "targets" / target_dir_name
+        build_root = build_output_dir
+        dist_target = build_root / "targets" / target_dir_name
         if not dist_target.is_dir():
             raise BuildOrchestrationError(f"shell build produced no {target_dir_name!r} target")
         manifest_path = dist_target / "manifest.json"
         manifest = (
             json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
         )
-        zip_path = work_dir / f"{app_target}.zip"
-        _zip_dir(dist_target, zip_path)
+        zip_path = job_dir / f"{app_target}.zip"
+        _zip_shell_artifact(build_root, dist_target, zip_path)
+        manifest_entry = manifest.get("entryPoint") or manifest.get("entry") or "index.html"
         return BuiltArtifact(
             artifact_path=str(zip_path),
-            entry_point=str(manifest.get("entryPoint") or "index.html"),
+            entry_point=PurePosixPath("targets", target_dir_name, str(manifest_entry)).as_posix(),
             manifest_json=manifest,
         )
 
     return run
 
 
-def _zip_dir(source_dir: Path, zip_path: Path) -> None:
+def _zip_shell_artifact(build_root: Path, target_dir: Path, zip_path: Path) -> None:
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(source_dir.rglob("*")):
-            if path.is_file():
-                archive.write(path, path.relative_to(source_dir).as_posix())
+        for source_dir in (build_root / "src", build_root / "fixtures", target_dir):
+            for path in sorted(source_dir.rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(build_root).as_posix())

@@ -141,6 +141,7 @@ vi.mock('../api/client', () => ({
   createProductionDevice: vi.fn(),
   deleteProductionDevice: vi.fn(),
   upsertDeviceProfile: vi.fn(),
+  getDeviceProfile: vi.fn().mockResolvedValue(null),
   createControlSurface: vi.fn(),
   createTimelineCue: vi.fn(),
   deleteTimelineCue: vi.fn(),
@@ -154,6 +155,8 @@ import {
   deleteProductionDevice,
   deleteTimelineCue,
   getControlSurface,
+  getDeviceProfile,
+  upsertDeviceProfile,
   getControlRoomReadiness,
   getStaffIdentity,
   listControlSurfaces,
@@ -376,4 +379,62 @@ describe('ControlRoomSetupScreen container role gate', () => {
     expect(await findByText('Register a production device before adding cues to this surface.')).toBeTruthy()
     expect(queryByLabelText('Cue device')).toBeNull()
   })
+})
+
+
+describe('persisted device profile', () => {
+  it('loads saved timing/type and preserves adapter configuration when editing', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport())
+    vi.mocked(listProductionDevices).mockResolvedValue([DEVICE])
+    vi.mocked(listControlSurfaces).mockResolvedValue([])
+    const profile = {
+      profile_id: 'profile_obs', device_id: DEVICE.device_id,
+      tsr_device_type: 'OBS_CUSTOM', take_delay_ms: 125, post_roll_ms: 250,
+      options: { adapter: { channel: 2 } }, capability_map: { scene: 'take' },
+      version: 3, created_at: 'x', updated_at: 'x',
+    }
+    vi.mocked(getDeviceProfile).mockResolvedValue(profile)
+    vi.mocked(upsertDeviceProfile).mockResolvedValue(profile)
+    const { findByLabelText, findByText } = renderScreen()
+    const delay = await findByLabelText('dev_obs take delay') as HTMLInputElement
+    await waitFor(() => expect(delay.value).toBe('125'))
+    expect((await findByLabelText('dev_obs post roll') as HTMLInputElement).value).toBe('250')
+    expect((await findByLabelText('dev_obs tsr type') as HTMLInputElement).value).toBe('OBS_CUSTOM')
+    fireEvent.change(delay, { target: { value: '150' } })
+    fireEvent.click(await findByText('Save profile'))
+    await waitFor(() => expect(upsertDeviceProfile).toHaveBeenCalledWith('dev_obs', {
+      tsr_device_type: 'OBS_CUSTOM', take_delay_ms: 150, post_roll_ms: 250,
+      options: profile.options, capability_map: profile.capability_map,
+    }))
+  })
+  it('blocks saving when persisted configuration cannot be loaded', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport())
+    vi.mocked(listProductionDevices).mockResolvedValue([DEVICE])
+    vi.mocked(listControlSurfaces).mockResolvedValue([])
+    vi.mocked(getDeviceProfile).mockRejectedValue(new Error('Profile unavailable'))
+    const { findByText } = renderScreen()
+    expect(await findByText('Profile unavailable')).toBeTruthy()
+    const save = await findByText('Save profile') as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    fireEvent.click(save)
+    expect(upsertDeviceProfile).not.toHaveBeenCalled()
+  })
+
+  it('allows an initial profile when the saved profile is absent', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport())
+    vi.mocked(listProductionDevices).mockResolvedValue([DEVICE])
+    vi.mocked(listControlSurfaces).mockResolvedValue([])
+    vi.mocked(getDeviceProfile).mockResolvedValue(null)
+    const { findByText } = renderScreen()
+    const save = await findByText('Save profile') as HTMLButtonElement
+    await waitFor(() => expect(save.disabled).toBe(false))
+    fireEvent.click(save)
+    await waitFor(() => expect(upsertDeviceProfile).toHaveBeenCalledWith('dev_obs', {
+      tsr_device_type: 'OBS', options: {}, capability_map: {}, take_delay_ms: 0, post_roll_ms: 0,
+    }))
+  })
+
 })

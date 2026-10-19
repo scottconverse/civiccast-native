@@ -34,7 +34,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from civiccast.metadata.models import (
@@ -76,6 +77,10 @@ class FieldNotFoundError(CustomFieldStoreError):
 
 class FieldImmutableKeyError(CustomFieldStoreError):
     """Raised when an upsert attempts to change an existing def's immutable ``key``."""
+
+
+class FieldAlreadyExistsError(CustomFieldStoreError):
+    """Raised when creation collides with an existing field ID or station key."""
 
 
 class FieldValuesExistError(CustomFieldStoreError):
@@ -146,10 +151,15 @@ class CustomFieldStore:
 
     # --- field definitions ----------------------------------------------
 
-    def upsert_def(self, definition: CustomFieldDef) -> CustomFieldDef:
-        """Create or update a field def. Rejects a change to the immutable ``key``."""
+    def upsert_def(
+        self, definition: CustomFieldDef, *, create_only: bool = False
+    ) -> CustomFieldDef:
+        """Write a field def; create-only writes never replace existing definitions."""
+        conflict_message = "A field with this key or ID already exists. Use Edit to change it."
         with self._session() as session:
             row = session.get(CustomFieldDefDb, definition.field_id)
+            if create_only and row is not None:
+                raise FieldAlreadyExistsError(conflict_message)
             if row is None:
                 row = CustomFieldDefDb(
                     field_id=definition.field_id, created_at=definition.created_at
@@ -170,7 +180,29 @@ class CustomFieldStore:
             row.api_exposed = definition.api_exposed
             row.order = definition.order
             row.updated_at = _now()
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError as exc:
+                if not create_only:
+                    raise
+                # The PK and (station_id, key) unique constraint also protect
+                # simultaneous creates. Roll back before reading the winner;
+                # unrelated integrity errors must retain their original cause.
+                session.rollback()
+                conflict = session.execute(
+                    select(CustomFieldDefDb.field_id).where(
+                        or_(
+                            CustomFieldDefDb.field_id == definition.field_id,
+                            and_(
+                                CustomFieldDefDb.station_id == definition.station_id,
+                                CustomFieldDefDb.key == definition.key,
+                            ),
+                        )
+                    )
+                ).first()
+                if conflict is not None:
+                    raise FieldAlreadyExistsError(conflict_message) from exc
+                raise
             return _def_to_model(row)
 
     def get_def(self, field_id: str) -> CustomFieldDef | None:

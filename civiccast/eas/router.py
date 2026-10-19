@@ -164,7 +164,13 @@ def list_alerts(
     source_id: str | None = None,
     store: EasStore | None = Depends(get_eas_store),
 ) -> list[EasCapAlert]:
-    return _require_store(store).list_alerts(active_only=active, source_id=source_id)
+    resolved = _require_store(store)
+    if active:
+        # Manual alerts remain available while feed polling is disabled. Reuse
+        # the normal expiry transition so stale alerts leave the active view
+        # and remain in history even when the poll worker is not running.
+        resolved.expire_alerts()
+    return resolved.list_alerts(active_only=active, source_id=source_id)
 
 
 @staff_router.get(

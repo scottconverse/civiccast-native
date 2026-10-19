@@ -89,6 +89,20 @@ describe('CustomFieldsScreen access', () => {
 })
 
 describe('CustomFieldsScreen define form', () => {
+  it('shows the duplicate-create conflict and preserves the form and existing field', async () => {
+    const detail = 'A field with this key or ID already exists. Use Edit to change it.'
+    vi.mocked(listCustomFieldDefs).mockResolvedValue([def()])
+    vi.mocked(createCustomFieldDef).mockRejectedValue(new ApiError('Conflict', 409, detail))
+    const { findByLabelText, findByRole, getByRole } = renderScreen()
+    fireEvent.change(await findByLabelText('Field key'), { target: { value: 'meeting_type' } })
+    fireEvent.change(await findByLabelText('Field label'), { target: { value: 'Duplicate' } })
+    fireEvent.click(getByRole('button', { name: /create field/i }))
+    expect((await findByRole('alert')).textContent).toContain(detail)
+    expect((await findByLabelText('Field label') as HTMLInputElement).value).toBe('Duplicate')
+    expect(await findByRole('button', { name: 'Edit Meeting type' })).toBeTruthy()
+    expect(vi.mocked(updateCustomFieldDef)).not.toHaveBeenCalled()
+  })
+
   it('exposes all eight types in the type select', async () => {
     const { findByLabelText } = renderScreen()
     const select = (await findByLabelText('Field type')) as HTMLSelectElement

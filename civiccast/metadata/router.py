@@ -43,6 +43,7 @@ from civiccast.metadata.models import (
 )
 from civiccast.metadata.service import CustomFieldService, FieldReferenceError
 from civiccast.metadata.store import (
+    FieldAlreadyExistsError,
     FieldImmutableKeyError,
     FieldNotFoundError,
     FieldValidationError,
@@ -166,7 +167,10 @@ def list_custom_fields(
     summary="Define a new custom field (setup_admin)",
     dependencies=[Depends(require_any_role(*_DEF_WRITE))],
     openapi_extra=_DEF_WRITE_ROLES_EXTRA,
-    responses={503: {"description": _DB_NOT_READY}},
+    responses={
+        409: {"description": "A field with this ID or station key already exists; use Edit"},
+        503: {"description": _DB_NOT_READY},
+    },
 )
 def create_custom_field(
     payload: CustomFieldDefInput,
@@ -174,7 +178,10 @@ def create_custom_field(
 ) -> CustomFieldDef:
     """Create a field definition (key/label/type/options/flags). ``key`` is immutable hereafter."""
     service = _require_service(svc)
-    return service.create_field(CustomFieldDef(**payload.model_dump()))
+    try:
+        return service.create_field(CustomFieldDef(**payload.model_dump()))
+    except FieldAlreadyExistsError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @staff_router.get(

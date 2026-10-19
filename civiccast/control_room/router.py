@@ -345,6 +345,20 @@ def delete_device(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=device_id) from exc
 
 
+@staff_router.get(
+    "/devices/{device_id}/profile",
+    response_model=DeviceProfile | None,
+    dependencies=[Depends(require_any_role(*_DEVICE_READ))],
+)
+def get_profile(
+    device_id: str, store: ControlRoomStore | None = Depends(get_control_room_store)
+) -> DeviceProfile | None:
+    st = _require_store(store)
+    if st.get_device(device_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=device_id)
+    return st.get_profile_for_device(device_id)
+
+
 @staff_router.put(
     "/devices/{device_id}/profile",
     response_model=DeviceProfile,

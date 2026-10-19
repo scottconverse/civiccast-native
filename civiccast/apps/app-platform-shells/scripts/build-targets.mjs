@@ -1,5 +1,5 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -53,6 +53,17 @@ async function writeJson(path, payload) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const report = await buildTargets()
-  console.log(`Built ${report.targets.length} app shell targets into ${relative(process.cwd(), defaultOutDir)}`)
+  const args = process.argv.slice(2)
+  let outDir = defaultOutDir
+  if (args.length > 0) {
+    if (args.length !== 2 || args[0] !== '--out-dir' || !args[1]) {
+      throw new Error('Usage: node scripts/build-targets.mjs [--out-dir <path>]')
+    }
+    outDir = resolve(args[1])
+  }
+
+  const report = await buildTargets({ outDir })
+  console.log(
+    `Built ${report.targets.length} app shell targets into ${relative(process.cwd(), outDir)}`,
+  )
 }

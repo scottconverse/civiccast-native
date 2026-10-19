@@ -3131,6 +3131,14 @@ class EgressDaemon:
             self._write_state(channel_id, "ERROR", last_error=str(exc))
             self._append_health(channel_id, "ERROR", sink_connected={})
             self._rollover_plan_end_at.pop(channel_id, None)
+        except Exception as exc:
+            # A failed encoder launch must not leave the provisional slate
+            # state looking like output. Keep the existing outer failure hook
+            # and consumed-command policy by propagating after recording it.
+            self._write_state(channel_id, "ERROR", last_error=f"Channel start failed: {exc}")
+            self._append_health(channel_id, "ERROR", sink_connected={})
+            self._rollover_plan_end_at.pop(channel_id, None)
+            raise
         return None
 
     def _write_state(

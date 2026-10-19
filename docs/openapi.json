@@ -16422,6 +16422,74 @@
       }
     },
     "/api/staff/control-room/devices/{device_id}/profile": {
+      "get": {
+        "tags": [
+          "staff",
+          "control-room"
+        ],
+        "summary": "Get Profile",
+        "operationId": "get_profile_api_staff_control_room_devices__device_id__profile_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DeviceProfile"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Profile Api Staff Control Room Devices  Device Id  Profile Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
       "put": {
         "tags": [
           "staff",
@@ -21638,6 +21706,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "A field with this ID or station key already exists; use Edit"
           },
           "503": {
             "description": "Durable storage is not ready yet."

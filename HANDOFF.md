@@ -1,4 +1,25 @@
-# Current work: installed-product verification pending (October 17, 2026)
+# Current work: Beta 20 installed verification active (October 18, 2026)
+
+Current branch: `fix/beta19-ci-and-install-docs`; checkpoint HEAD
+`7d6f32d8660860edaa2678119b1c0ab3099db918`, with preserved uncommitted fixes.
+The initial Beta 20 signed candidate `823ba47779174551d4dd249abf1f3241193a8e4f`
+was built by workflow `39082353577` and installed successfully in the isolated
+Hyper-V guest. Its actual three-channel output failed at encoder bootstrap.
+Corrections remain unbuilt; a replacement signed kit and installed regression
+checks are required. Do not restart completed installation or walkthrough work
+based on the historical checkpoint below.
+
+Read current progress and decisions in
+`C:\Users\scott\Documents\Codex\2026-10-18\re\outputs\CIVICCAST-CURRENT-WORK.md`.
+Prior detailed installed evidence remains under
+`C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\sprint6-installed-verification-2026-10-17\vm-check`.
+The owner resumed all nine outcomes: consolidate/build, installed fixes and
+walkthrough, bounded three-channel and changed-feature operation, isolated
+uninstall/reinstall, verified host backup, then host upgrade and final report.
+The host remains Beta 19; no host cutover has occurred. No publication, new soak,
+or host reboot. TownLight stays deferred to 2.0.
+
+## Historical October 17 source checkpoint (superseded by the above)
 
 Read the compaction handoff:
 `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CIVICCAST-COMPACTION-HANDOFF-2026-10-17.md`.

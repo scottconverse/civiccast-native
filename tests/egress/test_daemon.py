@@ -6058,6 +6058,44 @@ def test_start_releases_the_prepared_plan_on_a_failure_after_prepare_succeeds(
     assert daemon._active_prepared_plan_dir.get("gov") is None  # never tracked as active
 
 
+def test_unexpected_encoder_start_failure_does_not_claim_a_running_slate(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    failures: list[Exception] = []
+
+    class _BrokenEncoder:
+        name = "broken-encoder"
+        supports_live_swap = False
+        supports_content_reload = False
+        starts = 0
+
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            self.starts += 1
+            raise ModuleNotFoundError("No module named 'gi'")
+
+    encoder = _BrokenEncoder()
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=encoder,  # type: ignore[arg-type]
+        command_failure_hook=lambda _cid, _cmd, exc: failures.append(exc),
+    )
+
+    assert daemon.process_once("gov") == 1
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ERROR"
+    assert "No module named 'gi'" in (state.last_error or "")
+    assert state.pid is None
+    assert store.recent_health("gov", 1)[0].state == "ERROR"
+    assert len(failures) == 1 and isinstance(failures[0], ModuleNotFoundError)
+    assert daemon.process_once("gov") == 0
+    assert encoder.starts == 1  # command remains consumed; no new retry policy
+
+
 def test_encoder_unavailable_with_no_fallback_provider_is_error_not_a_crash(
     tmp_path: Path,
 ) -> None:

@@ -567,21 +567,21 @@ async def replace_asset_source(
         # Archive the old file (rename aside, never delete) before the new
         # file takes its place -- spec DONE criteria #8: "old file archived,
         # new file validated." Any existing file already in the asset's
-        # directory (whatever its name) is the prior source; the new upload
-        # has already been staged at ``temp_path``, not yet moved into
-        # ``asset_dir``, so this glob only ever sees the OLD file(s).
+        # directory is old content (including ``dest_path`` on same-name
+        # replacement); the new upload is staged at ``temp_path``.
+        # Auxiliary files are archived too, but the audit must name the
+        # primary source recorded on the asset, regardless of directory order.
+        original_source = resolved.get_asset_source_path(asset_id)
+        original_source_path = Path(original_source).resolve() if original_source else None
         archived_old_path: str | None = None
         await asyncio.to_thread(asset_dir.mkdir, parents=True, exist_ok=True)
         for candidate in asset_dir.glob("*"):
-            if (
-                candidate.is_file()
-                and candidate != dest_path
-                and not candidate.name.startswith(f"{asset_id}.replaced-")
-            ):
+            if candidate.is_file() and not candidate.name.startswith(f"{asset_id}.replaced-"):
                 archived_name = f"{asset_id}.replaced-{uuid.uuid4().hex[:8]}-{candidate.name}"
                 archived_path = asset_dir / archived_name
                 await asyncio.to_thread(os.replace, candidate, archived_path)
-                archived_old_path = str(archived_path)
+                if candidate == original_source_path:
+                    archived_old_path = str(archived_path)
 
         await asyncio.to_thread(os.replace, temp_path, dest_path)
 

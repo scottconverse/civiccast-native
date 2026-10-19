@@ -2313,6 +2313,15 @@ Probe Device.
 - Request body: none
 - Responses: 200 `TsrProbeResult`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/control-room/devices/{device_id}/profile`
+
+Get Profile.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `device_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `DeviceProfile | null`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `PUT /api/staff/control-room/devices/{device_id}/profile`
 
 Upsert Profile.
@@ -2473,7 +2482,7 @@ Define a new custom field (setup_admin).
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: setup_admin
 - Parameters: none
 - Request body: `CustomFieldDefInput`
-- Responses: 201 `CustomFieldDef`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
+- Responses: 201 `CustomFieldDef`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 A field with this ID or station key already exists; use Edit; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
 
 ### `DELETE /api/staff/custom-fields/{field_id}`
 

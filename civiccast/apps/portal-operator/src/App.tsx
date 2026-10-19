@@ -76,7 +76,7 @@ function StaffLoginRoute() {
     routeState.returnTo.startsWith('/') &&
     !routeState.returnTo.startsWith('//')
       ? routeState.returnTo
-      : '/schedule'
+      : null
 
   return (
     <main className="min-h-screen px-6 py-12" style={{ background: 'var(--cc-paper)', color: 'var(--cc-ink)' }}>
@@ -94,7 +94,14 @@ function StaffLoginRoute() {
             storeStaffToken(result.access_token)
             window.sessionStorage.removeItem(STAFF_SIGNED_OUT_NOTICE_KEY)
             queryClient.removeQueries({ queryKey: ['staff-identity'] })
-            navigate(returnTo, { replace: true })
+            // Schedule reads require a publishing/admin role. Clerks and
+            // meeting operators start with work their existing roles allow.
+            const defaultDestination = result.roles.some((role) =>
+              role === 'publish_operator' || role === 'setup_admin' || role === 'support_admin',
+            ) ? '/schedule'
+              : result.roles.includes('records_clerk') ? '/review'
+                : result.roles.includes('meeting_operator') ? '/assets' : '/help'
+            navigate(returnTo ?? defaultDestination, { replace: true })
           }}
         />
         <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>

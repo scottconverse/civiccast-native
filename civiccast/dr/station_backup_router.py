@@ -131,8 +131,14 @@ def set_scheduled_passphrase(body: ScheduledPassphraseRequest, request: Request)
     service = _service(request)
     try:
         service.set_scheduled_passphrase(body.passphrase)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Could not save the scheduled backup passphrase. "
+                "Check the station credentials folder permissions and try again."
+            ),
+        ) from exc
     return {"configured": service.has_scheduled_passphrase()}
 
 

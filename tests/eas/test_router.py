@@ -123,6 +123,23 @@ _SOURCE_BODY = {
 # --- role gate ---------------------------------------------------------------
 
 
+def test_active_alert_list_expires_stale_alerts_even_when_polling_is_off(monkeypatch) -> None:
+    monkeypatch.setenv("CIVICCAST_EAS", "off")
+    monkeypatch.setattr("civiccast.eas.store._now", lambda: _T0 + timedelta(hours=2))
+    app, store = _build()
+    _ingest_alert(store)
+    # This alert expired long ago; no poll worker runs in this API-only station.
+    client = TestClient(app)
+    active = client.get("/api/staff/eas/alerts?active=true")
+    assert active.status_code == 200
+    assert active.json() == []
+    history = client.get("/api/staff/eas/alerts")
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+    assert history.json()[0]["alert_id"] == "a1"
+    assert history.json()[0]["status"] == "expired"
+
+
 def test_source_read_forbidden_for_records_clerk() -> None:
     assert _client(scopes=("records_clerk",)).get("/api/staff/eas/sources").status_code == 403
 

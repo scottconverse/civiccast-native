@@ -11,11 +11,41 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
 from civiccast.dr import backup as backup_module
 from civiccast.dr import station_backup as station_backup_module
 from civiccast.dr.station_backup import BackupSchedule, StationBackupService, _restore_postgres
-from civiccast.dr.station_backup_router import station_backup_status
+from civiccast.dr.station_backup_router import (
+    ScheduledPassphraseRequest,
+    set_scheduled_passphrase,
+    station_backup_status,
+)
+
+
+def test_scheduled_passphrase_storage_failure_returns_operator_safe_error(tmp_path):
+    def denied(_passphrase):
+        raise PermissionError("Access denied: passphrase=private-test-value")
+
+    service = StationBackupService(
+        database_url="sqlite:///unused.sqlite3",
+        destination=tmp_path / "backups",
+        scheduled_passphrase_setter=denied,
+        scheduled_passphrase_available=lambda: False,
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(station_backup_service=service))
+    )
+    with pytest.raises(HTTPException) as failure:
+        set_scheduled_passphrase(
+            ScheduledPassphraseRequest(passphrase="test-recovery-passphrase"), request
+        )
+    assert failure.value.status_code == 503
+    assert failure.value.detail == (
+        "Could not save the scheduled backup passphrase. "
+        "Check the station credentials folder permissions and try again."
+    )
+    assert not service.has_scheduled_passphrase()
 
 
 def test_encrypted_backup_contains_database_config_credentials_and_media(tmp_path: Path) -> None:

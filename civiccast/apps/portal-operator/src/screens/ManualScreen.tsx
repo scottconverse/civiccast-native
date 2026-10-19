@@ -17,9 +17,9 @@ function TocList({ entries, activeId, onSelect }: {
   onSelect: () => void
 }) {
   return (
-    <ol className="m-0 grid gap-0.5 p-0 text-sm" style={{ listStyle: 'none' }}>
+    <ol className="m-0 grid min-w-0 grid-cols-1 gap-0.5 p-0 text-sm" style={{ listStyle: 'none' }}>
       {entries.map((entry) => (
-        <li key={entry.id} style={{ paddingLeft: `${Math.max(0, entry.level - 1) * 0.85}rem` }}>
+        <li key={entry.id} className="min-w-0" style={{ paddingLeft: `${Math.max(0, entry.level - 1) * 0.85}rem` }}>
           {/* A real react-router Link (not a raw <a> + preventDefault): its
               `to` resolves correctly whether the app is mounted under
               BrowserRouter or HashRouter (the packaged operator console
@@ -126,7 +126,7 @@ export function ManualScreen() {
   }, [manualQuery.isSuccess, location.hash, tocSelection])
 
   return (
-    <div className="grid gap-4 px-6 py-5">
+    <div className="grid min-w-0 grid-cols-1 gap-4 px-6 py-5">
       <header className="max-w-3xl">
         <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
           Help
@@ -151,10 +151,10 @@ export function ManualScreen() {
       )}
 
       {manualQuery.data && (
-        <div className="grid gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] lg:items-start">
+        <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] lg:items-start">
           <nav
             aria-label="Manual contents"
-            className="grid gap-2 rounded-md p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
+            className="grid min-w-0 grid-cols-1 gap-2 rounded-md p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
           >
             <label className="grid gap-1 text-xs" htmlFor="manual-filter">

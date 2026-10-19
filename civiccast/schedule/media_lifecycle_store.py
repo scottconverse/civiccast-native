@@ -20,6 +20,7 @@ from civiccast.schedule.media_lifecycle_models import (
     JOB_STATUS_PENDING,
     JOB_STATUS_RUNNING,
     READINESS_MISSING_FILE,
+    READINESS_PENDING_TRANSCODE,
     READINESS_READY,
     READINESS_REJECTED,
     READINESS_TRANSCODING,
@@ -84,13 +85,22 @@ def _in_flight_jobs(session: Session, asset_id: str) -> list[InFlightTranscodeJo
     ]
 
 
+def _live_readiness(state: str, reason: str | None, active_jobs: int) -> tuple[str, str | None]:
+    # The worker snapshot can predate dispatch/completion in the same pass.
+    # An empty current queue cannot truthfully be reported as queued/running.
+    if state in (READINESS_PENDING_TRANSCODE, READINESS_TRANSCODING) and not active_jobs:
+        return READINESS_READY, None
+    return state, reason
+
+
 def _to_readiness_response(
     row: AssetReadiness, jobs: list[InFlightTranscodeJob]
 ) -> AssetReadinessResponse:
+    state, reason = _live_readiness(row.readiness_state, row.readiness_reason, len(jobs))
     return AssetReadinessResponse(
         asset_id=row.asset_id,
-        readiness_state=row.readiness_state,  # type: ignore[arg-type]
-        readiness_reason=row.readiness_reason,
+        readiness_state=state,  # type: ignore[arg-type]
+        readiness_reason=reason,
         loudness_status=row.loudness_status,  # type: ignore[arg-type]
         measured_lufs=row.measured_lufs,
         in_flight_transcode_jobs=jobs,
@@ -168,6 +178,9 @@ class MediaLifecycleStore:
                     if row is not None
                     else "Readiness has not been computed yet; the lifecycle worker "
                     "runs on its normal poll interval."
+                )
+                state, reason = _live_readiness(
+                    state, reason, in_flight_counts.get(asset.asset_id, 0)
                 )
                 by_asset.append(
                     ReadinessDashboardRow(
@@ -372,6 +385,12 @@ class MediaLifecycleStore:
             )
 
     # -- Replace-source ----------------------------------------------------
+
+    def get_asset_source_path(self, asset_id: str) -> str | None:
+        """Read the primary source path before the router archives old files."""
+        with self._session_factory() as session:
+            asset = session.get(Asset, asset_id)
+            return asset.file_path if asset is not None else None
 
     def apply_replace_source(
         self,

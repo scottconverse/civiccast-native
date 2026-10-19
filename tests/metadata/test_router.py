@@ -198,6 +198,36 @@ def test_patch_label_is_editable() -> None:
     assert r.json()["key"] == "meeting_type"  # unchanged
 
 
+@pytest.mark.parametrize(
+    ("field_id", "key"),
+    [
+        ("fld_meeting_type", "meeting_type"),
+        ("fld_other", "meeting_type"),
+        ("fld_meeting_type", "other_key"),
+    ],
+)
+def test_duplicate_create_preserves_definition_and_values(field_id: str, key: str) -> None:
+    client = TestClient(_build()[0], raise_server_exceptions=False)
+    original = _seed_def(client, required=True, searchable=False, api_exposed=False, order=20)
+    values_url = "/api/staff/assets/council-2025-01/custom-fields"
+    put = client.put(
+        values_url, json={"values": [{"field_id": "fld_meeting_type", "value": "Regular"}]}
+    )
+    assert put.status_code == 200, put.text
+    original_values = client.get(values_url).json()
+
+    duplicate = client.post(
+        "/api/staff/custom-fields",
+        json=_def_payload(field_id=field_id, key=key, label="Duplicate", type="text", options=[]),
+    )
+
+    assert duplicate.status_code == 409, duplicate.text
+    assert "Use Edit" in duplicate.json()["detail"]
+    assert client.get("/api/staff/custom-fields/fld_meeting_type").json() == original
+    assert client.get("/api/staff/custom-fields").json() == [original]
+    assert client.get(values_url).json() == original_values
+
+
 def test_patch_key_is_immutable() -> None:
     client = _client(scopes=("setup_admin",))
     _seed_def(client)

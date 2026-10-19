@@ -34,9 +34,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import {
   ApiError,
-  affidavitExportUrl,
   createSpotFlight,
   createUnderwritingSpot,
+  downloadUnderwriterAffidavitExport,
   deleteSpotFlight,
   deleteUnderwritingSpot,
   getStaffIdentity,
@@ -1028,51 +1028,67 @@ function AffidavitDownloadLinks({
   state: AffidavitFilterState
   disabled: boolean
 }) {
-  // UX-4: `pointer-events: none` is a CSS-only mouse-block — `<a href>`
-  // remained tab-focusable + Enter-activatable. When disabled we now also
-  // remove the link from the tab order (`tabIndex={-1}`), advertise the state
-  // via `aria-disabled`, and short-circuit clicks/keypresses via the onClick
-  // preventDefault. This protects keyboard users from firing 422-bound URLs.
-  const linkStyle: CSSProperties = {
+  const [pendingFormat, setPendingFormat] = useState<'csv' | 'xml' | 'pdf' | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const buttonStyle: CSSProperties = {
     background: 'var(--cc-surface)',
     border: '1px solid var(--cc-line)',
     color: 'var(--cc-ink)',
-    opacity: disabled ? 0.4 : 1,
-    pointerEvents: disabled ? 'none' : undefined,
+    opacity: disabled || pendingFormat != null ? 0.4 : 1,
   }
   const formats: Array<'csv' | 'xml' | 'pdf'> = ['csv', 'xml', 'pdf']
+
+  async function onDownload(format: 'csv' | 'xml' | 'pdf') {
+    if (disabled || pendingFormat != null) return
+    setDownloadError(null)
+    setPendingFormat(format)
+    try {
+      const file = await downloadUnderwriterAffidavitExport({
+        underwriter: state.underwriter.trim(),
+        from: state.from,
+        to: state.to,
+        format,
+      })
+      const url = URL.createObjectURL(file.blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = file.filename
+      document.body.appendChild(link)
+      try {
+        link.click()
+      } finally {
+        link.remove()
+        URL.revokeObjectURL(url)
+      }
+    } catch (err) {
+      setDownloadError(apiMessage(err, 'Could not download the affidavit.'))
+    } finally {
+      setPendingFormat(null)
+    }
+  }
+
   return (
-    <div className="flex flex-wrap gap-2">
-      {formats.map((fmt) => {
-        const href = affidavitExportUrl({
-          underwriter: state.underwriter,
-          from: state.from,
-          to: state.to,
-          format: fmt,
-        })
-        return (
-          <a
+    <>
+      <div className="flex flex-wrap gap-2">
+        {formats.map((fmt) => (
+          <button
             key={fmt}
-            href={href}
-            download
-            aria-disabled={disabled || undefined}
+            type="button"
+            disabled={disabled || pendingFormat != null}
+            aria-busy={pendingFormat === fmt || undefined}
             aria-label={`Download affidavit ${fmt.toUpperCase()}`}
-            tabIndex={disabled ? -1 : undefined}
-            onClick={
-              disabled
-                ? (e) => {
-                    e.preventDefault()
-                  }
-                : undefined
-            }
+            onClick={() => void onDownload(fmt)}
             className="rounded-md px-3 py-1.5 text-xs font-medium"
-            style={linkStyle}
+            style={buttonStyle}
           >
-            Download {fmt.toUpperCase()}
-          </a>
-        )
-      })}
-    </div>
+            {pendingFormat === fmt
+              ? `Downloading ${fmt.toUpperCase()}…`
+              : `Download ${fmt.toUpperCase()}`}
+          </button>
+        ))}
+      </div>
+      {downloadError && <Banner tone="warn">{downloadError}</Banner>}
+    </>
   )
 }
 

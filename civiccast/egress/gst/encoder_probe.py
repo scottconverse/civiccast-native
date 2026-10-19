@@ -35,7 +35,12 @@ def gst_factory_klass(name: str) -> str | None:
     """Look up the real GStreamer factory's "klass" metadata string.
 
     Imports ``gi`` lazily so importing this module never requires GStreamer.
+    The control plane probes before the worker's engine can bootstrap its own
+    process, so initialize the same installed closure here as well.
     """
+    from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
+
+    bootstrap_installed_gstreamer_runtime()
     import gi  # type: ignore[import-not-found]
 
     gi.require_version("Gst", "1.0")

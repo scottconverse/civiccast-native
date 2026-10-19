@@ -283,7 +283,9 @@ def patch_schedule(
             status.HTTP_404_NOT_FOUND,
             detail=f"Recording schedule {schedule_id!r} not found.",
         )
-    updates = payload.model_dump(exclude_unset=True)
+    # Keep validated nested models: model_dump() turns recurrence into a dict
+    # whose datetime bypasses the store's model-to-JSON serialization path.
+    updates = {key: getattr(payload, key) for key in payload.model_fields_set}
     merged = current.model_copy(update=updates)
     try:
         result = resolved.upsert_schedule(merged)

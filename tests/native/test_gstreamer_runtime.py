@@ -35,6 +35,52 @@ def test_runtime_missing_consumer_is_red_before_gi_import(tmp_path: Path) -> Non
         installed_gstreamer_environment(root)
 
 
+def test_encoder_probe_loads_gi_from_the_installed_closure(tmp_path: Path) -> None:
+    """The control plane probes before the worker has bootstrapped its own GI."""
+    import subprocess
+
+    root = _root(tmp_path)
+    gi_root = root / "dependencies/gstreamer/python/gi"
+    (gi_root / "__init__.py").write_text(
+        "def require_version(namespace, version):\n"
+        "    assert (namespace, version) == ('Gst', '1.0')\n",
+        encoding="utf-8",
+    )
+    (gi_root / "repository.py").write_text(
+        "class Gst:\n"
+        "    @staticmethod\n"
+        "    def init(args): pass\n"
+        "    class ElementFactory:\n"
+        "        @staticmethod\n"
+        "        def find(name):\n"
+        "            return Gst.ElementFactory() if name == 'mfh264enc' else None\n"
+        "        def get_metadata(self, key):\n"
+        "            assert key == 'klass'\n"
+        "            return 'Codec/Encoder/Video/Hardware'\n",
+        encoding="utf-8",
+    )
+    env = dict(os.environ, CIVICCAST_GSTREAMER_RUNTIME_ROOT=str(root))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r});"
+            "from civiccast.egress.gst.encoder_probe import "
+            "probe_hardware_encoder, probe_element_registered;"
+            "assert probe_hardware_encoder('mfh264enc');"
+            "assert not probe_hardware_encoder('absent');"
+            "assert probe_element_registered('mfh264enc');"
+            "assert not probe_element_registered('absent')",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_runtime_preserves_inherited_path_without_mutating_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

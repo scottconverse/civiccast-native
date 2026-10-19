@@ -19,6 +19,41 @@ Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installat
   retry recoverable failures with bounded backoff.
 - Select available NVIDIA or Windows hardware for automatic H.264 output while
   preserving CPU-only operation and explicit encoder choices.
+- Initialize the bundled GStreamer bindings before checking available encoders,
+  so installed channels can start and produce their web previews.
+- Report unexpected channel startup failures as errors with their cause instead
+  of leaving a non-running channel labelled as showing a slate.
+- Send staff signing in without a return destination to a page their role can
+  use: caption review for records clerks, Assets for meeting operators, and
+  Schedule for publishing and admin roles.
+- Reject duplicate custom-field creation without overwriting saved definitions
+  or values, and direct operators to Edit.
+- Fit built-in Help contents and prose to narrow screens, while keeping wide
+  tables and code scrollable within their own blocks.
+- Save unattended backup passphrases under the installed Windows service
+  account without rewriting installer-owned folder permissions; show actionable
+  guidance if protected storage cannot be written.
+- Reload saved Control Room device timing and preserve existing profile options
+  when editing, instead of presenting zero timings.
+- Save recording schedule edits with their validated source and recurrence
+  settings, including dated one-shot schedules.
+- Identify the archived original recording in source-replacement audit records,
+  rather than an auxiliary thumbnail or preview.
+- Preserve the original recording when its replacement uses the same filename.
+- Save CG feed edits using the supported mutable fields; keep feed kind fixed
+  after registration instead of submitting an invalid update.
+- Clear stale queued/running asset-readiness labels when no active transcode
+  jobs remain, consistently with the lifecycle worker's readiness policy.
+- Remove expired emergency alerts from the active list even when automatic
+  feed polling is disabled, while retaining them in history.
+- Authenticate underwriting affidavit downloads and preserve their CSV, XML,
+  or PDF filename instead of downloading an authorization error.
+- Build optional viewer-app downloads in writable per-job storage and include
+  the shared runtime files referenced by each selected app's entry point.
+- Explain the allowed listener-port range when network settings reject an
+  invalid port, instead of displaying the server's validation JSON.
+- Clarify asset archive verification status and direct operators to Publish
+  for the destinations required for each recording.
 - Require webhook endpoint ownership confirmation, random signing credentials
   and public HTTPS destinations; protect delivery against redirects and DNS
   rebinding. Older identifier-derived subscriptions require registration again.

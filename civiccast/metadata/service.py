@@ -167,8 +167,8 @@ class CustomFieldService:
     # --- field definitions ----------------------------------------------
 
     def create_field(self, definition: CustomFieldDef) -> CustomFieldDef:
-        """Create a new field def (or update an existing one with the same ``field_id``)."""
-        return self._store.upsert_def(definition)
+        """Create a new field def without replacing an existing ID or key."""
+        return self._store.upsert_def(definition, create_only=True)
 
     def update_field(self, definition: CustomFieldDef) -> CustomFieldDef:
         """Update a field def. The store rejects a change to the immutable ``key``."""
