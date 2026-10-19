@@ -39,6 +39,9 @@
 # doc-identified artifact and stays bound as-is.
 # Beta12 workflow floor-only renewal for all six workflow roles:
 # docs/evidence/beta12-emergency-current-source-review.md (no producer/control changes).
+# 2026-10-19 review renews current-source tripwires only; historical
+# acceptance dates and installed/pre-login status remain unchanged.
+# See docs/evidence/beta20-current-source-review-2026-10-19.md.
 schema_version: 1
 
 governed_doc_set:
@@ -153,10 +156,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 4213539d195fba4c6d60e86a6d3ff2ab8a560bc6
+        blob: 10935dccd809da822bb8f4eb111c3447757138a1
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
+        blob: da4dc26b05beda17b53897816370ffd2b4705db2
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -233,10 +236,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 4213539d195fba4c6d60e86a6d3ff2ab8a560bc6
+        blob: 10935dccd809da822bb8f4eb111c3447757138a1
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
+        blob: da4dc26b05beda17b53897816370ffd2b4705db2
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -290,10 +293,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 4213539d195fba4c6d60e86a6d3ff2ab8a560bc6
+        blob: 10935dccd809da822bb8f4eb111c3447757138a1
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
+        blob: da4dc26b05beda17b53897816370ffd2b4705db2
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -355,10 +358,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 4213539d195fba4c6d60e86a6d3ff2ab8a560bc6
+        blob: 10935dccd809da822bb8f4eb111c3447757138a1
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
+        blob: da4dc26b05beda17b53897816370ffd2b4705db2
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -1091,7 +1094,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: ba27385ef7bd1861f640d94b5074f53913236864
+          blob: c7e9039dcf385fd9cfb57122c15b4932a01905a9
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1118,10 +1121,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 4213539d195fba4c6d60e86a6d3ff2ab8a560bc6
+        blob: 10935dccd809da822bb8f4eb111c3447757138a1
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
+        blob: da4dc26b05beda17b53897816370ffd2b4705db2
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -2019,7 +2022,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: ba27385ef7bd1861f640d94b5074f53913236864
+          blob: c7e9039dcf385fd9cfb57122c15b4932a01905a9
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2046,10 +2049,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 4213539d195fba4c6d60e86a6d3ff2ab8a560bc6
+        blob: 10935dccd809da822bb8f4eb111c3447757138a1
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
+        blob: da4dc26b05beda17b53897816370ffd2b4705db2
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
