@@ -7497,6 +7497,11 @@ class GstPlayoutEngine:
         # retiring leg cannot perturb the selector because nothing of it ever
         # reaches the selector.
         self._detach_leg_from_selectors(pending)
+        # GstBin children can lose their parent link during asynchronous NULL
+        # teardown before the main-loop bus callback handles an already-posted
+        # ERROR. Snapshot those objects while the leg is intact so error
+        # attribution does not depend on a parent chain that teardown can sever.
+        attribution_elements = self._snapshot_leg_attribution_elements(pending["new_elements"])
         self._release_hold_probes(pending)
         if pending["timeout_id"] is not None and reason != "timeout":
             # 'timeout' means the watchdog source is firing now (auto-removed on return).
@@ -7521,6 +7526,7 @@ class GstPlayoutEngine:
             pending["new_video_pad"],
             pending["new_audio_pad"],
             pending["new_elements"],
+            attribution_elements=attribution_elements,
         )
         # Item 4 (honest ack): tell the caller this reload did NOT land, and why --
         # ``reason`` is one of "error"/"timeout"/"superseded"/"build-error"/
@@ -7555,6 +7561,8 @@ class GstPlayoutEngine:
         video_pad: Gst.Pad,
         audio_pad: Gst.Pad | None,
         elements: list[Gst.Element],
+        *,
+        attribution_elements: list[Gst.Element] | None = None,
     ) -> None:
         """Retire an aborted leg on a worker thread; see ``_abort_pending_reload``."""
         # Item 3: reap a previous aborted leg only once it is provably gone -- its
@@ -7568,7 +7576,13 @@ class GstPlayoutEngine:
             for record in self._abort_retire_legs
             if record["thread"].is_alive() or not record["retired"]
         ]
-        record: dict[str, Any] = {"thread": None, "elements": list(elements), "retired": False}
+        record: dict[str, Any] = {
+            "thread": None,
+            "elements": list(
+                attribution_elements if attribution_elements is not None else elements
+            ),
+            "retired": False,
+        }
 
         def _retire() -> None:
             try:
@@ -8375,8 +8389,9 @@ class GstPlayoutEngine:
         abort's holds are lifted it is DROP-fenced at its own src pads
         (``_detach_leg_from_selectors``), so nothing it emits can reach the
         selector, the mux, or the on-air output -- its errors are bookkeeping, not
-        airtime. Attributing by parent walk, exactly like the two predicates above,
-        so a decodebin-internal decoder is attributed to the leg that owns it.
+        airtime. Attributing first by retained element identity covers children
+        detached during teardown; the parent walk also covers descendants that
+        remain nested under a recorded element.
         """
         if src is None:
             return False
@@ -8388,6 +8403,48 @@ class GstPlayoutEngine:
                     return True
                 node = node.get_parent() if hasattr(node, "get_parent") else None
         return False
+
+    @staticmethod
+    def _snapshot_leg_attribution_elements(elements: list[Gst.Element]) -> list[Gst.Element]:
+        """Retain nested bin children so queued bus errors survive teardown detachment.
+
+        GStreamer may deliver an ERROR after a child has been removed from its
+        decodebin, at which point walking ``get_parent()`` no longer reaches the
+        top-level leg element. Snapshot child identities before releasing an
+        aborted leg's holds. Enumeration is best-effort because this runs on the
+        abort safety path; top-level attribution remains available if a bin's
+        iterator cannot be completed.
+        """
+        snapshot = list(elements)
+        identities = {id(element) for element in snapshot}
+        resync_result = getattr(Gst.IteratorResult, "RESYNC", None)
+        for element in elements:
+            iterate_recurse = getattr(element, "iterate_recurse", None)
+            if not callable(iterate_recurse):
+                continue
+            try:
+                iterator = iterate_recurse()
+                resyncs = 0
+                while True:
+                    result, child = iterator.next()
+                    if result == Gst.IteratorResult.OK:
+                        if child is not None and id(child) not in identities:
+                            identities.add(id(child))
+                            snapshot.append(child)
+                        continue
+                    if resync_result is not None and result == resync_result and resyncs < 3:
+                        resyncs += 1
+                        iterator.resync()
+                        continue
+                    break
+            except Exception as exc:
+                print(
+                    "WARN: could not snapshot nested elements for aborted reload "
+                    f"error attribution: {exc!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        return snapshot
 
     def _element_count(self) -> int:
         """Count elements currently in the pipeline (for the reload-leak guard)."""
