@@ -3529,6 +3529,9 @@ class EgressDaemon:
                 source_label=segment.label,
                 actual_start=proof_event.observed_at,
                 proof_event_id=proof_event.event_id,
+                schedule_item_id=(
+                    segment.schedule_occurrence_id if source_kind == "program" else None
+                ),
             )
         except AsRunCaptureSchemaError:
             # Schema drift on the engine→ledger seam (E-1). Loud, not silent:

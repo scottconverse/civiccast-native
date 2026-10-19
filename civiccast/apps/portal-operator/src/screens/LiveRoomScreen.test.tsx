@@ -108,10 +108,31 @@ describe('LiveRoomScreen preview', () => {
   it('does not present simulated video or audio as real source telemetry', () => {
     render(<PreviewPanel source={source()} />)
 
-    expect(screen.getByText('Source preview unavailable')).not.toBeNull()
-    expect(screen.getByText(/CivicCast has not verified incoming video or audio/i)).not.toBeNull()
+    expect(screen.getByText('Channel preview unavailable')).not.toBeNull()
+    expect(screen.getByText(/Enable this channel's HLS web output/i)).not.toBeNull()
     expect(screen.queryByText('-18 dBFS')).toBeNull()
     expect(screen.queryByLabelText('Source dropped')).toBeNull()
+  })
+
+  it('plays the selected channel output and retains the actual source readiness', () => {
+    const channel: ChannelProfile = {
+      channel_id: 'government', slug: 'government', kind: 'government',
+      branding: { display_name: 'Government', short_name: 'Gov', color: '#123456', logo_text: 'Gov' },
+      fallback_behavior: 'slate',
+      outputs: [{ kind: 'hls', label: 'Web', target: '/media/live/government/playlist.m3u8',
+        proof_boundary: 'actual', next_step: 'Watch', enabled: true }],
+    }
+    const { rerender } = render(<PreviewPanel channel={channel} source={source({
+      readiness: 'ready', next_action: 'Source check passed.',
+    })} />)
+    const frame = screen.getByTitle('On-air preview for government') as HTMLIFrameElement
+    expect(frame.getAttribute('src')).toBe('/?manifest=%2Fmedia%2Flive%2Fgovernment%2Fplaylist.m3u8')
+    expect(screen.getByText('Source check passed.')).not.toBeNull()
+    expect(screen.queryByText(/has not verified incoming/)).toBeNull()
+    rerender(<PreviewPanel source={source()} channel={{ ...channel, outputs: channel.outputs?.map(
+      (output) => ({ ...output, enabled: false }),
+    ) }} />)
+    expect(screen.queryByTitle('On-air preview for government')).toBeNull()
   })
 })
 

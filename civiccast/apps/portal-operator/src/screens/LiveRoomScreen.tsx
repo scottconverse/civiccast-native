@@ -52,6 +52,7 @@ import {
 } from '../types/live'
 import type {
   LiveFinalizationStatusResponse,
+  ChannelProfile,
   SourceSetupReport,
   SystemHealthReport,
 } from '../types/api.generated'
@@ -900,20 +901,32 @@ function SourceSetupGuidance({
 
 export function PreviewPanel({
   source,
+  channel,
 }: {
   source: LiveSourceResponse | undefined
+  channel?: ChannelProfile
 }) {
+  const output = channel?.outputs?.find((item) => item.kind === 'hls' && item.enabled !== false)
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="m-0 text-sm font-semibold">On-air preview</h2>
           <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            CivicCast only shows source media here after server-side verification.
+            This is the channel's outgoing broadcast. Before a live takeover it shows scheduled output.
           </p>
         </div>
       </div>
-      <div
+      {output ? (
+        <iframe
+          key={`${channel?.channel_id}-${output.target}`}
+          title={`On-air preview for ${channel?.channel_id}`}
+          src={`/?manifest=${encodeURIComponent(output.target)}`}
+          className="h-96 w-full rounded-md border-0"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      ) : <div
         className="grid min-h-56 place-items-center rounded-md p-4"
         style={{
           background: 'var(--cc-warn-soft)',
@@ -922,19 +935,18 @@ export function PreviewPanel({
         }}
       >
         <div className="max-w-md text-center">
-          <div className="text-lg font-semibold">Source preview unavailable</div>
+          <div className="text-lg font-semibold">Channel preview unavailable</div>
           <div className="mt-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            CivicCast has not verified incoming video or audio from{' '}
-            <strong>{source?.name ?? 'the selected source'}</strong>. No simulated
-            preview or audio meter is shown.
+            Enable this channel's HLS web output on Channels to view the outgoing broadcast.
           </div>
           <div className="mt-3 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-            <strong>Next step.</strong> Connect a real encoder or meeting source and
-            run pre-flight. Start Live Stream remains blocked until a server-side
-            media probe passes.
+            <a href="/operator/#/channels">Open Channels</a>
           </div>
         </div>
-      </div>
+      </div>}
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+        {source?.next_action ?? 'Choose and check a source before taking it live.'}
+      </p>
     </section>
   )
 }
@@ -1291,7 +1303,10 @@ export function LiveRoomScreen() {
       ) : (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="flex flex-col gap-5">
-            <PreviewPanel source={selectedSource} />
+            <PreviewPanel
+              source={selectedSource}
+              channel={channelsQuery.data?.find((channel) => channel.channel_id === channelId)}
+            />
             <SourceSwitcher
               sources={sources}
               selectedId={selectedSource?.live_source_id ?? ''}

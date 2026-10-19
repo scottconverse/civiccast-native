@@ -3200,6 +3200,7 @@ def build_channel_automation(
     from civiccast.reporting.store import ReportingStore
     from civiccast.schedule.models import SCHEDULE_STATE_PUBLISHED
     from civiccast.schedule.store import PostgresAssetStore, PostgresScheduleStore
+    from civiccast.underwriting.store import UnderwritingStore
 
     resolved_work_dir = (work_dir or default_egress_work_dir()).expanduser()
     resolved_work_dir.mkdir(parents=True, exist_ok=True)
@@ -3354,7 +3355,11 @@ def build_channel_automation(
         # guarded). Distinct from the trimmed proof-event ring buffer. BUG C2
         # fix: routed through the shared as_run_outbox (journal-first, never
         # a bare direct store write) instead of a fresh unwired recorder.
-        as_run_recorder=StoreAsRunRecorder(ReportingStore(session_factory), outbox=as_run_outbox),
+        as_run_recorder=StoreAsRunRecorder(
+            ReportingStore(session_factory),
+            outbox=as_run_outbox,
+            underwriting_store=UnderwritingStore(session_factory),
+        ),
         channel_start_hook=channel_start_hook,
     )
     # Item 5 fix: only the daemon knows which per-plan directories are

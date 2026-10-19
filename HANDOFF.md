@@ -1,4 +1,29 @@
-# Current checkpoint: October 19, 2026 - installed CG ticker rendering correction
+# Current checkpoint: October 19, 2026 - resumed acceptance source corrections
+
+Scott explicitly resumed the finite nine-outcome assignment. Both isolated VMs
+were observed Off; production service Running. No production upgrade or verified
+recovery backup exists. The b693 signed build and test runs were canceled, not
+successful. The optional-security follow-up9efe remains part of this task branch.
+
+Before another build, correct the known unconditional Live Room preview and lost
+schedule identity in actual as-run capture. The preview now uses the channel's
+enabled HLS output; source readiness remains separate. Reporting records exact
+schedule occurrences and recognizes a spot only when a compiled placement's
+channel and creative match. The compiler still requires existing schedule slots
+and operator invocation; no automatic insertion or editorial attestation is
+claimed. One successor will consolidate these shipped changes with the existing
+CG correction. Installed acceptance of that successor remains outstanding.
+
+Focused Python capture/affidavit31tests and Live Room28tests passed; operator
+TypeScript/lint and affected strict mypy passed. No independent agent review was
+launched. The older mutation-report failed on its logging-storm timing baseline;
+that workflow is permanently informational. Preserve the failure at its scope.
+
+Continue through the single CIVICCAST-CURRENT-WORK.md list in the existing
+October18 task workspace. Preserve unrelated local process instruction edits.
+No merge, tag, publication, host reboot, or cutover before acceptance and recovery.
+
+# Historical checkpoint: October 19, 2026 - installed CG ticker rendering correction
 
 The ticker fix is frozen at b693b1dd64bb7904e330de9fa5149b518e05e7ab;
 signed preparation39328065425 is running. Its security scan39328059039 found

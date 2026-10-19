@@ -1244,7 +1244,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 > **Tip:** a source's **Delivering** answer expires after 30 seconds by default (your IT person can change this to anything from 5 to 300 seconds). Run **Check source** again immediately before you do anything that depends on it, especially **Take live** on the Channels screen.
 
-> **Known issue (beta.12; first recorded in beta.11):** The **On-air preview** still never shows source video or an audio meter. The panel always renders its unavailable message, even after a source check; this is not the result of that check. Use **Check source** and **Run pre-flight** for source status, and watch your own monitor or the channel output for the picture.
+The **On-air preview** plays this channel's outgoing HLS broadcast. Before a live takeover it shows scheduled output; it is not a separate preview of the selected incoming source. Enable the channel's web output on **Channels** if the preview is unavailable. Use **Check source** and **Run pre-flight** for incoming-source status. A passed source check alone does not mean the source is on air.
 
 Live Room pre-flight checks the selected source's configured network address, including the sample source. A sample file cannot substitute for an unreachable live input. The installer's separate private rehearsal uses the bundled local sample. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
 
@@ -1675,7 +1675,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | What you see | What it means and what to do |
 | --- | --- |
 | "Live-room controls require the meeting operator role. Source status and readiness checks remain visible." | Your sign-in lacks the Meeting operator role. Ask your Setup admin. |
-| "Source preview unavailable - CivicCast has not verified incoming video or audio from &lt;source&gt;." | The Live preview panel remains unavailable in Beta.12 and does not show whether the latest source check passed. Run **Check source** and **Run pre-flight** for current source status; use your own monitor or channel output for video. |
+| "Channel preview unavailable" | Enable the channel's HLS web output on **Channels**. Incoming-source readiness is shown separately; use **Check source** and **Run pre-flight** before taking air. |
 | A red box titled "Live action failed." | Ask the station administrator to check the CivicCast service and database. Keep this screen open during an active session; refreshing can lose the in-page session. |
 | "Go on air blocked: a fresh source-bound server-side pre-flight did not pass." | A required checklist row failed when you clicked. Fix it, run **Run pre-flight**, try again. |
 | "LiveSession already exists: council-live-room" | A live session has already been created on this station. See the Known issue in "Run a live session". Ask IT. |
@@ -2511,24 +2511,18 @@ Underwriting means paid "sponsor acknowledgment" messages, such as "Support for 
 - A **placement** is a specific schedule slot a spot was assigned to.
 - An **affidavit** is a sponsor-ready list of every time their spot aired, used for billing.
 
-> **Known issue (beta.11):** **In beta.11 Underwriting is a planning list, not a working sponsor system.** You can record spots and flights, but nothing puts a spot on the air, and the affidavit stays empty. In the code we read:
->
-> - The only thing that creates placements is a manual request sent to the station's programming interface. No button on this screen sends it, and nothing in the station sends it by itself.
-> - Nothing that plays video reads placements.
-> - The playout engine never records an airing of kind `spot`, yet the affidavit counts only airings of that kind.
->
-> The words on screen, "airing reports build from it" and "placements appear here automatically", are therefore wrong for beta.11. We have not run this on a live station. Do not tell a sponsor that CivicCast will insert their message or produce billing proof.
+**Scheduling boundary:** Creating a flight does not insert video into the schedule automatically. IT staff must run the trafficking compiler against existing schedule slots through the station's programming interface. The scheduled asset must match the creative chosen for that placement. Commit that schedule through the ordinary approval controls. Once that exact slot, channel and asset actually air, CivicCast records a spot airing for the affidavit. Playing the same sponsor asset as an ordinary program does not count as a trafficked spot. A planned placement alone is not proof of airing.
 
 #### What does work
 
-| You can | Result in beta.11 |
+| You can | Result |
 | --- | --- |
 | Create, edit and delete spots | Saved |
 | Create, edit and delete flights | Saved |
 | Tick the compliance attestation | Saved as a record that a person reviewed the spot |
 | Read **Placements** | Empty unless IT staff trigger the compile request |
-| Read **Affidavits** | Empty |
-| Click **Download CSV**, **Download XML**, **Download PDF** | Shows an error instead of a file (below) |
+| Read **Affidavits** | Actual airings matching compiled placements; empty until a matching spot airs |
+| Click **Download CSV**, **Download XML**, **Download PDF** | Downloads the selected affidavit using your staff session |
 
 #### Add a spot
 
@@ -2564,9 +2558,9 @@ To delete a spot or flight, click **Delete**, then **Confirm delete**. Deleting 
 
 On **Placements**, set **From** and **Through** (UTC; **From** is included and **Through** is not), and optionally a channel and flight. On **Affidavits**, type the sponsor's name and a date range. The affidavit includes *both* the first and last day, in UTC.
 
-An empty affidavit shows "No airings recorded for {name} between {from} and {to}." with three possible reasons: the name does not match exactly, there are no flights in the period, or nothing has aired yet. In beta.11 add a fourth: nothing records airings of spots.
+An empty affidavit shows "No airings recorded for {name} between {from} and {to}." Check the exact sponsor name, UTC period, compiled placement, and whether its matching asset actually aired on the selected channel.
 
-> **Known issue (beta.11):** The **Download CSV**, **Download XML** and **Download PDF** links on the affidavit are plain web links. Staff requests need a sign-in that a plain link cannot carry. The expected result is the message `Missing Authorization header. Use Bearer <staff-token>.` instead of a file. We read this in the code and did not click the links in a running station. Until fixed, read the totals on screen, and ask IT staff for the file.
+Use **Download CSV**, **Download XML** or **Download PDF** to save the current affidavit through your authenticated staff session.
 
 > **Known issue (beta.11):** If your IT person switches on the setting `CIVICCAST_REQUIRE_FCC_ACK=1`, saving a spot without the tick fails with "Station policy requires fcc_compliant_ack=true". Without that setting an un-attested spot saves, despite the "NOT attested" wording.
 
@@ -2625,7 +2619,7 @@ A *tier* is a price level, for example "Basic monthly", linked to a price you ma
 | `Durable storage is not ready yet.` | Reports, EPG, Underwriting, Alerts | The station's database is not ready. Tell your IT person |
 | `Push failed: {error}...` | EPG Export | The guide service did not take the file. Check the address, then try again. Nothing changed on your station |
 | `Could not run the export.` | EPG Export | The export could not run. Check the channel id and try again |
-| `Missing Authorization header. Use Bearer <staff-token>.` | Underwriting, affidavit download | Known issue above. Read the totals on screen and ask IT staff for the file |
+| `Missing Authorization header. Use Bearer <staff-token>.` | Staff programming-interface request | Sign in with the required staff role; use the screen's download controls for affidavit files |
 | `Station policy requires fcc_compliant_ack=true ...` | Underwriting, saving a spot | Tick the attestation box after reviewing the spot |
 | `Underwriting spot '...' already exists. Use PATCH to update.` | Underwriting | That Spot ID is taken. Use a different id, or click **Edit** on the existing spot |
 | `App build tooling is not configured in this runtime...` | App Admin | This computer does not have the app build tools. Meeting recording and scheduled recording are not affected. Ask IT |

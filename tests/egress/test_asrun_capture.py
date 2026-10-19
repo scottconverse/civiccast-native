@@ -142,6 +142,7 @@ def _program_plan(tmp_path: Path) -> EgressSourcePlan:
                 duration_seconds=1,
                 kind="program",
                 source_ref="asset-council",
+                schedule_occurrence_id="scheduled-council",
             )
         ],
     )
@@ -238,6 +239,7 @@ def test_start_records_as_run_with_actual_times_and_verified(tmp_path: Path) -> 
     assert t.channel_id == "gov"
     assert t.source_kind == "program"
     assert t.asset_id == "asset-council"
+    assert t.schedule_item_id == "scheduled-council"
     assert t.source_label == "Council meeting"
     # actual_start is the engine proof-event observed_at — an ACTUAL air time,
     # not a scheduled intent — and falls within the start window.

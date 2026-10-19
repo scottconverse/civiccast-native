@@ -50,9 +50,8 @@ from civiccast.db import Base
 # A stable id/slug: lowercase machine token (matches the metadata-module slug).
 Slug = Annotated[str, Field(min_length=1, max_length=120, pattern=r"^[a-z0-9][a-z0-9_-]*$")]
 
-# The kinds of source an as-run entry can record (spec §3). ``spot`` is reserved
-# for S24 underwriting and has no engine producer yet, but is accepted so the
-# table + enum need no change when S24 lands.
+# The kinds of source an as-run entry can record (spec §3). Scheduled programs
+# matching an exact underwriting placement are recorded as ``spot``.
 SourceKind = Literal["program", "filler", "live", "slate", "spot"]
 SOURCE_KINDS: tuple[str, ...] = ("program", "filler", "live", "slate", "spot")
 

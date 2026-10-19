@@ -4,6 +4,13 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Show the selected channel's real outgoing HLS broadcast in Live Room, with
+  incoming-source readiness reported separately. Before takeover the preview
+  shows scheduled output.
+- Preserve schedule occurrence identity in actual as-run capture. Classify an
+  airing as an underwriting spot only when its occurrence, channel and creative
+  match a compiled placement, allowing populated affidavits from actual output.
+
 - Update the optional browser crawler's aiohttp lock to 3.14.4, with its required
   yarl 1.25.1 dependency, for security advisories published October 19. These
   dependencies are absent from the native application requirements lock.
