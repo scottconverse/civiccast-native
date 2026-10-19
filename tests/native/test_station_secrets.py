@@ -8,7 +8,10 @@ import pytest
 from civiccast.native.service_identity import SERVICE_SID
 from civiccast.native.station_secrets import StationSecretVault
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI vault")
+pytestmark = [
+    pytest.mark.windows_only,
+    pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI vault"),
+]
 
 
 def test_existing_credentials_directory_does_not_require_acl_ownership(tmp_path, monkeypatch):

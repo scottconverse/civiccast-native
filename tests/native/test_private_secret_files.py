@@ -58,6 +58,7 @@ def _service_acl_mask(path: Path) -> int:
 
 
 @_WINDOWS_ONLY
+@pytest.mark.windows_only
 def test_new_alert_credentials_strip_inherited_users_read(tmp_path: Path) -> None:
     _grant_inherited_users_read(tmp_path)
     path = tmp_path / "alert-credentials.json"
@@ -75,6 +76,7 @@ def test_new_alert_credentials_strip_inherited_users_read(tmp_path: Path) -> Non
 
 
 @_WINDOWS_ONLY
+@pytest.mark.windows_only
 def test_subscription_secret_read_migrates_acl_without_rotating_keys(
     tmp_path: Path,
 ) -> None:
