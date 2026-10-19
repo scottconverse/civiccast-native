@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Deployment secret loading and rotation helpers for subscriptions."""
+"""Deployment secret loading and rotation helpers for subscriptions.
+
+The durable local secret file is protected before bytes are written. Existing
+files with broad access are atomically replaced with the same bytes; an ACL or
+replacement failure is surfaced without generating replacement keys.
+"""
 
 from __future__ import annotations
 
@@ -10,13 +15,17 @@ import json
 import os
 import secrets as secrets_lib
 from collections.abc import Mapping
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from civiccast.native.private_files import (
+    private_file_lock,
+    read_private_bytes,
+    write_private_bytes_atomic,
+)
 from civiccast.subscribe.crypto import DeterministicSecretBox, SecretBox, verify_token
 
 _MIN_SECRET_LENGTH = 32
@@ -80,7 +89,7 @@ class SubscriptionSecrets:
 def load_subscription_secrets(
     source: Mapping[str, str] | None = None,
 ) -> SubscriptionSecrets:
-    """Load configured subscription secrets or create a durable local secret file."""
+    """Load configured secrets or create/migrate the durable local secret file."""
 
     env = source or os.environ
     if env.get("CIVICCAST_ALLOW_DETERMINISTIC_SUBSCRIBE_SECRETS") == "1":
@@ -108,34 +117,35 @@ def load_subscription_secrets(
         )
 
     secret_path = _secret_file_path(env)
-    if secret_path.exists():
-        payload = json.loads(secret_path.read_text(encoding="utf-8"))
+    with private_file_lock(secret_path):
+        if secret_path.exists():
+            payload = json.loads(read_private_bytes(secret_path).decode("utf-8"))
+            return _build_secrets(
+                token_secret=str(payload.get("token_secret", "")),
+                encryption_key=str(payload.get("encryption_key", "")),
+                source=str(secret_path),
+                env=env,
+                legacy_token_secrets=tuple(str(v) for v in payload.get("legacy_token_secrets", [])),
+                legacy_encryption_keys=tuple(
+                    str(v) for v in payload.get("legacy_encryption_keys", [])
+                ),
+            )
+
+        payload = {
+            "format_version": _SECRET_FILE_VERSION,
+            "token_secret": secrets_lib.token_urlsafe(48),
+            "encryption_key": secrets_lib.token_urlsafe(48),
+            "legacy_token_secrets": [],
+            "legacy_encryption_keys": [],
+        }
+        serialized = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        write_private_bytes_atomic(secret_path, serialized)
         return _build_secrets(
-            token_secret=str(payload.get("token_secret", "")),
-            encryption_key=str(payload.get("encryption_key", "")),
+            token_secret=payload["token_secret"],
+            encryption_key=payload["encryption_key"],
             source=str(secret_path),
             env=env,
-            legacy_token_secrets=tuple(str(v) for v in payload.get("legacy_token_secrets", [])),
-            legacy_encryption_keys=tuple(str(v) for v in payload.get("legacy_encryption_keys", [])),
         )
-
-    payload = {
-        "format_version": _SECRET_FILE_VERSION,
-        "token_secret": secrets_lib.token_urlsafe(48),
-        "encryption_key": secrets_lib.token_urlsafe(48),
-        "legacy_token_secrets": [],
-        "legacy_encryption_keys": [],
-    }
-    secret_path.parent.mkdir(parents=True, exist_ok=True)
-    secret_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    with suppress(OSError):
-        secret_path.chmod(0o600)
-    return _build_secrets(
-        token_secret=payload["token_secret"],
-        encryption_key=payload["encryption_key"],
-        source=str(secret_path),
-        env=env,
-    )
 
 
 def verify_subscription_token(token: str, secrets: SubscriptionSecrets) -> dict[str, object]:

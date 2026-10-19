@@ -1,13 +1,20 @@
 # Current work: Beta 20 installed verification active (October 18, 2026)
 
-Current branch: `fix/beta19-ci-and-install-docs`; checkpoint HEAD
-`7d6f32d8660860edaa2678119b1c0ab3099db918`, with preserved uncommitted fixes.
+Current branch: `fix/beta19-ci-and-install-docs`. The preserved walkthrough
+corrections were consolidated, followed by the reload correction at
+`267b463501f6188aef7296d064503c87aaccde8d`. Its Windows CI job
+`117905315945` passed, including real native media and installer cases.
 The initial Beta 20 signed candidate `823ba47779174551d4dd249abf1f3241193a8e4f`
 was built by workflow `39082353577` and installed successfully in the isolated
 Hyper-V guest. Its actual three-channel output failed at encoder bootstrap.
-Corrections remain unbuilt; a replacement signed kit and installed regression
-checks are required. Do not restart completed installation or walkthrough work
-based on the historical checkpoint below.
+Signed preparation runs `39203072265` and `39204756180` were cancelled after
+further shipped-code defects were confirmed; neither is the final candidate.
+The latest correction protects alert credentials and subscription masterkeys
+before writing plaintext and migrates existing files without rotating keys.
+A restricted-token synthetic read proved the prior Windows ACL exposure.
+A new signed kit and corrected-installation regression checks remain required.
+Do not restart completed installation or walkthrough work based on the
+historical checkpoint below.
 
 Read current progress and decisions in
 `C:\Users\scott\Documents\Codex\2026-10-18\re\outputs\CIVICCAST-CURRENT-WORK.md`.
@@ -16,8 +23,15 @@ Prior detailed installed evidence remains under
 The owner resumed all nine outcomes: consolidate/build, installed fixes and
 walkthrough, bounded three-channel and changed-feature operation, isolated
 uninstall/reinstall, verified host backup, then host upgrade and final report.
-The host remains Beta 19; no host cutover has occurred. No publication, new soak,
+The host remains Beta 19; no host cutover has occurred. No release publication, new soak,
 or host reboot. TownLight stays deferred to 2.0.
+
+The old installed guest passed actual webhook ownership confirmation, signed
+delivery and automatic retry after a deliberate HTTP 503. This remains old-
+candidate evidence and needs a corrected-installation confirmation. Host
+inventory and complete recovery-backup preparation exist; the backup has not
+run. Isolated three-channel output, final lifecycle verification and host
+upgrade are not accepted yet.
 
 ## Historical October 17 source checkpoint (superseded by the above)
 

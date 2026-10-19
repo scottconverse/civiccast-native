@@ -50,6 +50,9 @@ Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installat
   feed polling is disabled, while retaining them in history.
 - Authenticate underwriting affidavit downloads and preserve their CSV, XML,
   or PDF filename instead of downloading an authorization error.
+- Protect alert credentials and subscription secrets with private file ACLs
+  before writing plaintext; atomically migrate existing files with their
+  original bytes and fail closed when protection or replacement fails.
 - Build optional viewer-app downloads in writable per-job storage and include
   the shared runtime files referenced by each selected app's entry point.
 - Explain the allowed listener-port range when network settings reject an

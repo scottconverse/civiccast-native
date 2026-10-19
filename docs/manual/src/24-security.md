@@ -205,6 +205,7 @@ Do not publish `/api/public/contribute*` while the upload limitations below appl
 
 - A subscriber's e-mail address is stored encrypted with AES-GCM. Confirmation and unsubscribe links carry signed tokens.
 - The encryption key and the token secret come from the pair `CIVICCAST_SUBSCRIBE_TOKEN_SECRET` and `CIVICCAST_SUBSCRIBE_ENCRYPTION_KEY` (set both or neither). If you set neither, the station creates a durable file `subscribe-secrets.json` (in `CIVICCAST_CONFIG_DIR` or `.civiccast` under the service account's home).
+- Alert destination URLs and signing credentials are stored separately in `alert-credentials.json`. On Windows, both local secret files are created with a restricted file ACL before any secret bytes are written. When older files have broader access, CivicCast replaces them atomically with the same bytes; if it cannot secure the replacement, the operation fails and leaves the original file in place.
 - The e-mail confirmation token is not shown in the API reply.
 
 > **Warning:** Back up that key. A database restored without it keeps encrypted addresses that nobody can read ([Chapter 12](#ch-operations)).
