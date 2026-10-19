@@ -10,6 +10,10 @@ Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installat
   Grant permissions to loaded runtime files using ACL-only access so registration
   does not fail with a sharing violation on its own interpreter or libraries.
 
+- Run service registration outside the install folder while its permission walk
+  is active, then restore the installer's output directory. Keep the registration
+  tool's captured output in the installation progress log for failure diagnosis.
+
 - Correct conflicting manual guidance for recorded captions, RTMP, account
   recovery, channel operation, backups, network access and staff permissions.
   Refresh reference inventories and align the rendered manual and Help with

@@ -1,3 +1,33 @@
+# Current checkpoint: October 19, 2026 — installer working-directory correction
+
+Branch `fix/beta19-ci-and-install-docs`, draft PR 259. Signed source
+`8717c2a2c476e1fd563f1a865a1a1837b4abcb01` built successfully in run
+39241295587. Test-only follow-up `191ee02c47ced570c58f5412d013714bdb0d1a56`
+passed CI39243436914. The assembled kit passed signature/hash/index/manual
+verification. Its isolated installation nevertheless failed registration70/setup118.
+Automatic recovery returned0 at October19 06:57:57 MDT, restoring the guest
+healthy/Running/Auto with current schema0094 and the restricted service identity.
+Five APIcollection hashes match baseline; no raw-media preservation claim.
+
+Focused diagnosis: full registration with the signed identity module succeeds
+from outside the installation directory, including with the installer transaction
+environment. Changing registration cwd to the installroot reproduces70/CreateFile32
+on the directory permission walk. The pinned Tauri2.11.2 template sets OUTDIR to
+INSTDIR before POSTINSTALL. Temporarily switching OUTDIR to PLUGINSDIR for the
+child releases parent and inherited-child cwd handles while preserving the ACL
+algorithm. Restore OUTDIR before branching; retain bounded child diagnostics in
+the persistent progress log. The compiled NSIS regression passed for child exits0/70; all47 affected hook tests passed. Independent source review found no blocker.
+This is a shipped-installer correction: a new exact-source signed candidate and
+isolated installation acceptance are required. Diagnostic passes are not acceptance.
+
+Evidence: workspace outputs/replacement-candidate-8717c2a2/vm-check/replacement-install,
+including result.json, full-registration-diagnostic.json,
+transaction-registration-diagnostic.json, cwd-registration-diagnostic.json,
+and diagnostic-decision.md. All nine outcomes remain active. Host unchanged;
+no host upgrade until isolated acceptance plus verified usable recovery backup,
+no reboot, no publication, no new soak. Earlier checkpoints below are historical.
+
+## Earlier checkpoint — superseded where updated above
 # Current checkpoint: October 19, 2026 — running-image registration correction
 
 Branch `fix/beta19-ci-and-install-docs`, draft PR 259. Signed source
