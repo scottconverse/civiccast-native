@@ -35,6 +35,8 @@ Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installat
   of leaving a non-running channel labelled as showing a slate.
 - Keep errors from a cancelled replacement's detached decoder elements from
   terminating the programme that is still on air during channel reload.
+- Preserve scheduled-program retries on a fallback slate after rapid repeat
+  reloads by clearing the previous worker's obsolete restart state.
 - Send staff signing in without a return destination to a page their role can
   use: caption review for records clerks, Assets for meeting operators, and
   Schedule for publishing and admin roles.

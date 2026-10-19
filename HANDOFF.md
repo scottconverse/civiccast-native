@@ -1,3 +1,10 @@
+# Current checkpoint: October 19, 2026 - installed reload failure
+
+Branch fix/beta19-ci-and-install-docs; current HEAD 51c886874ea7eeb53457604c1a0ce9689312f543; draft PR259. Exact signed build39257884570 and CI39257879140 succeeded. Verified kit installed in isolated CivicCast-Beta16-Verification with setup exit0, registration0, healthy schema0094 and restricted service identity. Five API collection hashes match preinstall. All three initial HLS playlists and segments returned200. This resolves the installer working-directory failure described below.
+
+The committed three-channel program run failed: after two queued reloads, replacement slate workers remained TRANSITIONING and missed scheduled programming. Captures finished; inspected government frame shows slate; active caption VTTs have no cues. A direct executable reproduction traced stale pending-reload and deliberate-kill state surviving a direct start past a dead worker. Focused source correction is in progress; no new signed build yet. Workspace evidence: outputs/replacement-candidate-51c88687/vm-check/transition-diagnostic. Installed underwriting/app-download confirmation is running separately.
+
+All nine owner outcomes remain required. Host unchanged; no reboot or publication. Host upgrade requires isolated acceptance and a verified usable recovery backup; the actual backup has not run. Prior evidence below is historical, not acceptance of the current candidate.
 # Current checkpoint: October 19, 2026 — installer working-directory correction
 
 Branch `fix/beta19-ci-and-install-docs`, draft PR 259. Signed source

@@ -2457,6 +2457,25 @@ class EgressDaemon:
                     channel_id, prepared_reload, reason="a live worker already owns this channel"
                 )
                 return None
+            # This is a genuine fresh start: the worker that owned any prior
+            # reload pin and deliberate-kill marker is no longer live. Clear
+            # that worker's restart bookkeeping now, after the live-worker
+            # no-op above, so it cannot mark this new session TRANSITIONING.
+            self._pending_reloads.pop(channel_id, None)
+            self._reload_kills.discard(channel_id)
+            self._reload_kill_reasons.pop(channel_id, None)
+            self._reload_stall_since.pop(channel_id, None)
+            self._reload_stall_bound_s.pop(channel_id, None)
+            self._reload_stall_rungs.pop(channel_id, None)
+            held_prepared_reload = self._prepared_restart_plans.pop(channel_id, None)
+            if held_prepared_reload is not None and held_prepared_reload is not prepared_reload:
+                # A different caller-held plan superseded this abandoned one.
+                # Keep ``prepared_reload`` alive: this fresh start owns it.
+                self._release_prepared_restart_plan(
+                    channel_id,
+                    held_prepared_reload,
+                    reason="a fresh start superseded the held restart plan",
+                )
             # Hostile-review follow-up, items 1 & 4: reaching here means either
             # no process was tracked at all, or the tracked one has ALREADY
             # exited (the guard above only returns early while it is still

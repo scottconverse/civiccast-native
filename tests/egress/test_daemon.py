@@ -7810,6 +7810,120 @@ def _hold_fallback_slate_restart_plan(tmp_path: Path) -> SimpleNamespace:
     )
 
 
+def test_second_reload_after_dead_slate_worker_clears_old_restart_state(
+    tmp_path: Path,
+) -> None:
+    """A second reload that starts past a dead slate worker cannot inherit
+    the first reload's TRANSITIONING pin or deliberate-kill bookkeeping."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    started: list[_FakeProcess] = []
+    old_process = _FakeProcess(pid=111)
+    new_process = _FakeProcess(pid=222)
+    strategy = _FakeContentReloadStrategy([new_process], started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+    daemon._processes["gov"] = old_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="Fallback slate",
+            pid=old_process.pid,
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+    store.enqueue_commands(
+        [
+            EgressCommand(
+                channel_id="gov",
+                action="reload",
+                issued_at=datetime.now(UTC),
+                issued_by="operator",
+                command_id=command_id,
+            )
+            for command_id in ("reload-first", "reload-second")
+        ]
+    )
+    assert daemon.process_once("gov") == 2
+    assert old_process.terminated is True
+    assert started == [new_process]
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert daemon._pending_reloads == {}
+    assert daemon._reload_kills == set()
+    assert daemon._reload_kill_reasons == {}
+    assert daemon._reload_stall_since == {}
+    assert daemon._reload_stall_bound_s == {}
+    assert daemon._reload_stall_rungs == {}
+
+
+def test_fresh_start_releases_abandoned_plan_and_uses_supplied_plan(tmp_path: Path) -> None:
+    """Fresh-start cleanup releases a stale held plan without releasing a
+    distinct prepared plan explicitly handed to that start."""
+    from civiccast.egress.daemon import _ReusePreparedPlan
+
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    supplied_dir = tmp_path / "supplied-plan"
+    supplied_dir.mkdir()
+    supplied = _ReusePreparedPlan(
+        report=SourcePreparationReport(
+            source_plan=_source_plan_with_label(tmp_path, "Supplied program"),
+            records=(),
+            plan_dir=supplied_dir,
+        ),
+        target_state="ON_AIR",
+    )
+
+    run.daemon._start("gov", prepared_reload=supplied)
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.strategy.started_labels == ["Supplied program"]
+    assert run.daemon._active_prepared_plan_dir["gov"] == supplied_dir
+    assert run.daemon._prepared_restart_plans == {}
+
+
+def test_live_worker_start_noop_preserves_reload_bookkeeping(tmp_path: Path) -> None:
+    """A start that finds a live worker leaves its reload state to that worker."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    process = _FakeProcess(pid=111)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy([_FakeProcess(pid=222)], []),
+    )
+    daemon._processes["gov"] = process
+    daemon._pending_reloads["gov"] = ("FALLBACK_SLATE", "Fallback slate")
+    daemon._reload_kills.add("gov")
+    daemon._reload_kill_reasons["gov"] = "still belongs to the live worker"
+    daemon._reload_stall_since["gov"] = 1.0
+    daemon._reload_stall_bound_s["gov"] = 600.0
+    daemon._reload_stall_rungs["gov"] = 1
+
+    daemon._start("gov")
+
+    assert daemon._processes["gov"] is process
+    assert daemon._pending_reloads == {"gov": ("FALLBACK_SLATE", "Fallback slate")}
+    assert daemon._reload_kills == {"gov"}
+    assert daemon._reload_kill_reasons == {"gov": "still belongs to the live worker"}
+    assert daemon._reload_stall_since == {"gov": 1.0}
+    assert daemon._reload_stall_bound_s == {"gov": 600.0}
+    assert daemon._reload_stall_rungs == {"gov": 1}
+
+
 def test_fallback_slate_immediate_reload_restarts_onto_the_plan_it_prepared(
     tmp_path: Path,
 ) -> None:
