@@ -1,5 +1,13 @@
 # Current checkpoint: October 19, 2026 - installed CG ticker rendering correction
 
+The ticker fix is frozen at b693b1dd64bb7904e330de9fa5149b518e05e7ab;
+signed preparation39328065425 is running. Its security scan39328059039 found
+new aiohttp advisories in the optional browser-crawler dependency set. A
+lock-only follow-up upgrades aiohttp3.14.3 to3.14.4 and its required yarl1.25.1.
+The targeted patched dependency audit reports no known vulnerabilities. Neither
+package is in requirements-native-app.txt, which the native payload builder
+uses; the signed candidate is preserved without another installer rebuild.
+
 Branch fix/beta19-ci-and-install-docs, PR259. Signed dc820a86/build39279693859
 installed successfully in the isolated station with five original API inventory
 hashes preserved. Applicable Windows CI39279691301 attempt2 passed; a6211c7d is

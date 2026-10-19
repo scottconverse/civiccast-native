@@ -4,6 +4,10 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Update the optional browser crawler's aiohttp lock to 3.14.4, with its required
+  yarl 1.25.1 dependency, for security advisories published October 19. These
+  dependencies are absent from the native application requirements lock.
+
 - Quote the CG ticker's horizontal-position expression so FFmpeg treats its
   comma as part of the scrolling calculation. This corrects text rendering
   failures that caused board previews to fall back to an image without text.
