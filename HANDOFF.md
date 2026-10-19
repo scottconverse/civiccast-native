@@ -1,33 +1,39 @@
-# Current checkpoint: October 19, 2026 - service registration correction
+# Current checkpoint: October 19, 2026 — running-image registration correction
 
-Branch: `fix/beta19-ci-and-install-docs`; draft PR 259. Signed source c6be85b7
-built successfully in run 39208157501; the complete kit passed local and guest
-signature/hash/index/manual checks. Its isolated installation failed registration 70.
-Automatic restoration reported success, and five API collection hashes match the
-pre-install snapshot. The guest is healthy; the host remains unchanged.
+Branch `fix/beta19-ci-and-install-docs`, draft PR 259. Signed source
+7ad7b44d7604b508d5834907b42e3f527e99bbee built successfully in run 39224848934;
+CI 39224839230 passed after one retry for an external Chocolatey HTTP 503.
+The complete kit passed signature/hash/index/manual checks. Its isolated install
+failed registration 70/setup 118. Automatic recovery returned 0 and restored the
+prior guest healthy/Running/Auto. Five API collection hashes match pre-install.
+The host remains unchanged. Do not call this candidate accepted.
 
-A controlled diagnostic on the restored installation reproduced 70 in unchanged
-service identity migration code. It rejected the profile's Windows-cache-shaped
-Content.IE5 junction targeting INetCache/IE. This follow-up prunes redirected
-descendants during recursive grants, applies bounded native ACL updates, preserves
-protected DACLs and ordinary nonrecursive inheritance, and retains root/ancestor
-redirection rejection. A real-junction regression failed before the correction;
-14 affected Windows tests pass afterward. Independent review found no blocker.
-The original candidate's detailed stderr was not retained; the restored-state
-reproduction establishes the diagnosed failure. The fix still needs a new signed
-candidate and installed acceptance. Do not relabel the c6 kit as corrected.
+Captured diagnosis: the exact candidate identity module succeeds from an external
+interpreter but fails CreateFile error 32 on loaded runtime/_asyncio.pyd when invoked
+through the installed interpreter inside the permission tree. MAXIMUM_ALLOWED
+requests unnecessary file access incompatible with running images. The correction
+retains MAXIMUM_ALLOWED for recursive directories (preventing child propagation)
+and requests READ_CONTROL|WRITE_DAC for files. Root/ancestor redirection refusal,
+pruned descendants, protected ACLs and ordinary root-only inheritance remain.
 
-Prior revision 4b85a2b CI 39219234054 is fully green, including Windows, unit,
-integration and claims verification; lint and other queried workflows also passed.
-That run predates this fix. Two new Windows cases bring native collection to 2029
-pure / 2270 total / 2267 Windows non-integration; floor 2217 preserves the Windows margin.
-This follow-up needs its own hosted CI. No new installation success is claimed.
+A regression runs a copied Python interpreter inside its own grant tree: RED on
+7ad logic, GREEN with the correction. All 15 focused Windows tests pass. Independent
+review found no material issue. A hash-bound corrected-source overlay also passed
+identity configuration through the guest's installed interpreter; guest restarted
+healthy. This is source/diagnostic proof, not corrected signed-installer acceptance.
+Original silent-installer stderr was not retained; no claim it was recovered.
 
-All nine owner outcomes remain active: finish the corrected installation and
-functional walkthrough, bounded three-channel and changed-feature acceptance,
-isolated uninstall/reinstall, then a verified host recovery backup before the
-host upgrade. No host reboot, publication, new soak, or interrupted-install project.
-Detailed evidence is in workspace outputs/CIVICCAST-CURRENT-WORK.md.
+The added Windows regression changes collection to 2029 pure/2271 total/2268 Windows
+non-integration; Windows floor 2218 preserves its 50-test margin. Six workflow blob
+bindings are refreshed, retaining historical claims evidence. A new exact-source
+signed build and installed check are still required because shipped code changed.
+
+All nine owner outcomes remain active: corrected installation and walkthrough,
+bounded three-channel and changed-feature acceptance, isolated uninstall/reinstall,
+then verified host recovery backup before host upgrade. No host reboot, publication,
+new soak, or interrupted-install project. Evidence: workspace
+outputs/replacement-candidate-7ad7b44d/vm-check/replacement-install and
+outputs/running-image-acl-review.md; continuity outputs/CIVICCAST-CURRENT-WORK.md.
 ## Earlier checkpoint (superseded where updated above)
 
 # Current work: Beta 20 installed verification active (October 18, 2026)

@@ -7,6 +7,8 @@ Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installat
 - Let service permission setup handle Windows cache junctions inside an existing
   station profile without following them or changing their targets' permissions.
   Preserve normal inheritance for root-only grants and protected directory ACLs.
+  Grant permissions to loaded runtime files using ACL-only access so registration
+  does not fail with a sharing violation on its own interpreter or libraries.
 
 - Correct conflicting manual guidance for recorded captions, RTMP, account
   recovery, channel operation, backups, network access and staff permissions.

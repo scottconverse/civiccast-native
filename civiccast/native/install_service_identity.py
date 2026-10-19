@@ -139,9 +139,11 @@ def _grant_tree_native_sid(
 
     Existing explicit grants for this SID are replaced; all other ACL entries
     and each object's protected-DACL state are retained. Handles are opened
-    without following a final reparse point. Recursive calls use
-    MAXIMUM_ALLOWED to prevent automatic propagation; nonrecursive directory
-    grants retain normal Windows inheritance to existing unprotected children.
+    without following a final reparse point. Recursive directory handles use
+    MAXIMUM_ALLOWED to prevent automatic propagation; file handles request
+    only the ACL rights needed to avoid sharing conflicts with running images.
+    Nonrecursive directory grants retain normal Windows inheritance to existing
+    unprotected children.
     """
 
     import win32con
@@ -159,13 +161,18 @@ def _grant_tree_native_sid(
         if any(_is_reparse_point(part) for part in (member, *member.parents)):
             # Recheck the path and ancestors before opening the final component.
             continue
+        attributes = member.lstat().st_file_attributes
+        if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            continue
+        is_directory = bool(attributes & stat.FILE_ATTRIBUTE_DIRECTORY)
+        desired_access = (
+            win32con.MAXIMUM_ALLOWED
+            if is_directory and not propagate_to_children
+            else win32con.READ_CONTROL | win32con.WRITE_DAC
+        )
         handle = win32file.CreateFile(
             str(member),
-            (
-                win32con.READ_CONTROL | win32con.WRITE_DAC
-                if propagate_to_children
-                else win32con.MAXIMUM_ALLOWED
-            ),
+            desired_access,
             win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
             None,
             win32con.OPEN_EXISTING,
@@ -174,7 +181,10 @@ def _grant_tree_native_sid(
         )
         try:
             info = win32file.GetFileInformationByHandle(handle)
-            if info[0] & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            if (
+                info[0] & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                or bool(info[0] & stat.FILE_ATTRIBUTE_DIRECTORY) != is_directory
+            ):
                 continue
             descriptor = win32security.GetSecurityInfo(
                 handle,

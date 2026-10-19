@@ -316,6 +316,45 @@ def test_grant_tree_rejects_junction_root_without_touching_target_acl(tmp_path):
     assert after_entries == before_entries
 
 
+def test_grant_tree_opens_running_python_image_with_acl_only_access(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = tmp_path / "runtime"
+    root.mkdir()
+    executable = root / "python.exe"
+    shutil.copy2(sys.executable, executable)
+    runtime_dlls = list(Path(sys.base_prefix).glob("python*.dll"))
+    assert runtime_dlls, "The running Python installation has no adjacent runtime DLLs."
+    for runtime_dll in runtime_dlls:
+        shutil.copy2(runtime_dll, root / runtime_dll.name)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    environment = os.environ.copy()
+    environment["PYTHONHOME"] = sys.base_prefix
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(repo_root), *(entry for entry in sys.path if entry)]
+    )
+    script = (
+        "import sys; from pathlib import Path; "
+        "from civiccast.native.install_service_identity import _grant_tree; "
+        "_grant_tree(Path(sys.argv[1]), 'RX'); print('GRANT_SUCCEEDED')"
+    )
+    result = subprocess.run(
+        [str(executable), "-c", script, str(root)],
+        cwd=repo_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert "GRANT_SUCCEEDED" in result.stdout
+
+
 @pytest.mark.parametrize("stop_finishes", [True, False])
 def test_timed_out_migration_waits_for_stopped_before_restoring_environment(
     installed, monkeypatch, stop_finishes
