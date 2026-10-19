@@ -1,3 +1,29 @@
+# Current checkpoint: October 19, 2026
+
+Branch: `fix/beta19-ci-and-install-docs`; draft PR 259. Frozen signed-candidate
+source: `c6be85b7b165d43b75f6cc124f26ae918e5830d2`; preparation run
+`39208157501` has passed station signing, exact-source manual rendering, and
+bootstrap signing/verification; binary upload is in progress at this checkpoint.
+No assembled replacement kit or corrected installation is claimed yet.
+
+CI `39208155850` for that source completed with 28 unit failures. Its Windows
+job passed 2,265 native, 35 installer, and 56 media cases without skips/errors.
+The follow-up corrects stale claim bindings, three strategy fixtures, seven
+documentation/policy failures, and tracked manual files using exact hosted
+output. Focused checks passed: 24 claims cases, 10 docs/policy cases, three
+strategy cases, and the source/header/manual artifact check. The local broader
+Windows strategy-module run is not green (20 real-registry environment failures).
+The new bookkeeping revision still needs hosted CI. It changes no application
+or installer bytes and does not relabel the c6be85b7 signed candidate.
+
+All nine owner outcomes remain active. Next: complete download/assembly and
+verify the replacement kit, install in the isolated guest, finish functional
+acceptance and isolated uninstall/reinstall, then verify a full host recovery
+backup before the authorized host upgrade. No host reboot or publication.
+Detailed current evidence is in the workspace `outputs/CIVICCAST-CURRENT-WORK.md`.
+
+## Earlier checkpoint (superseded where updated above)
+
 # Current work: Beta 20 installed verification active (October 18, 2026)
 
 Current branch: `fix/beta19-ci-and-install-docs`. The preserved walkthrough

@@ -53,12 +53,16 @@ def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
     assert "remains historical" in manual
     manual_version = render_user_manual._source_version_token(manual)
     if manual_version != PUBLISHED_RELEASE_TAG:
-        published_history_rows = [
-            line
-            for line in manual.splitlines()
-            if line.startswith("|") and PUBLISHED_RELEASE_TAG in line
-        ]
-        assert any("Published package" in line for line in published_history_rows)
+        edition = " ".join(
+            manual.split("## Edition and package evidence", 1)[1].split("## ", 1)[0].split()
+        )
+        published_edition = "Beta " + PUBLISHED_RELEASE_TAG.rsplit("beta.", 1)[1]
+        assert (
+            f"For an installed {published_edition} package, use the manual bundled with that release"
+            in edition
+        )
+        assert "have not replaced the published installer or its package evidence" in edition
+        assert "For an installed package, use its matching Help and verification record" in edition
     assert "is the current native-line pre-release" not in manual
 
 

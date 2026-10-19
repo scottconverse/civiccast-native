@@ -156,7 +156,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 10935dccd809da822bb8f4eb111c3447757138a1
+        blob: aa3c4cf36a50bb96409ebc7f1e88b0708ef5917c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -236,7 +236,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 10935dccd809da822bb8f4eb111c3447757138a1
+        blob: aa3c4cf36a50bb96409ebc7f1e88b0708ef5917c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -293,7 +293,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 10935dccd809da822bb8f4eb111c3447757138a1
+        blob: aa3c4cf36a50bb96409ebc7f1e88b0708ef5917c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -358,7 +358,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 10935dccd809da822bb8f4eb111c3447757138a1
+        blob: aa3c4cf36a50bb96409ebc7f1e88b0708ef5917c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -1121,7 +1121,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 10935dccd809da822bb8f4eb111c3447757138a1
+        blob: aa3c4cf36a50bb96409ebc7f1e88b0708ef5917c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -2049,7 +2049,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 10935dccd809da822bb8f4eb111c3447757138a1
+        blob: aa3c4cf36a50bb96409ebc7f1e88b0708ef5917c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2

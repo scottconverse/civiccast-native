@@ -72,7 +72,7 @@ flowchart LR
 | Live | `civiccast.live` | Live sessions, fail-closed source verification, and recording finalization. |
 | Captions | `civiccast.captions` | Recorded-media transcription with faster-whisper, native live Whistle/Whisper runtimes, bounded live cue history, WebVTT output, recorded-caption review queue. |
 | Summary | `civiccast.summary` | Sourced summaries, approval, transcript CSV export. Console generation selects approved captions; authorized API callers supply cues. Citation checks do not establish semantic truth. |
-| Records | `civiccast.records` | PDF/A-3B record export and provenance. Real RFC 3161 timestamping needs a configured authority; the default is a deterministic placeholder. |
+| Records | `civiccast.records` | PDF/A-3B record export and provenance. Real RFC 3161 timestamping needs a configured authority; the default emits a deterministic local token, not an RFC 3161 authority-issued timestamp. |
 | Publish | `civiccast.publish` | Portal, Internet Archive, NAS, YouTube, subscriber, and podcast surfaces. |
 | Subscribe | `civiccast.subscribe` | Double opt-in, signed unsubscribe, webhook payloads. |
 | Podcast | `civiccast.podcast` | Podcast episode and RSS generation. |

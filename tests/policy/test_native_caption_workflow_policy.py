@@ -1197,7 +1197,9 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # independent test: 2025 platform-independent and 2260 total; Windows
     # non-integration collection is 2257. Floors 1975 and 2207 leave the
     # standard 50-test margin in both executed lanes.
-    assert (collect("not windows_only"), collect()) == (2025, 2260)
+    # 2026-10-19 private-file storage adds eight pure tests: 2033 pure,
+    # 2268 total, 2265 non-integration; floors 1983 and 2215 retain 50.
+    assert (collect("not windows_only"), collect()) == (2033, 2268)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
