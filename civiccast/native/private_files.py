@@ -107,7 +107,7 @@ def _protect_empty_file(path: Path, descriptor: int) -> None:
             ) from exc
         return
     try:
-        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)
+        os.fchmod(descriptor, stat.S_IRUSR | stat.S_IWUSR)  # type: ignore[attr-defined, unused-ignore]
     except OSError as exc:
         raise PrivateFileProtectionError(
             f"Cannot establish private permissions for local secret file {str(path)!r}."
