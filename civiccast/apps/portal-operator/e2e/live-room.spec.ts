@@ -519,12 +519,14 @@ test.describe('operator live room', () => {
     await expect(page.getByText('Ending')).toBeVisible()
   })
 
-  test('unverified source preview is honest and actionable', async ({ page }) => {
+  test('disabled channel preview keeps incoming-source readiness separate', async ({ page }) => {
     await openLive(page)
     await expect(page.getByLabel('Source dropped')).toHaveCount(0)
-    await expect(page.getByText('Source preview unavailable')).toBeVisible()
-    await expect(page.getByText(/No simulated preview or audio meter is shown/)).toBeVisible()
-    await expect(page.getByText(/Connect a real encoder or meeting source/)).toBeVisible()
+    await expect(page.getByText('Channel preview unavailable')).toBeVisible()
+    await expect(page.getByText(/Enable this channel's HLS web output/)).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Open Channels', exact: true })).toBeVisible()
+    await expect(page.getByText(sourceA.next_action, { exact: true }).first()).toBeVisible()
+    await expect(page.locator('iframe[title^="On-air preview"]')).toHaveCount(0)
   })
 
   test('shows remote ingest health and an honest no-source state', async ({ page }) => {
