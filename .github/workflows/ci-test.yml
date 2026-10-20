@@ -825,6 +825,7 @@ jobs:
             junit-native-win.xml
             junit-windows-installer.xml
             junit-windows-media.xml
+            caption-worker-failure/
           if-no-files-found: error
           retention-days: 1
 
