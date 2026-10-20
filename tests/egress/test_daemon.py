@@ -285,8 +285,10 @@ def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> Non
     assert "captions disabled" in (store.read_state("gov").last_error or "")
 
 
+@pytest.mark.parametrize("fallback_slate", [False, True])
 def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(
     tmp_path: Path,
+    fallback_slate: bool,
 ) -> None:
     """A distinct second START is delivered as a no-op, not a session reset.
 
@@ -305,7 +307,8 @@ def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_se
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
-        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        source_plan_provider=lambda _channel_id: None if fallback_slate else _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
         ffmpeg_starter=lambda _args: process,
         channel_start_hook=hook_calls.append,
     )
@@ -321,6 +324,10 @@ def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_se
     assert store.peek_pending_commands("gov") == []
     assert daemon.process_once("gov") == 0
 
+    before_duplicate = store.read_state("gov")
+    assert before_duplicate is not None
+    assert before_duplicate.current_proof_event_id is not None
+
     # A distinct command id reaches the daemon.  The live-process guard makes
     # START a no-op: process identity and hook count must not change.
     second = _command().model_copy(update={"command_id": "cmd-start-2"})
@@ -331,6 +338,9 @@ def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_se
     state = store.read_state("gov")
     assert state is not None
     assert state.pid == 4242
+    assert state.state == before_duplicate.state
+    assert state.current_proof_event_id == before_duplicate.current_proof_event_id
+    assert state.current_source_label == before_duplicate.current_source_label
     assert process.terminated is False
     assert hook_calls == ["gov"], (
         "a distinct START on a live tracked process must be delivered but "

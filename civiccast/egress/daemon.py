@@ -2429,26 +2429,11 @@ class EgressDaemon:
                     log_root=self._work_dir,
                 )
             if worker_already_live:
-                state = self._store.read_state(channel_id)
-                current_state: EgressState = (
-                    "DRAINING" if channel_id in self._draining_channels else "ON_AIR"
-                )
-                self._write_state(
-                    channel_id,
-                    current_state,
-                    current_source_label=state.current_source_label if state else None,
-                    pid=_process_pid(existing_process),
-                )
-                self._append_health(
-                    channel_id,
-                    current_state,
-                    sink_connected=self._sink_connected(
-                        channel_id,
-                        config,
-                        state=current_state,
-                    ),
-                    seconds_on_air=self._seconds_on_air(channel_id),
-                )
+                # A duplicate START leaves the current plan and its observation
+                # unchanged. Promoting FALLBACK_SLATE to ON_AIR here strands an
+                # unbounded slate: automation no longer requests the due program.
+                # Clearing its proof ID also loses the actual dispatched horizon.
+                # The regular worker poll already refreshes state and health.
                 # F3(b): this start is a no-op (a live worker already owns the
                 # channel), so the reuse branch below is never reached and a
                 # carried plan would be neither aired nor released -- the

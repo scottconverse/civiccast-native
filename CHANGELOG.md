@@ -4,6 +4,8 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Keep repeated Start commands from relabeling slate as a program or clearing
+  its on-air proof, so programs committed during a gap can take air when due.
 - Return removed portal recordings to draft approval in Publish, retaining prior
   delivery history and refreshing the dashboard after removal.
 - Preserve existing reviewed caption tracks when repackaging, retaining the
