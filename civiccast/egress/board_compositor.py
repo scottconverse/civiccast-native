@@ -328,6 +328,9 @@ def _zone_text(
     now: datetime,
 ) -> list[tuple[str, int, bool]]:
     if zone.kind == "primary":
+        manual_text = zone.content.get("text")
+        if zone.source == "manual" and isinstance(manual_text, str) and manual_text.strip():
+            return [(manual_text.strip(), 0, False)]
         if bulletin is None:
             return []
         return [

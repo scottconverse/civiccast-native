@@ -6,6 +6,8 @@ Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installat
 
 - Preserve the timezone of a contributor's requested air date so an accepted
   submission can be sent to the schedule without a timezone validation error.
+- Render saved manual primary-zone CG text in previews and channel output,
+  while retaining bulletin rotation when the primary zone has no manual text.
 
 - Show the selected channel's real outgoing HLS broadcast in Live Room, with
   incoming-source readiness reported separately. Before takeover the preview
