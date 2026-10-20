@@ -35,7 +35,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
-from civiccast.live.router import get_preflight_evaluator
+from civiccast.egress.models import EgressConfig, EgressSinkSpec
+from civiccast.egress.router import get_egress_store
+from civiccast.live.models import LiveSourceResponse
+from civiccast.live.router import get_live_source_readiness_service, get_preflight_evaluator
+from civiccast.live.source_probe import ProbeObservation
 from civiccast.stream._ffmpeg import resolve_h264_encoder, run_ffmpeg
 
 _TOKEN = "wiring-test-token"  # deterministic local test fixture token, not a secret
@@ -98,11 +102,30 @@ def _write_real_mp4(path: Path) -> None:
 
 
 def _configure_test_source_probe(app: FastAPI) -> None:
-    """Give this synthetic integration fixture an explicit passing media probe."""
+    """Configure the synthetic channel and persist its deterministic media probe."""
+
+    egress_store = app.dependency_overrides[get_egress_store]()
+    egress_store.upsert_config(
+        EgressConfig(
+            channel_id="gov-ch12",
+            enabled=True,
+            slate_message="Stand by",
+            sinks=[EgressSinkSpec(kind="file", label="Test", uri="gov-ch12.ts")],
+        )
+    )
+    readiness = app.dependency_overrides[get_live_source_readiness_service]()
+    readiness._probe = lambda _source, **_: ProbeObservation(
+        ok=True, detail="Synthetic test source ready"
+    )
+    app.dependency_overrides[get_live_source_readiness_service] = lambda: readiness
+
+    def source_probe(source: LiveSourceResponse) -> tuple[bool, str]:
+        _, observation, _ = readiness.probe(source.live_source_id)
+        return observation.ok, observation.detail
 
     resolver = app.dependency_overrides[get_preflight_evaluator]
     evaluator = resolver()
-    evaluator._source_probe = lambda _source: (True, "Synthetic test source ready")
+    evaluator._source_probe = source_probe
     app.dependency_overrides[get_preflight_evaluator] = lambda: evaluator
 
 
@@ -309,6 +332,7 @@ def test_external_entrypoint_module_smoke(app_env: Path) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "civiccast.live.finalization_worker", "--once"],
         capture_output=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         text=True,
         timeout=120,
         env=os.environ.copy(),
@@ -504,6 +528,7 @@ def test_finalized_recording_is_playable_hls_over_local_serve(
                 playable_manifest_url,
             ],
             capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             text=True,
             timeout=30,
         )
