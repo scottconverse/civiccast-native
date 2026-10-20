@@ -156,7 +156,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 13a060e4a5480744980032c70d521e22f5756300
+        blob: 4ffc1404f1794c6bbf87bf5a26dcd5bd2523af2c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -236,7 +236,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 13a060e4a5480744980032c70d521e22f5756300
+        blob: 4ffc1404f1794c6bbf87bf5a26dcd5bd2523af2c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -293,7 +293,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 13a060e4a5480744980032c70d521e22f5756300
+        blob: 4ffc1404f1794c6bbf87bf5a26dcd5bd2523af2c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -358,7 +358,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 13a060e4a5480744980032c70d521e22f5756300
+        blob: 4ffc1404f1794c6bbf87bf5a26dcd5bd2523af2c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -1110,7 +1110,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 7fdcb5ea16f8c0f5916787fff085523539d22cc7
+        blob: d4c0cc2c53fdd1ff93f6b416d942c91c492458be
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1121,7 +1121,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 13a060e4a5480744980032c70d521e22f5756300
+        blob: 4ffc1404f1794c6bbf87bf5a26dcd5bd2523af2c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -2038,7 +2038,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 7fdcb5ea16f8c0f5916787fff085523539d22cc7
+        blob: d4c0cc2c53fdd1ff93f6b416d942c91c492458be
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -2049,7 +2049,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 13a060e4a5480744980032c70d521e22f5756300
+        blob: 4ffc1404f1794c6bbf87bf5a26dcd5bd2523af2c
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2

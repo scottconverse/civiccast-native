@@ -1,5 +1,43 @@
 # Beta 20 current-source review tripwire renewal
 
+## October 20 final-candidate CI reconciliation
+
+Signed source `34e213fec46fa69245822dc29ebb269d251e29a3` retains build run
+`39411797489`; the following test, workflow and evidence corrections do not change
+its application or installer inputs. Its Windows WS4 job `118591350196` passed
+the actual native/media suites. Required overall CI and installed acceptance
+remain separate, pending outcomes.
+
+Informational randomized job `118591165152` reported 21 failures: two handback
+callback stubs rejected the new `handoff_at` keyword; one watchdog fixture assumed
+that an expired boundary would never request immediate termination; two native
+collection/floor assertions omitted the added portable closure-baseline case; and 16
+policy failures reflected the eight stale bindings and their derived checks.
+The handback stub now checks that the explicit boundary falls within the actual
+handback call. The pinned-worker fixture ignores the initial termination request,
+asserts that it occurred, and then permits watchdog termination. This preserves
+the watchdog recovery assertions without reverting the corrected boundary behavior.
+Collection expectations are 2,030 pure and 2,272 total; the Windows floor is
+2,219 for 2,269 non-integration cases, preserving the existing 50-case margin.
+
+The six workflow tripwires bind the reviewed floor correction and failure-artifact
+upload addition. Producer identity, registered nodes, controls, result wiring and
+verification requirements are unchanged. The two GStreamer test-file tripwires
+bind the production-pressure fixture's use of the actual station encoder helper;
+their registered continuity and teardown test bodies are unchanged. The real WS4
+pass supports this source review, not a new installed or historical acceptance
+claim. Claim wording, historical evidence dates, verifier and control enforcement
+are unchanged; completed same-run producer evidence is still required.
+
+Permanently informational mutation job `118591165379` stopped at the logging-storm
+timing check: best supervised 3.10 seconds versus DEVNULL 2.45 seconds at the 1.10x
+bound, after 4,052 passes. This is a recorded nonblocking timing failure; no bound
+was relaxed and no production change is inferred from it.
+
+Local reconciliation checks passed: 42 handback/watchdog/native-workflow policy
+cases, 141 claims-evidence/retraction cases, focused Ruff lint/format and diff
+checks. These are source checks, not completed hosted CI or installed acceptance.
+
 On October 19, 2026, a focused review at source `c6be85b7b165d43b75f6cc124f26ae918e5830d2` found nine deterministic claims-bookkeeping drifts: six registered workflow blobs, two current-source `engine.py` blobs, and one workflow job missing from the contract inventory. This note records the limited review and registry correction. It does not change historical acceptance evidence.
 
 The workflow review compared the recorded binding with `.github/workflows/ci-test.yml` at this source. The current workflow adds isolated PostgreSQL caption coverage and its JUnit upload, pinned Windows media and installer dependencies with explicit no-skip checks, a longer Windows timeout, and the `external-integration` job. It replaces an obsolete Linux-engine coverage-gap comment with the native coverage. The `test` producer, producer metadata, registered test nodes and controls, claims-verifier `needs`, and result wiring remain in place. The six workflow tripwires therefore bind current workflow source; the cancelled producer's test evidence is still required from a completed same-run CI.

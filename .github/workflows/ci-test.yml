@@ -806,13 +806,15 @@ jobs:
         # floor of 2206. The 2026-10-14 Beta16 license closure assertion adds
         # one platform-independent test (floor 2207).
         # 2026-10-19 junction and running-image regressions: 2268 non-integration
-        # tests; preserve the 50-test margin (2218).
+        # tests; preserve the 50-test margin (2218). The exact native closure
+        # baseline regression adds one portable case:2269 non-integration,
+        # floor2219 keeps that same margin.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2218 \
+            --floor 2219 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
