@@ -4,7 +4,8 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
-- Allow the public player preview inside same-origin Live Room while retaining
+- Allow the public player preview, including cached reloads, inside same-origin
+  Live Room while retaining
   framing denial for operator pages and all cross-origin sites.
 - Keep repeated Start commands from relabeling slate as a program or clearing
   its on-air proof, so programs committed during a gap can take air when due.

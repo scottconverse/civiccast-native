@@ -58,11 +58,12 @@ async def security_headers_middleware(
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     # Live Room embeds the public player, never the operator console. Keep both
     # browser framing policies aligned and reject every cross-origin ancestor.
+    # Conditional reloads update cached HTML headers too; keep its framing policy.
     player_preview = (
         request.method in {"GET", "HEAD"}
         and request.url.path == "/"
         and bool(request.query_params.get("manifest"))
-        and response.status_code == 200
+        and response.status_code in {200, 304}
     )
     frame_options = "SAMEORIGIN" if player_preview else "DENY"
     csp = _CONTENT_SECURITY_POLICY

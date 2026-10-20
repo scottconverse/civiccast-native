@@ -159,3 +159,30 @@ def test_only_public_player_preview_allows_same_origin_framing(
     assert f"frame-ancestors {ancestors}" in response.headers["Content-Security-Policy"]
     assert "default-src 'self'" in response.headers["Content-Security-Policy"]
     assert "object-src 'none'" in response.headers["Content-Security-Policy"]
+
+
+@pytest.mark.parametrize(
+    ("path", "frame_policy"),
+    [
+        ("/?manifest=/media/live/government/playlist.m3u8", "SAMEORIGIN"),
+        ("/", "DENY"),
+        ("/?manifest=", "DENY"),
+        ("/operator/?manifest=/media/live/government/playlist.m3u8", "DENY"),
+    ],
+)
+def test_cached_preview_keeps_its_framing_policy(
+    monkeypatch, tmp_path, path: str, frame_policy: str
+) -> None:
+    portal_dist = tmp_path / "portal-dist"
+    portal_dist.mkdir()
+    (portal_dist / "index.html").write_text("<h1>Player</h1>", encoding="utf-8")
+    monkeypatch.setenv("CIVICCAST_PUBLIC_PORTAL_DIST", str(portal_dist))
+    monkeypatch.setenv("CIVICCAST_OPERATOR_CONSOLE_DIST", str(portal_dist))
+    client = TestClient(create_app())
+    fresh = client.get(path)
+    cached = client.get(path, headers={"If-None-Match": fresh.headers["ETag"]})
+
+    assert cached.status_code == 304
+    assert cached.headers["X-Frame-Options"] == frame_policy
+    ancestors = "'self'" if frame_policy == "SAMEORIGIN" else "'none'"
+    assert f"frame-ancestors {ancestors}" in cached.headers["Content-Security-Policy"]
