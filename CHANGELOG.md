@@ -4,6 +4,8 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Prepare upcoming programs while a channel airs slate, so its first scheduled
+  program and short successor can reuse the existing conform cache at air time.
 - Preserve the timezone of a contributor's requested air date so an accepted
   submission can be sent to the schedule without a timezone validation error.
 - Render saved manual primary-zone CG text in previews and channel output,

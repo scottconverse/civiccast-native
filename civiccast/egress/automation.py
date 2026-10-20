@@ -829,6 +829,7 @@ class ChannelAutomationService:
         self._reload_issued: set[str] = set()
         # Audit ENG-002: reload re-issue pacing (see _check_slate_replan).
         self._replan_retry_at: dict[str, float] = {}
+        self._slate_warm_retry_at: dict[str, float] = {}
         # Soak evidence 2026-09-04 (kit 4b30c99): back-to-back scheduled
         # premieres EOS'd the engine at every source-plan boundary because
         # nothing ever extended a LIVE (ON_AIR) plan before it ran out --
@@ -1579,6 +1580,7 @@ class ChannelAutomationService:
             # try again next poll — the daemon would land back on slate anyway.
             return
         if plan is None:
+            self._warm_after_slate(channel_id, now=now)
             return
         self._enqueue(channel_id, "reload", now=now)
         self._reload_issued.add(channel_id)
@@ -1587,6 +1589,50 @@ class ChannelAutomationService:
             "Channel automation issued reload for %s: a scheduled program is due.",
             channel_id,
         )
+
+    def _warm_after_slate(self, channel_id: str, *, now: datetime) -> None:
+        """Prepare the next published program during a slate gap, without taking air.
+
+        The rollover warm only runs after dispatching a program. A station
+        starting on slate otherwise pays its first cold conform at the due
+        instant, losing part of the slot. Reuse that warm queue before the
+        first dispatch, including its short-plan successor look-ahead.
+        """
+        next_start = getattr(self._source_plan_provider, "next_item_start_at", None)
+        warmer = getattr(self._daemon, "warm_source_plan", None)
+        if not callable(next_start) or not callable(warmer):
+            return
+        if self._boundary_source_plan_provider is None:
+            return
+        tick = self._monotonic()
+        if tick < self._slate_warm_retry_at.get(channel_id, 0.0):
+            return
+        self._slate_warm_retry_at[channel_id] = tick + self._RELOAD_RETRY_COOLDOWN_SECONDS
+        try:
+            start = next_start(channel_id, now)
+            lead_seconds = self._rollover_lead_seconds()
+            if start is None or not now < start <= now + timedelta(seconds=lead_seconds):
+                return
+            plan = self._resolve_boundary_plan_at(channel_id, start)
+            if plan is None or not plan.segments:
+                return
+            warmer(channel_id, plan)
+            duration = sum(segment.duration_seconds for segment in plan.segments)
+            if duration > 0:
+                self._warm_upcoming_plan(
+                    channel_id,
+                    now=now,
+                    lead_seconds=lead_seconds,
+                    fresh_start=start,
+                    fresh_end=start + timedelta(seconds=duration),
+                )
+        except Exception:
+            _LOG.debug(
+                "Channel automation slate look-ahead for %s did not complete; "
+                "the due-program reload is unaffected.",
+                channel_id,
+                exc_info=True,
+            )
 
     def _rollover_lead_seconds(self, asset_seconds: float | None = None) -> float:
         """BETA.10 U02: how far ahead of the live plan's projected end the
