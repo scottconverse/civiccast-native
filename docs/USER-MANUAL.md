@@ -1820,7 +1820,7 @@ The preview has video playback controls. Use **Play selected trim** to inspect t
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 
-> **Note:** A Beta 15 field run found generated caption cues before and after one trimmed playback range. The report did not establish the resident player's subtitle offset or a general behavior; retest the mapping against the package in use. The follow-up was recorded for Beta 17; this observation does not establish a defect in the current package. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** Caption review keeps timestamps from the original recording. Published English and Spanish captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
 
 If saving fails with a message about another writer, someone else changed the video while you were editing. Close the editor, open the video again and redo your change. If the video is already on a schedule item that is committed to air, the save is refused with the "cannot be edited ... already published" message described under [Edit a video's public details](#ch-after-meeting).
 

@@ -15,6 +15,7 @@ import wave
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -1963,11 +1964,16 @@ class TestCaptionLanguageSettings:
         assert not published_caption_sidecar(package_dir).exists()
         assert "SUBTITLES" not in (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
 
+    @pytest.mark.parametrize("trimmed", [False, True])
     def test_english_reviewed_attaches_first_and_job_finishes_after_spanish_review(
-        self, tmp_path: Path, fake_ffmpeg: None
+        self, tmp_path: Path, fake_ffmpeg: None, trimmed: bool
     ) -> None:
         source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
         package_dir = _package(tmp_path / "packages")
+        if trimmed:
+            (package_dir / "playback-timeline.json").write_text(
+                '{"version":1,"source_start_seconds":0.5,"source_end_seconds":2}'
+            )
         job_store = InMemoryOfflineCaptionJobStore()
         review_store = InMemoryCaptionReviewStore()
         worker = _spanish_worker(
@@ -1990,6 +1996,11 @@ class TestCaptionLanguageSettings:
         assert published_caption_sidecar(package_dir).is_file()
         assert not published_spanish_caption_sidecar(package_dir).exists()
         assert len(review_store.list(asset_id=_ASSET_ID, language="es")) == 1
+
+        # A second poll must recognize the already rebased English track.
+        with patch("civiccast.captions.vod_job.attach_reviewed_captions") as attach:
+            worker.run_once()
+            attach.assert_not_called()
 
         _approve_language(review_store, "es")
         complete = worker.run_once()[0]
@@ -2068,3 +2079,69 @@ class TestCaptionLanguageSettings:
         assert "la mocion se aprueba" in published_spanish_caption_sidecar(package_dir).read_text(
             encoding="utf-8"
         )
+
+
+@pytest.mark.parametrize("legacy_marker", [False, True])
+def test_trimmed_package_rebases_both_caption_tracks_without_changing_source_cues(
+    tmp_path: Path, legacy_marker: bool
+) -> None:
+    import hashlib
+    import json
+
+    package = _package(tmp_path / "packages")
+    if legacy_marker:
+        digest = hashlib.sha256(_ASSET_ID.encode()).hexdigest()[:20]
+        (package.parent / f".civiccast-preview-{digest}.json").write_text(
+            json.dumps({"asset_id": _ASSET_ID, "trim_in_seconds": 2, "trim_out_seconds": 65})
+        )
+    else:
+        (package / "playback-timeline.json").write_text(
+            json.dumps({"version": 1, "source_start_seconds": 2, "source_end_seconds": 65})
+        )
+    source_cues = [
+        _cue("head", 0, 1, "Excluded head"),
+        _cue("opening", 1, 3, "Opening"),
+        _cue("matched", 30, 35.58, "Matched sentence"),
+        _cue("ending", 64, 70, "Ending"),
+        _cue("tail", 65, 68, "Excluded tail"),
+    ]
+    before = [cue.model_copy() for cue in source_cues]
+    attached = attach_reviewed_captions(package, source_cues, spanish_cues=source_cues)
+
+    for sidecar in [attached.sidecar_path, attached.spanish_sidecar_path]:
+        assert sidecar is not None
+        text = sidecar.read_text()
+        assert "00:00:28.000 --> 00:00:33.580" in text
+        assert "00:00:00.000 --> 00:00:01.000" in text
+        assert "00:01:02.000 --> 00:01:03.000" in text
+        assert "Excluded" not in text
+    assert attached.cue_count == attached.spanish_cue_count == 3
+    assert source_cues == before
+
+
+@pytest.mark.parametrize(
+    "timeline",
+    [
+        '{"version":1,"source_start_seconds":false,"source_end_seconds":65}',
+        '{"version":1,"source_start_seconds":2,"source_end_seconds":1}',
+        '{"version":1,"source_start_seconds":NaN,"source_end_seconds":65}',
+        '{"version":9,"source_start_seconds":2,"source_end_seconds":65}',
+        "[]",
+    ],
+)
+def test_caption_attach_rejects_invalid_packaged_timeline(tmp_path: Path, timeline: str) -> None:
+    package = _package(tmp_path / "packages")
+    (package / "playback-timeline.json").write_text(timeline)
+    with pytest.raises(OfflineCaptionPackageError, match="playback timeline"):
+        attach_reviewed_captions(package, [_cue("matched", 30, 35.58, "Matched sentence")])
+    assert not published_caption_sidecar(package).exists()
+
+
+def test_caption_attach_rejects_cues_outside_package(tmp_path: Path) -> None:
+    package = _package(tmp_path / "packages")
+    (package / "playback-timeline.json").write_text(
+        '{"version":1,"source_start_seconds":2,"source_end_seconds":65}'
+    )
+    with pytest.raises(OfflineCaptionPackageError, match="outside"):
+        attach_reviewed_captions(package, [_cue("excluded", 0, 1, "Excluded")])
+    assert not published_caption_sidecar(package).exists()

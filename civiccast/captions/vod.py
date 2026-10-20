@@ -53,6 +53,8 @@ whole track back.
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import subprocess
 import tempfile
 from collections.abc import Collection
@@ -105,6 +107,7 @@ __all__ = [
     "ReviewedCaptions",
     "TranslatedCaptionQueue",
     "attach_reviewed_captions",
+    "caption_cues_for_package",
     "extract_caption_audio",
     "published_caption_sidecar",
     "published_spanish_caption_sidecar",
@@ -526,6 +529,66 @@ def resolve_vod_package(package_dir: Path) -> VodPackageResult:
     )
 
 
+def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[CaptionCue]:
+    """Clip and rebase copies using the range actually encoded in this package.
+
+    Older preview packages keep that range in a sibling packaging receipt.
+    Never infer it from mutable asset metadata or alter source review records.
+    """
+    timeline = package_dir / "playback-timeline.json"
+    legacy = not timeline.exists()
+    if legacy:
+        digest = hashlib.sha256(package_dir.name.encode()).hexdigest()[:20]
+        timeline = package_dir.parent / f".civiccast-preview-{digest}.json"
+        if not timeline.exists():
+            return cues
+    try:
+        data = json.loads(timeline.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("expected an object")
+        if legacy:
+            if data.get("asset_id") != package_dir.name:
+                raise ValueError("packaging receipt belongs to another asset")
+            start = data.get("trim_in_seconds")
+            end = data.get("trim_out_seconds")
+            start = 0.0 if start is None else start
+        else:
+            if data.get("version") != 1:
+                raise ValueError("unsupported playback timeline version")
+            start = data["source_start_seconds"]
+            end = data["source_end_seconds"]
+        for value in (start, end):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+            ):
+                raise ValueError("source range must contain finite seconds")
+        if start is None or start < 0 or (end is not None and end <= start):
+            raise ValueError("invalid source range")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise OfflineCaptionPackageError(f"Cannot read packaged playback timeline: {exc}") from exc
+
+    mapped: list[CaptionCue] = []
+    for cue in cues:
+        clipped_start = max(cue.start_seconds, start)
+        clipped_end = cue.end_seconds if end is None else min(cue.end_seconds, end)
+        if clipped_end > clipped_start:
+            mapped.append(
+                cue.model_copy(
+                    update={
+                        "start_seconds": clipped_start - start,
+                        "end_seconds": clipped_end - start,
+                    }
+                )
+            )
+    if cues and not mapped:
+        raise OfflineCaptionPackageError(
+            "Reviewed captions fall outside the packaged playback range."
+        )
+    return mapped
+
+
 def attach_reviewed_captions(
     package_dir: Path,
     cues: list[CaptionCue],
@@ -575,6 +638,9 @@ def attach_reviewed_captions(
     if not cues:
         raise ValueError("At least one reviewed cue is required to publish a caption track.")
     package = resolve_vod_package(package_dir)
+    cues = caption_cues_for_package(package_dir, cues)
+    if spanish_cues:
+        spanish_cues = caption_cues_for_package(package_dir, spanish_cues)
     tracks = [CaptionHlsTrack(cues=cues, language=language, name=name)]
     if spanish_cues:
         tracks.append(

@@ -61,6 +61,7 @@ from civiccast.captions.vod import (
     SPANISH_CAPTION_LANGUAGE,
     ReviewedCaptions,
     attach_reviewed_captions,
+    caption_cues_for_package,
     published_caption_sidecar,
     queue_translated_captions,
     reviewed_caption_cues,
@@ -947,10 +948,14 @@ class OfflineCaptionJobWorker:
         """Attach reviewed English once, then keep the job active for Spanish."""
 
         sidecar = published_caption_sidecar(Path(row.package_dir))
-        english_vtt = render_webvtt(english_cues)
+        try:
+            playback_cues = caption_cues_for_package(Path(row.package_dir), english_cues)
+        except Exception as exc:
+            return self._record_failure(row, now=now, error=str(exc), stage="caption attach")
+        english_vtt = render_webvtt(playback_cues)
         try:
             english_is_current = (
-                row.published_cue_count == len(english_cues)
+                row.published_cue_count == len(playback_cues)
                 and sidecar.is_file()
                 and sidecar.read_text(encoding="utf-8") == english_vtt
             )
