@@ -4,6 +4,9 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Preserve the timezone of a contributor's requested air date so an accepted
+  submission can be sent to the schedule without a timezone validation error.
+
 - Show the selected channel's real outgoing HLS broadcast in Live Room, with
   incoming-source readiness reported separately. Before takeover the preview
   shows scheduled output.
