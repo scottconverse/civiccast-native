@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -202,7 +203,7 @@ def _cc_sequence(data: bytes, pid: int) -> list[int]:
 
 
 @pytest.mark.skipif(shutil.which("tsp") is None, reason="TSDuck tsp not installed")
-def test_real_tsp_relay_makes_cc_continuous_across_session_reset() -> None:
+def test_real_tsp_relay_makes_cc_continuous_across_session_reset(tmp_path: Path) -> None:
     """Feed two 'encoder sessions' (CC restarting from 0 — the #151 splice)
     through a real tsp continuity --fix relay and assert the OUTPUT counters
     are continuous mod 16 with no repeats/jumps.
@@ -232,7 +233,7 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset() -> None:
     # problem: it resurfaces later as an *unraisable* ResourceWarning, which
     # the "error" filterwarnings policy escalates onto whichever unrelated
     # test the garbage collector happens to interrupt.
-    with recv, send:
+    with recv, send, (tmp_path / "tsp-stderr.log").open("w+b") as stderr_log:
         recv.bind(("127.0.0.1", out_port))
         recv.settimeout(5.0)
 
@@ -244,9 +245,16 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset() -> None:
             local_out_port=17999,
             rcvbuf_bytes=1 << 20,
         )
-        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=stderr_log)
+
+        def relay_diagnostic() -> str:
+            stderr_log.seek(0)
+            stderr = stderr_log.read().decode("utf-8", errors="replace")[-8000:]
+            return f"tsp exit={proc.poll()}; args={args!r}; stderr={stderr!r}"
+
         try:
             time.sleep(1.0)  # let tsp bind
+            assert proc.poll() is None, relay_diagnostic()
             # Session A: CC 0..9. Session B (relaunch): CC restarts at 0 — the
             # exact discontinuity a headend logs.
             for cc in range(10):
@@ -266,7 +274,7 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset() -> None:
                 except TimeoutError:
                     break
             ccs = _cc_sequence(received, _PID)
-            assert len(ccs) >= 16, f"too few relayed packets: {len(ccs)}"
+            assert len(ccs) >= 16, f"too few relayed packets: {len(ccs)}; {relay_diagnostic()}"
             for a, b in itertools.pairwise(ccs):
                 assert b == (a + 1) % 16, f"CC discontinuity survived the relay: {ccs}"
         finally:
