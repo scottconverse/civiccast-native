@@ -4,6 +4,10 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Release an ended Live source immediately to the due program or configured
+  slate, including when the incoming feed remains connected through a schedule gap.
+- Normalize playlist timestamps before the persistent software H.264 encoder,
+  preserving its frame cadence across clip boundaries.
 - Allow the public player preview, including cached reloads, inside same-origin
   Live Room while retaining
   framing denial for operator pages and all cross-origin sites.

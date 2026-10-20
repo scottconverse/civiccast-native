@@ -3049,16 +3049,24 @@ def _production_pressure_playlist_graph(
     station's ``udpsink`` so each isolated worker remains clock-paced and its TS
     can be checked without binding a station port.
     """
+    from civiccast.egress.gst.bridge import encode_chain_from_profile
+    from civiccast.egress.models import CanonicalProfile
+
     source_graph = _multi_segment_playlist_reload_graph(clip_paths, video_caps=_PRODUCTION_CAPS)
     return graphmod.PlayoutGraph(
         sources=source_graph.sources,
-        encoder=(
-            _E("videoconvert"),
-            _E("videoscale"),
-            _E("videorate"),
-            _E("capsfilter", props={"caps": _PRODUCTION_CAPS}),
-            _E("openh264enc", props={"bitrate": 6_000_000}),
-            _E("h264parse", props={"config-interval": -1}),
+        # Use the actual station encoder, including its four-slice/four-thread
+        # OpenH264 fixups and bounded GOP. The hand-written encoder silently
+        # used single-thread defaults and did not represent installed playout.
+        encoder=encode_chain_from_profile(
+            CanonicalProfile(
+                width=1280,
+                height=720,
+                fps=30,
+                video_codec="openh264",
+                video_bitrate_kbps=6000,
+                gop_size=60,
+            )
         ),
         audio_encoder=graphmod.audio_encode_specs(
             codec="avenc_aac", bitrate_kbps=192, sample_rate=48_000

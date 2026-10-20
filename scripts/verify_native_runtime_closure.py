@@ -73,7 +73,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, TypedDict, cast
 
 from civiccast.native.runtime_closure import (
     EXCLUDED_GPL_FACTORIES,
@@ -649,6 +649,8 @@ class _GplFactoriesPayload(TypedDict):
 
 
 class _ChildPayload(TypedDict):
+    trace_pid: NotRequired[int]
+    trace_stages: NotRequired[dict[str, list[str]]]
     # False when GStreamer itself never initialized (e.g. `gi`/PyGObject not
     # importable in the hostile environment, or `Gst.init` raised). When
     # False, the four per-check fields below carry EMPTY placeholder data
@@ -864,6 +866,14 @@ def _harness_baseline_modules() -> frozenset[tuple[int, int]]:
         identity = _file_identity(Path(filename))
         if identity is not None:
             baseline.add(identity)
+    # Native bootstrap can also map files absent from sys.modules. Snapshot
+    # those exact file identities before gi/Gst loads; a later product mapping
+    # remains subject to the ordinary strict closure rules.
+    for mappings in _mapped_file_paths():
+        for filename in mappings:
+            identity = _file_identity(Path(filename))
+            if identity is not None:
+                baseline.add(identity)
     return frozenset(baseline)
 
 
@@ -1499,6 +1509,12 @@ def _child_main(
     # GStreamer's own start-up -- which is exactly where an outside-the-tree
     # load would happen.
     baseline = _harness_baseline_modules()
+    trace_stages: dict[str, list[str]] = {}
+
+    def snapshot(stage: str) -> None:
+        trace_stages[stage] = sorted({p for paths in _mapped_file_paths() for p in paths})
+
+    snapshot("before_gi_gst")
     accessed = _install_access_trace()
     # Started alongside the audit hook and BEFORE GStreamer loads, so native
     # opens during plugin-registry scanning -- the busiest native file-access
@@ -1517,6 +1533,8 @@ def _child_main(
         _close_native_canary(canary_handle)
         mapped_modules, mapped_data, unclassified_mappings = _mapped_file_paths()
         return _ChildPayload(
+            trace_pid=os.getpid(),
+            trace_stages=trace_stages,
             gst_init_ok=False,
             gst_init_detail=error_detail,
             factory_sweep=_FactorySweepPayload(missing=[], checked_count=0, detail=error_detail),
@@ -1534,9 +1552,12 @@ def _child_main(
             native_canary=canary_path,
         )
 
+    snapshot("after_gst_init")
     factory_sweep = _child_factory_sweep(gst)
+    snapshot("after_factory_sweep")
     plugin_origin = _child_plugin_origin(gst, tree)
     caption_leg = _child_caption_leg(gst, tree, probe_text=caption_probe_text)
+    snapshot("after_caption_leg")
     gpl_factories = _child_gpl_factories(gst)
 
     sampled, samples = sampler.stop()
@@ -1546,6 +1567,8 @@ def _child_main(
     # real pipelines pulled in, not just import-time.
     mapped_modules, mapped_data, unclassified_mappings = _mapped_file_paths()
     return _ChildPayload(
+        trace_pid=os.getpid(),
+        trace_stages=trace_stages,
         gst_init_ok=True,
         gst_init_detail=f"GStreamer initialized: {gst.version_string()}",
         factory_sweep=factory_sweep,
@@ -2020,6 +2043,15 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             declared_hits[path] = declared
 
     if undeclared:
+        stage_keys = tuple(
+            (stage, {_trace_path_key(raw) for raw in paths})
+            for stage, paths in payload.get("trace_stages", {}).items()
+        )
+
+        def first_stage(path: str) -> str:
+            key = _trace_path_key(path)
+            return next((stage for stage, keys in stage_keys if key in keys), "not sampled")
+
         observed_legs = (
             ("Python-mediated access", accessed),
             ("executable mapping", loaded),
@@ -2031,7 +2063,7 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             (label, {_trace_path_key(raw) for raw in paths}) for label, paths in observed_legs
         )
         shown = "\n  ".join(
-            f"{path} [observed via {', '.join(label for label, keys in observed_keys if _trace_path_key(path) in keys) or 'unattributed trace path'}]"
+            f"{path} [observed via {', '.join(label for label, keys in observed_keys if _trace_path_key(path) in keys) or 'unattributed trace path'}; first mapped at {first_stage(path)}; child pid={payload.get('trace_pid', 'unknown')}]"
             for path in undeclared[:20]
         )
         more = f"\n  ... and {len(undeclared) - 20} more" if len(undeclared) > 20 else ""

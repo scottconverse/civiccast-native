@@ -5486,6 +5486,52 @@ def test_playout_supervisor_live_takeover_and_handback_use_explicit_live_plan(
     assert any("released live source" in summary for summary in summaries)
 
 
+@pytest.mark.parametrize("program_due", [False, True])
+@pytest.mark.parametrize(
+    ("content_reload", "reload_refused"), [(False, False), (True, False), (True, True)]
+)
+def test_live_handback_cuts_open_feed_to_due_program_or_slate(
+    tmp_path: Path, program_due: bool, content_reload: bool, reload_refused: bool
+) -> None:
+    """End must release an open live feed without waiting for its EOS."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy_type = _FakeContentReloadStrategy if content_reload else _FakeNonReloadCapableStrategy
+    strategy = strategy_type(processes, started, reload_ok=not reload_refused)
+    scheduled = _source_plan_with_label(tmp_path, "Mayor interview")
+    slate = _slate_plan(tmp_path)
+    supervisor = PlayoutSupervisor(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: scheduled if program_due else None,
+        fallback_source_provider=lambda _config: slate,
+        encoder_strategy=strategy,
+    )
+    supervisor._live_takeover_plans["gov"] = _live_source_plan(tmp_path)
+    supervisor.process_once("gov")
+    live_process = started[0]
+
+    supervisor.request_live_handback(channel_id="gov")
+    if content_reload and not reload_refused:
+        assert strategy.reload_calls == [
+            scheduled.segments[0].label if program_due else slate.segments[0].label
+        ]
+        assert strategy.switch_at_end_of_current_calls == [False]
+        assert not live_process.terminated
+    else:
+        assert live_process.terminated, "An open live feed cannot finish a graceful drain"
+    supervisor.process_once("gov")
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == ("ON_AIR" if program_due else "FALLBACK_SLATE")
+    assert state.current_source_label == (
+        scheduled.segments[0].label if program_due else slate.segments[0].label
+    )
+
+
 def test_quality_recovery_cleanup_only_clears_its_matching_forced_slate(
     tmp_path: Path,
 ) -> None:

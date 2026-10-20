@@ -48,6 +48,8 @@ def test_encode_chain_from_profile_libx264_uses_bundled_openh264() -> None:
     specs = encode_chain_from_profile(profile)
     factories = [s.factory for s in specs]
     assert "openh264enc" in factories
+    assert specs[0].factory == "identity"
+    assert specs[0].props == {"single-segment": True}
     assert factories[-1] == "h264parse"
     encoder = next(s for s in specs if s.factory == "openh264enc")
     # openh264enc bitrate is bits/sec; the profile's 8000 kbit/s converts to 8_000_000.

@@ -296,7 +296,13 @@ def encode_chain_from_profile(
         encoder=encoder,
         cbr=cbr,
     )
-    return _apply_encoder_fixups(specs, encoder, profile.video_bitrate_kbps)
+    fixed = _apply_encoder_fixups(specs, encoder, profile.video_bitrate_kbps)
+    if encoder == "openh264enc":
+        # Concat emits a new segment with local PTS for each clip. OpenH264's
+        # framerate estimator reads raw PTS deltas, so normalize those segments
+        # onto one running timeline before they reach the persistent encoder.
+        return (ElementSpec("identity", props={"single-segment": True}), *fixed)
+    return fixed
 
 
 # Live ingest source elements by URI scheme. The v2 `live/` module ingests/records a

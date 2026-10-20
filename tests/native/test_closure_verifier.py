@@ -1060,6 +1060,36 @@ def test_memory_maps_separate_data_from_executable_or_unknown_regions(
     assert (str(resource) in unknown) is expected_unknown
 
 
+def test_native_bootstrap_baseline_excludes_only_preexisting_file_identities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    initial = tmp_path / "bootstrap-resource.pri"
+    later = tmp_path / "product-resource.pri"
+    initial.write_bytes(b"existing native bootstrap mapping")
+    later.write_bytes(b"new product mapping")
+    monkeypatch.setattr(verifier, "_mapped_file_paths", lambda: ([], [str(initial)], []))
+    baseline = verifier._harness_baseline_modules()
+    assert verifier._drop_baseline([str(initial), str(later)], baseline) == [str(later)]
+
+    tree = tmp_path / "tree"
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["mapped_data"] = verifier._drop_baseline([str(initial), str(later)], baseline)
+    payload["trace_pid"] = 1234
+    payload["trace_stages"] = {
+        "before_gi_gst": [str(initial)],
+        "after_factory_sweep": [str(initial), str(later)],
+    }
+    results = _interpret_child_output(
+        _fake_child(json.dumps(payload)), present_gpl_files=(), tree=tree
+    )
+    trace = next(result for result in results if result.name == "dynamic_trace")
+    assert trace.status == "FAIL"
+    assert str(later) in trace.detail
+    assert "first mapped at after_factory_sweep; child pid=1234" in trace.detail
+
+
 def test_executable_mapping_classification_keeps_every_file_alias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -6677,21 +6677,34 @@ class EgressDaemon:
             last_error=failure_reason,
             pid=_process_pid(process),
         )
-        if state is not None and state.state == "FALLBACK_SLATE" and process is not None:
+        expired_boundary = plan_end_at is not None and plan_end_at <= datetime.now(UTC)
+        if (
+            state is not None
+            and (state.state == "FALLBACK_SLATE" or expired_boundary)
+            and process is not None
+        ):
             # Issue #157 (CA-8 live finding): filler is interruptible by
             # design - a due program must not wait out the fill-target plan
-            # (after #154 that wait is up to an hour of slate). Programs
-            # keep the graceful drain above.
+            # (after #154 that wait is up to an hour of slate). An explicit
+            # boundary that has passed also cuts now, including End on an open
+            # live feed. Other programs retain their graceful drain.
             self._note_deliberate_kill(
                 channel_id,
-                "reload out of fallback slate: filler is interruptible by design "
+                "reload at an expired handoff boundary"
+                if expired_boundary
+                else "reload out of fallback slate: filler is interruptible by design "
                 "(issue #157), so the due program is not made to wait out the "
                 "fill-target plan; the restart carries the prepared plan",
             )
             _process_terminate(process)
 
     def _request_reload(
-        self, channel_id: str, *, command_id: str | None = None, slate_first: bool = False
+        self,
+        channel_id: str,
+        *,
+        command_id: str | None = None,
+        slate_first: bool = False,
+        handoff_at: datetime | None = None,
     ) -> None:
         """Bring the channel's next program on air.
 
@@ -6774,6 +6787,11 @@ class EgressDaemon:
                 force_fallback = recorded_force_fallback
                 rollover_plan_min_seconds = recorded_min_plan_seconds
                 self._rollover_plan_end_at.pop(channel_id, None)
+        # An explicit live End supplies its own boundary, rather than waiting
+        # for EOS from an open feed. The same horizon reaches asynchronous
+        # preparation and restart fallback, so those paths cannot lose it.
+        if handoff_at is not None:
+            rollover_plan_end_at = handoff_at
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         if process is None or _process_poll(process) is not None:
