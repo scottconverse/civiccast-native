@@ -1816,7 +1816,7 @@ The preview has video playback controls. Use **Play selected trim** to inspect t
 
 > **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). To expose these markers to residents, use **Sync from chapters** on an agenda, review its times, and publish that agenda.
 
-> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
+> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and Spanish caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 

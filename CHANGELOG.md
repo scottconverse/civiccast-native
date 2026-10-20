@@ -4,6 +4,8 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Preserve existing reviewed caption tracks when repackaging, retaining the
+  old playback package if the matching review cannot safely be attached.
 - Align published English and Spanish captions with the actual packaged trim,
   clipping excluded ranges while preserving source review timestamps.
 - Map chapter-to-agenda synchronization onto the trimmed playback timeline,

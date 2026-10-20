@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
@@ -212,3 +215,115 @@ def test_mark_packaged_persists_manifest_url(session_factory, tmp_path: Path) ->
 
     assert updated.manifest_url.endswith("/media/vod/persisted-package/playlist.m3u8")
     assert store.get_staff_row("persisted-package").manifest_url == updated.manifest_url
+
+
+@pytest.mark.parametrize("review_state", ["approved", "pending", "stale", "english_only"])
+def test_repackage_preserves_reviewed_tracks_or_keeps_original_package(
+    monkeypatch, tmp_path: Path, session_factory, review_state: str
+) -> None:
+    from civiccast.captions.models import CaptionCue
+    from civiccast.captions.review import (
+        CaptionReviewDecision,
+        CaptionReviewItemCreate,
+        InMemoryCaptionReviewStore,
+    )
+    from civiccast.captions.vod import attach_reviewed_captions
+    from civiccast.stream.config import ABR_LADDER, SLATE_RENDITION
+    from civiccast.translate.service import translated_cue_id
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"retained source")
+    store = PostgresAssetStore(session_factory)
+    store.ingest_upload(
+        asset_id="captioned-asset",
+        title="Captioned",
+        description=None,
+        file_path=str(source),
+        file_size_bytes=source.stat().st_size,
+        ffprobe_result=_PROBE,
+    )
+    asset = store.get_staff_row("captioned-asset").model_copy(
+        update={"trim_in_seconds": 2.0, "trim_out_seconds": 7.0}
+    )
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path))
+    package = tmp_path / ".civiccast-packages" / "captioned-asset"
+
+    def fake_packager(input_path, output_dir, **kwargs):
+        output_dir.mkdir(parents=True)
+        manifest = output_dir / "playlist.m3u8"
+        manifest.write_text("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100000\n720p/playlist.m3u8\n")
+        for config in [*ABR_LADDER, SLATE_RENDITION]:
+            rendition = output_dir / config.name
+            rendition.mkdir(exist_ok=True)
+            (rendition / "playlist.m3u8").write_text(
+                "#EXTM3U\n#EXTINF:8,\nsegment.ts\n#EXT-X-ENDLIST\n"
+            )
+        (output_dir / "playback-timeline.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "source_start_seconds": kwargs.get("trim_in_seconds", 0),
+                    "source_end_seconds": kwargs.get("trim_out_seconds"),
+                }
+            )
+        )
+        return SimpleNamespace(manifest_path=manifest, output_dir=output_dir)
+
+    fake_packager(source, package)
+    english = CaptionCue(
+        cue_id="sentence",
+        start_seconds=3,
+        end_seconds=6,
+        text="The meeting is open.",
+        confidence=0.95,
+    )
+    spanish = english.model_copy(
+        update={
+            "cue_id": translated_cue_id(english.cue_id, "es", source_text=english.text),
+            "text": "La sesion esta abierta.",
+        }
+    )
+    attach_reviewed_captions(
+        package, [english], spanish_cues=None if review_state == "english_only" else [spanish]
+    )
+    old_manifest = (package / "playlist.m3u8").read_bytes()
+    reviews = InMemoryCaptionReviewStore()
+    for cue, language in [(english, "en"), (spanish, "es")]:
+        reviews.create(
+            CaptionReviewItemCreate(
+                review_item_id=language, asset_id=asset.asset_id, cue=cue, language=language
+            )
+        )
+        if language == "en" or review_state != "pending":
+            reviews.approve(language, CaptionReviewDecision())
+    if review_state == "stale":
+        from civiccast.captions.review import CaptionReviewEdit
+
+        reviews.edit("en", CaptionReviewEdit(text="The meeting is now open."))
+    mock_store = MagicMock()
+    mock_store.get_staff_row.return_value = asset
+    mock_store.mark_packaged.return_value = asset
+    app = create_app()
+    app.state.store_bundle = replace(app.state.store_bundle, caption_review_store=lambda: reviews)
+    app.dependency_overrides[get_postgres_store] = lambda: mock_store
+    with (
+        patch("civiccast.schedule.router.pack_vod_asset", side_effect=fake_packager),
+        TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as client,
+    ):
+        response = client.post("/api/staff/assets/captioned-asset/package")
+    if review_state in {"pending", "stale"}:
+        assert response.status_code == 422
+        assert (package / "playlist.m3u8").read_bytes() == old_manifest
+        mock_store.mark_packaged.assert_not_called()
+        assert (
+            "00:00:03.000 --> 00:00:06.000" in (package / "captions" / "captions.vtt").read_text()
+        )
+    else:
+        assert response.status_code == 200
+        filenames = ["captions.vtt"]
+        if review_state != "english_only":
+            filenames.append("captions.es.vtt")
+        for filename in filenames:
+            assert "00:00:01.000 --> 00:00:04.000" in (package / "captions" / filename).read_text()
+        assert (package / "playlist.m3u8").read_text().count("TYPE=SUBTITLES") == len(filenames)
+    assert source.read_bytes() == b"retained source"

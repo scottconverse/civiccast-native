@@ -182,7 +182,7 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 - Every selected Spanish cue was rejected. Open the Review queue, choose Spanish, and edit or approve cues. The Spanish track attaches once review is complete and at least one cue is approved or edited. Under **Attach English after its review**, reviewed English can already be available.
 - Spanish is selected but no translation model is available. The row says to install or repair it under "Settings > AI Models > Translation" and run 'civiccast doctor'. With **Wait for every selected language**, CivicCast retries with growing waits; after its attempts run out, the card shows **Failed** and a records clerk must click **Retry** after repair. With **Attach English after its review**, reviewed English attaches while the active job waits for Spanish. English-only jobs do not encounter this hold.
 
-Published English and Spanish captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps.
+Published English and Spanish captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps. Repackaging rebuilds existing tracks from reviewed source cues before replacing the old package; incomplete matching review or an unusable caption range leaves the previous package intact.
 
 ## Review and correct captions
 

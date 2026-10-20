@@ -55,6 +55,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
+from civiccast.captions.vod import (
+    OfflineCaptionPackageError,
+    published_caption_sidecar,
+    reattach_packaged_captions,
+)
 from civiccast.live.recording_paths import REHEARSAL_RECORDING_TARGET_ID, local_recording_path
 from civiccast.platform.stores import resolve_app_store
 from civiccast.schedule.ingest import (
@@ -786,6 +791,7 @@ def get_staff_packaged_media(asset_id: str, file_path: str, request: Request) ->
 )
 async def package_staff_asset(
     asset_id: str,
+    request: Request,
     postgres_store: Any = Depends(get_postgres_store),
 ) -> StaffAssetRow:
     """Encode one validated or recorded asset into the local HLS media service.
@@ -877,6 +883,17 @@ async def package_staff_asset(
         if not staged_manifest.is_relative_to(staging_dir) or not staged_manifest.is_file():
             raise PackagingError("The packager did not produce a usable manifest.")
         source_stat = source.stat()
+        if published_caption_sidecar(package_dir).is_file():
+            review_store = resolve_app_store(
+                request, "caption_review_store", surface="Caption review store"
+            )
+            await asyncio.to_thread(
+                reattach_packaged_captions,
+                package_dir,
+                staging_dir,
+                asset_id=asset_id,
+                review_store=review_store,
+            )
         marker_temp.write_text(
             json.dumps(
                 {
@@ -905,6 +922,11 @@ async def package_staff_asset(
         if backup_dir.exists() and not package_dir.exists():
             backup_dir.rename(package_dir)
         _LOG.exception("Asset packaging failed for %s.", asset_id)
+        if isinstance(exc, OfflineCaptionPackageError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Caption preservation failed: {exc} The previous package was kept.",
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(

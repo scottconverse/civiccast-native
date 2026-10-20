@@ -112,6 +112,7 @@ __all__ = [
     "published_caption_sidecar",
     "published_spanish_caption_sidecar",
     "queue_translated_captions",
+    "reattach_packaged_captions",
     "resolve_vod_package",
     "reviewed_caption_cues",
     "transcribe_asset_captions",
@@ -675,6 +676,40 @@ def attach_reviewed_captions(
         spanish_sidecar_path=spanish_sidecar_path,
         spanish_cue_count=len(spanish_cues) if spanish_cues else 0,
     )
+
+
+def reattach_packaged_captions(
+    original_package: Path,
+    replacement_package: Path,
+    *,
+    asset_id: str,
+    review_store: CaptionReviewStore,
+) -> AttachedCaptions:
+    """Rebuild existing published tracks from reviewed source cues before swap.
+
+    A missing or undecided review must leave the old package intact rather
+    than silently drop captions or reuse timestamps from a different trim.
+    """
+    english = reviewed_caption_cues(review_store, asset_id)
+    if not english.review_complete or not english.cues:
+        raise OfflineCaptionPackageError(
+            "Complete English caption review before repackaging a captioned recording."
+        )
+    spanish_cues: list[CaptionCue] | None = None
+    if published_spanish_caption_sidecar(original_package).is_file():
+        expected_ids = {
+            translated_cue_id(cue.cue_id, SPANISH_CAPTION_LANGUAGE, source_text=cue.text)
+            for cue in english.cues
+        }
+        spanish = reviewed_caption_cues(
+            review_store, asset_id, language=SPANISH_CAPTION_LANGUAGE, cue_ids=expected_ids
+        )
+        if not spanish.review_complete or spanish.total != len(expected_ids) or not spanish.cues:
+            raise OfflineCaptionPackageError(
+                "Complete the matching Spanish caption review before repackaging."
+            )
+        spanish_cues = spanish.cues
+    return attach_reviewed_captions(replacement_package, english.cues, spanish_cues=spanish_cues)
 
 
 def queue_translated_captions(
