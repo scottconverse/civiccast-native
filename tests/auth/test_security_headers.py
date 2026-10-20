@@ -130,3 +130,32 @@ def test_staff_route_real_request_still_requires_bearer_token_with_cors_enabled(
     response = client.get("/api/staff/auth/me", headers={"Origin": "https://dashboard.example.org"})
 
     assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("path", "frame_policy"),
+    [
+        ("/?manifest=/media/live/government/playlist.m3u8", "SAMEORIGIN"),
+        ("/", "DENY"),
+        ("/?manifest=", "DENY"),
+        ("/operator/?manifest=/media/live/government/playlist.m3u8", "DENY"),
+        ("/health?manifest=/media/live/government/playlist.m3u8", "DENY"),
+        ("/api/public/app/config?manifest=/media/live/government/playlist.m3u8", "DENY"),
+    ],
+)
+def test_only_public_player_preview_allows_same_origin_framing(
+    monkeypatch, tmp_path, path: str, frame_policy: str
+) -> None:
+    portal_dist = tmp_path / "portal-dist"
+    portal_dist.mkdir()
+    (portal_dist / "index.html").write_text("<h1>Player</h1>", encoding="utf-8")
+    monkeypatch.setenv("CIVICCAST_PUBLIC_PORTAL_DIST", str(portal_dist))
+    monkeypatch.setenv("CIVICCAST_OPERATOR_CONSOLE_DIST", str(portal_dist))
+    response = TestClient(create_app()).get(path)
+
+    assert response.status_code == 200
+    assert response.headers["X-Frame-Options"] == frame_policy
+    ancestors = "'self'" if frame_policy == "SAMEORIGIN" else "'none'"
+    assert f"frame-ancestors {ancestors}" in response.headers["Content-Security-Policy"]
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+    assert "object-src 'none'" in response.headers["Content-Security-Policy"]

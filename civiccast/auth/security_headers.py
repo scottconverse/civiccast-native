@@ -16,7 +16,8 @@ allows ``'unsafe-inline'`` because Tailwind/React runtime style injection
 third-party script risk, and locking it down would require refactoring the
 frontend for no real security gain. ``worker-src blob:`` and
 ``media-src blob:`` are required for hls.js's worker-based transmuxer and
-MSE blob playback on the public portal.
+MSE blob playback on the public portal. The public player-only preview permits
+same-origin framing for Live Room; other pages deny framing.
 """
 
 from __future__ import annotations
@@ -49,13 +50,25 @@ async def security_headers_middleware(
     """Attach standard hardening headers to every response.
 
     Runs for API responses too (not just HTML) — the headers are harmless
-    on JSON and this keeps the middleware a single unconditional pass
-    rather than a route-shape-sniffing branch.
+    on JSON. Only the public player preview can be framed by this same origin;
+    operator pages and other routes retain the default framing denial.
     """
 
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
+    # Live Room embeds the public player, never the operator console. Keep both
+    # browser framing policies aligned and reject every cross-origin ancestor.
+    player_preview = (
+        request.method in {"GET", "HEAD"}
+        and request.url.path == "/"
+        and bool(request.query_params.get("manifest"))
+        and response.status_code == 200
+    )
+    frame_options = "SAMEORIGIN" if player_preview else "DENY"
+    csp = _CONTENT_SECURITY_POLICY
+    if player_preview:
+        csp = csp.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+    response.headers.setdefault("X-Frame-Options", frame_options)
     response.headers.setdefault("Referrer-Policy", "same-origin")
-    response.headers.setdefault("Content-Security-Policy", _CONTENT_SECURITY_POLICY)
+    response.headers.setdefault("Content-Security-Policy", csp)
     return response
