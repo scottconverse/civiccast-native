@@ -54,6 +54,10 @@ REQUIRED_CHECKS = (
     "captions",
     "t4_engine",
     "t5_soak",
+    # <gate-a-engine-soak> A no-op PASS when SOAK_MINUTES.txt <= 20 (or
+    # absent, as in the historical fixture) -- required only when the
+    # in-sandbox harness ran T6 instead of T5's health-only loop.
+    "t6_engine_soak",
     # <gate-a-audit-MA-25> Added by the installer-path audit batch: the clean
     # lane previously had no check at all on install-progress.log, so an
     # installer that exited 0 after `postinstall: COMPLETED WITH A D3
@@ -675,6 +679,80 @@ def test_t5_soak_with_zero_beats_fails(tmp_path: Path) -> None:
     result = gav.judge(run_dir, None, None)
     assert result["checks"]["t5_soak"]["status"] == "FAIL"
     assert "beats=0" in result["checks"]["t5_soak"]["detail"]
+    assert result["verdict"] == "FAIL"
+
+
+# --------------------------------------------------------------------------
+# <gate-a-engine-soak> T6, gated by SOAK_MINUTES.txt.
+# --------------------------------------------------------------------------
+
+
+def test_t6_engine_soak_is_a_noop_pass_when_soak_minutes_absent(tmp_path: Path) -> None:
+    """The fixture's own SOAK_MINUTES.txt (or its absence) must both be a
+    no-op PASS for t6_engine_soak -- exactly what a real Gate A CI run's
+    clean-lane evidence looks like, since Host-Launch-Sandbox-Test.ps1 always
+    writes the file but CI's own -SoakMinutes (10/20) never exceeds 20."""
+    run_dir = _synthetic_pass_dir(tmp_path)
+    soak_file = run_dir / "SOAK_MINUTES.txt"
+    if soak_file.exists():
+        assert int(soak_file.read_text(encoding="utf-8-sig").strip()) <= 20
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["t6_engine_soak"]["status"] == "PASS"
+    assert result["verdict"] == "PASS"
+
+
+@pytest.mark.parametrize("soak_minutes", [0, 1, 10, 20])
+def test_t6_engine_soak_is_a_noop_pass_at_or_below_20_minutes(
+    tmp_path: Path, soak_minutes: int
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "SOAK_MINUTES.txt").write_text(str(soak_minutes), encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["t6_engine_soak"]["status"] == "PASS"
+    assert "not required" in result["checks"]["t6_engine_soak"]["detail"]
+    assert result["verdict"] == "PASS"
+
+
+def test_t6_engine_soak_requires_a_pass_line_above_20_minutes(tmp_path: Path) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "SOAK_MINUTES.txt").write_text("480", encoding="utf-8")
+    t35 = run_dir / "T3T5-RESULT.txt"
+    with t35.open("a", encoding="utf-8") as fh:
+        fh.write("\nT6_RESULT=PASS beats=96 failed_beats=0\n")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["t6_engine_soak"]["status"] == "PASS"
+    assert result["verdict"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "t6_line",
+    [
+        "T6_RESULT=FAIL reason=1-failed-beat(s)-across-channels beats=96 failed_beats=1",
+        "T6_RESULT=FAIL_EARLY reason=channel(s)-not-live beats=2",
+        "T6_RESULT=SKIPPED(station-down)",
+    ],
+)
+def test_t6_engine_soak_fails_the_verdict_above_20_minutes_unless_pass(
+    tmp_path: Path, t6_line: str
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "SOAK_MINUTES.txt").write_text("480", encoding="utf-8")
+    t35 = run_dir / "T3T5-RESULT.txt"
+    with t35.open("a", encoding="utf-8") as fh:
+        fh.write("\n" + t6_line + "\n")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["t6_engine_soak"]["status"] == "FAIL"
+    assert result["verdict"] == "FAIL"
+
+
+def test_t6_engine_soak_fails_closed_when_line_is_missing_above_20_minutes(
+    tmp_path: Path,
+) -> None:
+    run_dir = _synthetic_pass_dir(tmp_path)
+    (run_dir / "SOAK_MINUTES.txt").write_text("480", encoding="utf-8")
+    result = gav.judge(run_dir, None, None)
+    assert result["checks"]["t6_engine_soak"]["status"] == "FAIL"
+    assert "T6_RESULT=" in result["checks"]["t6_engine_soak"]["detail"]
     assert result["verdict"] == "FAIL"
 
 
