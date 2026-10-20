@@ -55,11 +55,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
-from civiccast.captions.vod import (
-    OfflineCaptionPackageError,
-    published_caption_sidecar,
-    reattach_packaged_captions,
-)
 from civiccast.live.recording_paths import REHEARSAL_RECORDING_TARGET_ID, local_recording_path
 from civiccast.platform.stores import resolve_app_store
 from civiccast.schedule.ingest import (
@@ -800,6 +795,13 @@ async def package_staff_asset(
     place after the multivariant manifest exists. The database is updated
     last, so residents never receive a manifest URL for a partial package.
     """
+    # Deferred because captions -> live.finalization -> schedule imports this router.
+    from civiccast.captions.vod import (
+        OfflineCaptionPackageError,
+        published_caption_sidecar,
+        reattach_packaged_captions,
+    )
+
     if postgres_store is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
