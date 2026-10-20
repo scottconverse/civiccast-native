@@ -1128,7 +1128,11 @@ def build_publish_asset_status(
 ) -> PublishAssetStatus:
     public_record_required = _is_public_record(asset)
     surfaces = [
-        _normalized_notification_surface(surface)
+        # Visibility is authoritative; retain the durable delivery history when
+        # an operator removes an asset from the portal.
+        _blocked_portal_surface(asset)
+        if surface.id == "portal" and surface.state == "succeeded" and asset.published_at is None
+        else _normalized_notification_surface(surface)
         for surface in (record.surfaces if record is not None else build_initial_surfaces(asset))
     ]
     dashboard_state, dashboard_label = _dashboard_state(

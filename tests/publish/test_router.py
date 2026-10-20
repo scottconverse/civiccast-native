@@ -35,6 +35,14 @@ class FakeAssetStore:
         self._assets[self._assets.index(asset)] = updated
         return updated
 
+    def mark_unpublished(self, asset_id: str) -> StaffAssetRow:
+        asset = self.get_staff_row(asset_id)
+        if asset is None:
+            raise ValueError(f"Asset not found: {asset_id}")
+        updated = asset.model_copy(update={"published_at": None})
+        self._assets[self._assets.index(asset)] = updated
+        return updated
+
 
 @pytest.fixture
 def store() -> FakeAssetStore:
@@ -560,3 +568,32 @@ def test_unknown_publish_asset_returns_404(client: TestClient) -> None:
     response = client.get("/api/staff/publish/assets/missing-asset")
     assert response.status_code == 404
     assert response.json()["detail"] == "Asset not found: missing-asset"
+
+
+def test_unpublished_recording_returns_to_draft_without_erasing_delivery_history(
+    client: TestClient, publish_store: InMemoryPublishStore
+) -> None:
+    asset_id = "concert-archive"
+    approval = {
+        "operator_id": "staff-1",
+        "operator_display_name": "Avery Operator",
+        "approved_surface_ids": ["portal"],
+    }
+    assert (
+        client.post(f"/api/staff/publish/assets/{asset_id}/approve", json=approval).status_code
+        == 200
+    )
+    previous = publish_store.get_run(asset_id).model_dump()
+    removed = client.post(f"/api/staff/assets/{asset_id}/unpublish")
+    assert removed.status_code == 200
+    assert removed.json()["published_at"] is None
+    current = client.get(f"/api/staff/publish/assets/{asset_id}").json()
+    assert current["canonical_public"] is False
+    assert current["dashboard_state"] == "draft"
+    portal = next(surface for surface in current["surfaces"] if surface["id"] == "portal")
+    assert portal["state"] == portal["approval"] == "pending"
+    assert publish_store.get_run(asset_id).model_dump() == previous
+    republished = client.post(f"/api/staff/publish/assets/{asset_id}/approve", json=approval)
+    assert republished.status_code == 200
+    assert republished.json()["canonical_public"] is True
+    assert republished.json()["published_at"] is not None

@@ -134,7 +134,7 @@ Packaged is not the same as published. Next, go to the Publish screen ([Publishi
 2. In the **Technical** card, next to **Published**, click **Remove from portal**.
 3. Read the dialog and confirm. It says: "Residents will no longer be able to view or find it there. This only affects portal visibility -- the asset row, its media, and the Internet Archive / syndication copies are untouched."
 
-The video disappears from the resident portal. This needs publish_operator or setup_admin.
+The video disappears from the resident portal. Publish shows it as a draft awaiting portal approval again; previous delivery history is retained. This needs publish_operator or setup_admin.
 
 ## Check a video's readiness, hold it, or replace its file
 

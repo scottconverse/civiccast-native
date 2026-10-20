@@ -79,11 +79,12 @@ function identity(roles: string[]): StaffIdentityResponse {
 
 function renderScreen() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const screen = render(
     <QueryClientProvider client={client}>
       <AssetDetailScreen assetId="asset-1" onClose={() => {}} onEditTrim={() => {}} />
     </QueryClientProvider>,
   )
+  return { ...screen, client }
 }
 
 beforeEach(() => {
@@ -98,7 +99,9 @@ describe('AssetDetailScreen unpublish uses the shared ConfirmDialog, not window.
     vi.mocked(unpublishStaffAsset).mockResolvedValue(assetFixture({ published_at: null }))
     const confirmSpy = vi.spyOn(window, 'confirm')
 
-    const { findByRole, queryByRole } = renderScreen()
+    const { findByRole, queryByRole, client } = renderScreen()
+    client.setQueryDefaults(['publish-assets'], { staleTime: Infinity })
+    client.setQueryData(['publish-assets'], { assets: [{ asset_id: 'asset-1', canonical_public: true }] })
 
     fireEvent.click(await findByRole('button', { name: 'Remove from portal' }))
 
@@ -112,6 +115,7 @@ describe('AssetDetailScreen unpublish uses the shared ConfirmDialog, not window.
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove from portal' }))
     await waitFor(() => expect(unpublishStaffAsset).toHaveBeenCalledWith('asset-1'))
     await waitFor(() => expect(queryByRole('alertdialog')).toBeNull())
+    await waitFor(() => expect(client.getQueryState(['publish-assets'])?.isInvalidated).toBe(true))
   })
 
   it('unpublishes nothing when the operator cancels', async () => {
