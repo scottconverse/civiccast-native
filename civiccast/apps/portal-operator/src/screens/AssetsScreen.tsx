@@ -421,7 +421,6 @@ export function AssetsScreen({
                         </button>
                       )}
                       {(row.state === 'validated' || row.state === 'recorded') &&
-                        !row.manifest_url &&
                         row.file_path && (
                         <button
                           type="button"
@@ -433,15 +432,14 @@ export function AssetsScreen({
                             color: 'var(--cc-ink-2)',
                             background: 'var(--cc-surface)',
                           }}
-                          aria-label={`Package ${row.title} (${row.asset_id}) for resident playback`}
+                          aria-label={`${row.manifest_url ? 'Repackage' : 'Package'} ${row.title} (${row.asset_id}) for resident playback`}
                         >
                           {packageMutation.isPending && packageMutation.variables === row.asset_id
                             ? 'Packaging...'
-                            : 'Package for playback'}
+                            : row.manifest_url ? 'Repackage for playback' : 'Package for playback'}
                         </button>
                       )}
                       {(row.state === 'validated' || row.state === 'recorded') &&
-                        !row.manifest_url &&
                         row.file_path &&
                         identityQuery.isSuccess &&
                         !canPackage && (

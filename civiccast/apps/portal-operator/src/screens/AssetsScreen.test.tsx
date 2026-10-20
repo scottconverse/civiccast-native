@@ -148,6 +148,21 @@ describe('AssetsScreen action labels', () => {
     await waitFor(() => expect(packageStaffAsset).toHaveBeenCalledWith('captured-meeting'))
   })
 
+  it('lets an operator repackage a recorded asset after changing its trim', async () => {
+    const recorded = {
+      ...asset('trimmed-recording'),
+      manifest_url: '/media/vod/trimmed-recording/playlist.m3u8',
+      trim_in_seconds: 2,
+      trim_out_seconds: 40,
+    }
+    vi.mocked(listStaffAssets).mockResolvedValue([recorded])
+    vi.mocked(packageStaffAsset).mockResolvedValue(recorded)
+    const { findByRole } = renderScreen()
+    const button = await findByRole('button', { name: /^Repackage .* for resident playback$/ })
+    fireEvent.click(button)
+    await waitFor(() => expect(packageStaffAsset).toHaveBeenCalledWith('trimmed-recording'))
+  })
+
   it('shows but disables packaging when the signed-in role cannot package media', async () => {
     const row = { ...asset('sample-asset'), state: 'validated' as const }
     vi.mocked(listStaffAssets).mockResolvedValue([row])

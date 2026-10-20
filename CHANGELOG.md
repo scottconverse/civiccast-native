@@ -4,6 +4,8 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Offer **Repackage for playback** for recorded and validated assets that already
+  have a package, so later trim and replacement-source edits can reach playback.
 - Connect Live Room start/end to durable channel takeover/handback commands,
   recover the meeting after reload, and allow a new meeting after the prior one ends.
 - Prepare upcoming programs while a channel airs slate, so its first scheduled
