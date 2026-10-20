@@ -4,6 +4,8 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+- Connect Live Room start/end to durable channel takeover/handback commands,
+  recover the meeting after reload, and allow a new meeting after the prior one ends.
 - Prepare upcoming programs while a channel airs slate, so its first scheduled
   program and short successor can reuse the existing conform cache at air time.
 - Preserve the timezone of a contributor's requested air date so an accepted

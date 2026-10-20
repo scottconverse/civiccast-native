@@ -1197,7 +1197,7 @@ The most important idea in this chapter: CivicCast has several separate controls
 
 | What you press | What it really changes |
 | --- | --- |
-| **Live** > **Start Live Stream** | The *live session record* and the public "on air" status residents see on the portal home page. It does **not** start or switch the channel's video feed. |
+| **Live** > **Start Live Stream** | Re-checks the selected source, saves the session and queues a takeover of the channel to that source. Watch the outgoing feed to verify it has taken air. |
 | **Channels** > **Start**, **Stop**, **Restart feed**, **Finish current item, then stop** | Sends a command to the channel's feed program. This is what starts and stops the channel's actual video. |
 | **Channels** > **Take live** | Switches the channel from its schedule to a camera or encoder source right now. |
 | **Channels** > **Approve & put on air** | Approves one scheduled program so it plays at its scheduled time. It does not play it at the moment you click. |
@@ -1254,7 +1254,7 @@ If a Setup admin needs to change a source's address, they click **Edit source**,
 
 A live session is CivicCast's record of one meeting being broadcast. These steps are in the order the buttons enable themselves. *Pre-flight* is a set of nine tests CivicCast runs before it lets you mark the session on air.
 
-> **Warning:** the Live screen forgets your session if you leave it. See the last Known issue in this task before you open any other screen in the same browser tab. Keep Live in its own browser tab for the whole meeting.
+The browser remembers the current meeting. Reopening **Live** restores its session and channel from the station. After a meeting ends, choose **New live session**, then **Create live session** for the next meeting.
 
 1. Choose your channel and source and run **Check source** until it says **Delivering** (see the previous task).
 2. In the **Session controls** box, click **Create live session**. The tag at the top changes from "No session" to **Idle**. The session is always named "Council live room".
@@ -1268,7 +1268,7 @@ You should see the session tag change to **On air**. If the checks fail at this 
 
 > **Warning:** **Start Live Stream** has **no confirmation box**. The resident portal checks the session against the channel's outgoing feed. An absent, stopped or non-program feed is shown as starting, interrupted or failed rather than as a working live broadcast. Watch the channel's actual output when starting a meeting (see [Start a channel](#start-a-channel)).
 
-> **Known issue (beta.11):** in the code we read, **Start Live Stream** changes the session record and the public status only. It does not start the channel's feed, and it does not put your source on the channel. The error message above says "No broadcast was started", but a successful click does not start one either. To put a camera on a channel, use **Take live** on the Channels screen. If the channel's own feed is running, residents see it whether or not you press **Start Live Stream**.
+**Start Live Stream** now queues the actual channel takeover as well as saving the session. A successful response confirms the command was queued; verify the selected source in the **On-air preview** and the channel output. A stopped channel starts through the same takeover path.
 
 The nine rows in the checklist are: **Network reachable**, **Recording storage**, **AI runtime**, **Live source**, **Recording target**, **Operator confirmation**, **Syndication**, **Internet Archive** and **NAS handoff**. Five must pass before you go on air: Network reachable, Recording storage, Live source, Recording target and Operator confirmation. AI runtime may be **not configured** without blocking, but a probed runtime that **fails** also blocks. Syndication, Internet Archive and NAS handoff report status and never block; they describe what will happen to the recording after the meeting. A row for one of those three can show a red border while the broadcast can still go ahead. What the five required checks test:
 
@@ -1282,9 +1282,8 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 
 > **Known issue (beta.11):** three more things on this screen are easy to misread. First, the **Safe to broadcast** panel near the top is worked out from the last test on the Readiness screen, not from the checklist on this page, so it can say "Check before meeting" while this page says "Pre-flight ready". Second, the hint on a failed Operator confirmation row says to tick the box "below", but the box is in **Session controls**, above the checklist. Third, the empty checklist says "Run pre-flight to populate the nine-check contract." It means "Click **Run pre-flight** to check the camera, the recording drive, the internet and your confirmation."
 
-> **Known issue (beta.11):** **Create live session** appears to work only once. The session id is fixed ("council-live-room"). In the code we read, a second **Create live session**, on a later night, is refused with "LiveSession already exists: council-live-room", and nothing on the screen lists or reopens an old session. We read this in the code and did not repeat it on a running station. Until the product changes, plan on one live session per station and ask your IT person how to clear it. The next Known issue explains what happens if you refresh the page.
 
-> **Warning:** During an active session, keep the Live page open. The error panel now advises you to ask the station administrator to check the CivicCast service and database, and warns that refreshing can lose the in-page session. If you refresh, close the tab, or leave Live in the same tab, the buttons can return to **Create live session** while **End Live Stream** is disabled. The fixed session id may then prevent creating another session, and the page has no way to reopen or end the existing one. Open **Channels** or the **Control Room** in a second browser tab or window.
+When you reopen **Live** in this browser, it recovers the saved meeting so **End Live Stream** remains available for an on-air session. If recovery fails, use **Retry session recovery**. Starting another meeting while one is on air is blocked.
 
 ### End a live session and find the recording
 
@@ -1295,7 +1294,7 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 
 If it fails, the panel shows the reason (or "Finalization failed."). Fix the cause, then click **Retry finalization**. See [After the meeting](#ch-after-meeting) for what to do with the saved recording.
 
-> **Warning:** the box says "Residents watching the live stream lose it immediately." In the code we read, that is not true. **End Live Stream** only marks the session as ended and starts the saving of the recording. It does not stop the channel's feed, so the channel keeps broadcasting. To take the channel off the air, use **Stop** or **Finish current item, then stop** on the Channels screen.
+**End Live Stream** queues a return to scheduled output and closes this meeting's takeover. It keeps the channel running. To take the entire channel off the air, use **Stop** or **Finish current item, then stop** on Channels. Watch the outgoing feed to verify the handback.
 
 > **Known issue (beta.11):** the saving step looks for a recording file named after the session in the recording location (for example `council-live-room.mp4`). Nothing on this screen creates that file, and in testing we could not confirm which part of CivicCast does. If the panel stays on **Waiting** or fails, ask your IT person to check that the recording location is receiving the meeting recording. By default CivicCast gives up waiting for the file 30 minutes after **End Live Stream**, and the panel then reads "No recording file was found for this session (expected ...)". While CivicCast is still retrying by itself the tag reads "Retrying". **Retry finalization** appears only after CivicCast has given up. It is shown to every role, but only a Meeting operator can use it.
 
@@ -1646,18 +1645,18 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 4. If you use the Control Room: open a **Test Mode** session, dry-run and record one cue, and end it. Check that no amber "Production control unavailable" bar appears.
 5. If you use remote guests: open the room, send the invite links, and ask guests to join early so they are in the waiting room.
 6. On **Channels**, check whether **Keep this channel on air** is ticked, and whether you expect it to be.
-7. On **Live**, click **Create live session** now. If it is refused with "LiveSession already exists: council-live-room", tell IT now, not when the meeting starts. If it works, leave that browser tab open and do not refresh it; you will not need to create the session again in step 9.
+7. On **Live**, check the recovered session. If the previous meeting has ended, choose **New live session**. Click **Create live session** for the new meeting.
 
 **At the start**
 
 8. If you want a lower-third banner, set it first (see step 11). Then, if the channel is stopped, click **Start**, confirm **Start feed**, and watch for **On air** or **Showing slate**.
-9. On the open **Live** tab (create the live session now if you did not in step 7), click **Start pre-flight**, tick the confirmation box, click **Run pre-flight**, and click **Start Live Stream** only when the channel really is broadcasting. Do not refresh the page after this.
-10. To go to the camera, run **Check source** (it expires after 30 seconds by default), then **Take live**, **Confirm take live**. The red badge shows only who took over, not the source, so read the **Source:** line in the **Outgoing channel feed** box (it can take up to 30 seconds to update) and watch the channel's own output.
+9. On **Live**, create the session if needed, click **Start pre-flight**, tick the confirmation box, click **Run pre-flight**, and click **Start Live Stream** when the required checks pass. This queues the selected source onto the channel.
+10. Verify the camera in the **On-air preview** and the outgoing channel feed. If you operate through **Channels** instead of Live Room, use **Check source**, **Take live**, **Confirm take live** there; do not request a second takeover for a channel already live.
 11. A lower-third banner is meant to take effect at the channel's next start (we have not watched one appear). On a channel that is already running it appears only when the channel next restarts or swaps content.
 
 **During the meeting**
 
-12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh **Live**, which can lose its in-page session. Control Room restores its selected surface and open session after refresh; repeat any cue dry run before firing.
+12. Keep **Live** and Control Room in their own tabs for convenience. Both restore their saved session after refresh; repeat any cue dry run before firing.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
 14. Admit remote guests one at a time, then click **Put on air** for each guest you want in the live mix. Keep the VDO.Ninja director open and verify the channel output.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.

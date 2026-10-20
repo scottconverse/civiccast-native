@@ -148,6 +148,45 @@ class TakeoverService:
         """Begin a live takeover. Raises AlreadyLiveError (409) if one is open,
         TakeoverNotReadyError (422) if the channel is missing/disabled or no
         ready live source can be prepared."""
+        session = self.prepare_take(
+            channel_id=channel_id,
+            operator_id=operator_id,
+            operator_name=operator_name,
+            reason=reason,
+            path_id=path_id,
+            duration_seconds=duration_seconds,
+        )
+        now = session.took_over_at
+        token = session.session_id.removeprefix("takeover-")
+        stored = self._audit.append(session)
+        # Queue the engine command AFTER the durable session exists, so the undo
+        # trail is never lost (mirrors the commit gate's persist-before-dispatch).
+        self._egress.enqueue_command(
+            EgressCommand(
+                channel_id=channel_id,
+                action="takeover",
+                issued_at=now,
+                issued_by=operator_id,
+                command_id=f"takeover-{token}",
+            )
+        )
+        return stored
+
+    def prepare_take(
+        self,
+        *,
+        channel_id: str,
+        operator_id: str,
+        operator_name: str | None = None,
+        reason: str | None = None,
+        path_id: str | None = None,
+        duration_seconds: float = 3600.0,
+    ) -> TakeoverSession:
+        """Validate and build a takeover without persisting or dispatching it.
+
+        Live Room commits this plan together with its session transition and
+        engine command, so a failed transition cannot leave an orphaned cut.
+        """
         config = self._egress.get_config(channel_id)
         if config is None:
             raise TakeoverNotReadyError(f"Channel {channel_id!r} has no configured egress channel.")
@@ -194,7 +233,7 @@ class TakeoverService:
 
         now = self._clock()
         token = self._id_factory()
-        session = TakeoverSession(
+        return TakeoverSession(
             session_id=f"takeover-{token}",
             channel_id=channel_id,
             source_ref=segment.source_ref or path_id or ingest_plan.recommended_path_id,
@@ -207,19 +246,6 @@ class TakeoverService:
             source_plan_json=plan.model_dump_json(),
             notes=None,
         )
-        stored = self._audit.append(session)
-        # Queue the engine command AFTER the durable session exists, so the undo
-        # trail is never lost (mirrors the commit gate's persist-before-dispatch).
-        self._egress.enqueue_command(
-            EgressCommand(
-                channel_id=channel_id,
-                action="takeover",
-                issued_at=now,
-                issued_by=operator_id,
-                command_id=f"takeover-{token}",
-            )
-        )
-        return stored
 
     def handback(
         self,

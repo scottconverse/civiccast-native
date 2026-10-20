@@ -63,6 +63,7 @@ import type {
 const DEFAULT_CHANNEL_ID = 'government'
 const CHANNEL_STORAGE_KEY = 'civiccast.liveRoom.channelId'
 const SESSION_ID = 'council-live-room'
+const SESSION_STORAGE_KEY = 'civiccast.liveRoom.sessionId'
 const SESSION_TITLE = 'Council live room'
 const EMPTY_SOURCES: LiveSourceResponse[] = []
 
@@ -111,7 +112,7 @@ function ErrorPanel({ title, message }: { title: string; message: string }) {
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         <strong>Next step.</strong> Ask your station administrator to check the
         CivicCast service and database. Keep this screen open during an active
-        session; refreshing can lose the in-page session.
+        session. Reopen Live to recover the saved session.
       </div>
     </div>
   )
@@ -1037,7 +1038,33 @@ export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation 
 }
 
 export function LiveRoomScreen() {
-  const [session, setSession] = useState<LiveSessionResponse | null>(null)
+  const [sessionOverride, setSession] = useState<LiveSessionResponse | null>(null)
+  const [sessionId, setSessionId] = useState(() => {
+    try { return localStorage.getItem(SESSION_STORAGE_KEY) ?? SESSION_ID }
+    catch { return SESSION_ID }
+  })
+  const sessionQuery = useQuery({
+    queryKey: ['live-room-session', sessionId],
+    queryFn: async () => {
+      try { return await getLiveSession(sessionId) }
+      catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null
+        throw error
+      }
+    },
+    enabled: sessionOverride == null,
+    retry: false,
+  })
+  const session = sessionOverride ?? sessionQuery.data ?? null
+  const newMeeting = () => {
+    const nextId = `council-live-room-${Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16)).join('-')}`
+    setSessionId(nextId)
+    try { localStorage.setItem(SESSION_STORAGE_KEY, nextId) } catch { /* optional persistence */ }
+    setSession(null)
+    setPreflight(null)
+    setOperatorConfirmed(false)
+    setActionError(null)
+  }
   const [preflight, setPreflight] = useState<PreflightEvaluation | null>(null)
   const [selectedSourceId, setSelectedSourceId] = useState('')
   const [operatorConfirmed, setOperatorConfirmed] = useState(false)
@@ -1048,13 +1075,14 @@ export function LiveRoomScreen() {
     pendingConfirm?.run()
     setPendingConfirm(null)
   }
-  const [channelId, setChannelId] = useState<string>(() => {
+  const [selectedChannelId, setChannelId] = useState<string>(() => {
     try {
       return window.localStorage.getItem(CHANNEL_STORAGE_KEY) ?? DEFAULT_CHANNEL_ID
     } catch {
       return DEFAULT_CHANNEL_ID
     }
   })
+  const channelId = session?.channel_id ?? selectedChannelId
   const selectChannel = (next: string) => {
     setChannelId(next)
     try {
@@ -1148,12 +1176,15 @@ export function LiveRoomScreen() {
   const createMutation = useMutation({
     mutationFn: () =>
       createLiveSession({
-        live_session_id: SESSION_ID,
+        live_session_id: sessionId,
         channel_id: channelId,
         title: SESSION_TITLE,
         notes: 'Created from the operator live room.',
       }),
-    onSuccess: setSession,
+    onSuccess: (next) => {
+      setSession(next)
+      try { localStorage.setItem(SESSION_STORAGE_KEY, next.live_session_id) } catch { /* optional persistence */ }
+    },
     onError: (err) => setActionError(apiMessage(err, 'Could not create session.')),
   })
 
@@ -1384,10 +1415,21 @@ export function LiveRoomScreen() {
                 </span>
               </div>
               <div className="mt-3 flex flex-col gap-2">
+                {session && (session.state === 'ending' || session.state === 'recorded') && (
+                  <button type="button" onClick={newMeeting} disabled={!canOperateMeeting}>
+                    New live session
+                  </button>
+                )}
+                {sessionQuery.isError && !session && (
+                  <div role="alert">
+                    <p>{apiMessage(sessionQuery.error, 'Could not restore the live session.')}</p>
+                    <button type="button" onClick={() => void sessionQuery.refetch()}>Retry session recovery</button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => createMutation.mutate()}
-                  disabled={!canOperateMeeting || createMutation.isPending || session != null}
+                  disabled={!canOperateMeeting || createMutation.isPending || sessionQuery.isPending || sessionQuery.isError || session != null}
                   className="rounded-md px-3 py-2 text-sm font-semibold"
                   style={{ background: canOperateMeeting && !session ? 'var(--cc-brand)' : 'var(--cc-surface-3)', color: canOperateMeeting && !session ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}
                 >

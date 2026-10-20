@@ -122,6 +122,7 @@ class PlayoutSupervisor(EgressDaemon):
                 channel_id,
             )
             return
+        self._operator_stopped_channels.discard(channel_id)
         self.request_live_takeover(channel_id=channel_id, live_source_plan=plan)
 
     def request_live_takeover(

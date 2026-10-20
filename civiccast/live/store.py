@@ -39,6 +39,7 @@ a UX before the contract is fixed.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
@@ -47,6 +48,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from civiccast.egress.models import EgressCommandDb, TakeoverAuditRecordDb, TakeoverSession
+from civiccast.egress.takeover_service import AlreadyLiveError
 from civiccast.live.models import (
     _LIVE_SESSION_STATES,
     LIVE_SESSION_STATE_ENDING,
@@ -346,6 +349,7 @@ class LiveSessionStore:
         live_session_id: str,
         *,
         now: datetime | None = None,
+        takeover: TakeoverSession | None = None,
     ) -> LiveSessionResponse:
         """Transition ``preflight`` -> ``on_air``; stamp ``started_at`` and
         the resolved recording target (provenance, Beta sprint B1).
@@ -363,6 +367,7 @@ class LiveSessionStore:
         return self._transition(
             live_session_id,
             "go_on_air",
+            takeover=takeover,
             extra_setters={
                 "started_at": now or datetime.now(UTC),
                 "recording_target_id": target_id,
@@ -393,16 +398,18 @@ class LiveSessionStore:
         live_session_id: str,
         *,
         now: datetime | None = None,
+        operator_id: str | None = None,
     ) -> LiveSessionResponse:
         """Transition ``on_air`` -> ``ending`` and stamp ``ended_at``.
 
-        Slice 1 Commit 7 will chain a recording-finalization handler off
-        this transition; in this commit the store advances the state
-        and stamps ``ended_at`` only.
+        With an operator identity, close this Live Room session's own takeover
+        and queue its handback in the same transaction. Recording finalization
+        observes the resulting ending state separately.
         """
         return self._transition(
             live_session_id,
             "end_broadcast",
+            handback_operator_id=operator_id,
             extra_setters={"ended_at": now or datetime.now(UTC)},
         )
 
@@ -425,6 +432,8 @@ class LiveSessionStore:
         transition_name: str,
         *,
         extra_setters: dict[str, object] | None = None,
+        takeover: TakeoverSession | None = None,
+        handback_operator_id: str | None = None,
     ) -> LiveSessionResponse:
         """Run a state transition as a conditional UPDATE.
 
@@ -453,6 +462,54 @@ class LiveSessionStore:
             # without dragging the cursor-result type into the public API.
             matched: int = result.rowcount  # type: ignore[attr-defined]
             if matched == 1:
+                # Session state, takeover ownership and its engine command must
+                # commit together. No successful response can omit dispatch;
+                # a failed write cannot leave a session falsely on air.
+                takeover_id = "live-room-" + hashlib.sha256(live_session_id.encode()).hexdigest()
+                if takeover is not None:
+                    current = session.execute(
+                        select(LiveSession).where(LiveSession.live_session_id == live_session_id)
+                    ).scalar_one()
+                    if current.channel_id != takeover.channel_id:
+                        raise ValueError("Live session and takeover channels must match.")
+                    active = (
+                        session.execute(
+                            select(TakeoverAuditRecordDb).where(
+                                TakeoverAuditRecordDb.channel_id == current.channel_id,
+                                TakeoverAuditRecordDb.returned_at.is_(None),
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if active is not None:
+                        raise AlreadyLiveError(f"Channel {current.channel_id!r} is already live.")
+                    owned_takeover = takeover.model_copy(update={"session_id": takeover_id})
+                    session.add(TakeoverAuditRecordDb.from_session(owned_takeover))
+                    session.add(
+                        EgressCommandDb(
+                            command_id="takeover-" + takeover_id,
+                            channel_id=takeover.channel_id,
+                            action="takeover",
+                            issued_at=takeover.took_over_at,
+                            issued_by=takeover.operator_id,
+                        )
+                    )
+                if handback_operator_id is not None:
+                    active = session.get(TakeoverAuditRecordDb, takeover_id)
+                    if active is not None and active.returned_at is None:
+                        ended_at = setters["ended_at"]
+                        assert isinstance(ended_at, datetime)
+                        active.returned_at = ended_at
+                        session.add(
+                            EgressCommandDb(
+                                command_id="handback-" + takeover_id,
+                                channel_id=active.channel_id,
+                                action="handback",
+                                issued_at=ended_at,
+                                issued_by=handback_operator_id,
+                            )
+                        )
                 session.commit()
                 updated_row = session.execute(
                     select(LiveSession).where(LiveSession.live_session_id == live_session_id)

@@ -70,7 +70,12 @@ from civiccast.auth.roles import require_any_role
 from civiccast.cable.channel import LOCAL_MEDIA_BASE_URL_ENV, local_live_manifest_path
 from civiccast.common.trusted_proxy import resolve_client_ip
 from civiccast.egress.headend import resolve_local_hls_directory
-from civiccast.egress.router import get_egress_store
+from civiccast.egress.router import _staff_operator, get_egress_store, get_takeover_service
+from civiccast.egress.takeover_service import (
+    AlreadyLiveError,
+    TakeoverNotReadyError,
+    TakeoverService,
+)
 from civiccast.live.models import (
     LIVE_SESSION_STATE_ON_AIR,
     LiveFinalizationStatusResponse,
@@ -760,6 +765,8 @@ def evaluate_preflight(
 def go_on_air(
     live_session_id: str,
     payload: PreflightInputs,
+    request: Request,
+    takeover_service: TakeoverService | None = Depends(get_takeover_service),
     live_session_store: Any = Depends(get_live_session_store),
     preflight_evaluator: Any = Depends(get_preflight_evaluator),
 ) -> LiveSessionResponse:
@@ -818,8 +825,23 @@ def go_on_air(
 
     from civiccast.live.store import LiveSessionNotFoundError, LiveSessionStateError
 
+    service = _require_store(takeover_service, surface="live broadcast dispatch")
+    identity = _staff_operator(request)
     try:
-        return _cast_response(store.go_on_air(live_session_id), LiveSessionResponse)
+        takeover = service.prepare_take(
+            channel_id=current.channel_id,
+            operator_id=identity.operator_id,
+            operator_name=identity.operator_display_name,
+            path_id=payload.live_source_id,
+            reason=f"Live Room session {live_session_id}",
+        )
+        return _cast_response(
+            store.go_on_air(live_session_id, takeover=takeover), LiveSessionResponse
+        )
+    except AlreadyLiveError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except TakeoverNotReadyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except LiveSessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -842,6 +864,7 @@ def go_on_air(
 )
 def end_broadcast(
     live_session_id: str,
+    request: Request,
     live_session_store: Any = Depends(get_live_session_store),
 ) -> LiveSessionResponse:
     """Advance the session from ``on_air`` to ``ending``.
@@ -859,7 +882,10 @@ def end_broadcast(
     from civiccast.live.store import LiveSessionNotFoundError, LiveSessionStateError
 
     try:
-        return _cast_response(store.end_broadcast(live_session_id), LiveSessionResponse)
+        return _cast_response(
+            store.end_broadcast(live_session_id, operator_id=_staff_operator(request).operator_id),
+            LiveSessionResponse,
+        )
     except LiveSessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

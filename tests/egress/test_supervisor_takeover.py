@@ -124,6 +124,18 @@ def test_takeover_command_drives_a_seamless_content_reload(tmp_path: Path) -> No
     assert strategy.swaps == []  # live is not a selector pad
 
 
+def test_explicit_takeover_supersedes_prior_operator_stop(tmp_path: Path) -> None:
+    sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
+    sup._operator_stopped_channels.add("public")
+    stopped_during_reload: list[bool] = []
+    sup._request_reload = lambda cid: stopped_during_reload.append(
+        sup.has_operator_stop_intent(cid)
+    )
+    sup._process_command(_command("takeover"))
+    assert stopped_during_reload == [False]
+    assert not sup.has_operator_stop_intent("public")
+
+
 def test_handback_command_clears_takeover_and_reloads_scheduled(tmp_path: Path) -> None:
     strategy = _SwapStrategy()
     sup = _supervisor(_FakeReader(_session()), strategy, tmp_path)
