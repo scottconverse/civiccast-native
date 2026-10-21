@@ -317,7 +317,7 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: diff preserves all other package versions and hashes; resolver attribution
 #: comments were refreshed, and the PyAV provenance override remains intact.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "70cf9a3661acea3fd856e5875dc77f4749fa4271aacd5dd575c72d75c99cea20"
+    "0949e278b925a932edbc4a18d43990e62deea3bab35c508d8faeb702b3b2fdce"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).
