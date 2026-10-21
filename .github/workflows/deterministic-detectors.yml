@@ -143,7 +143,7 @@ jobs:
     name: mutation-report
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       CIVICCAST_RUN_POSTGRES_TESTS: "1"
     steps:
@@ -275,6 +275,15 @@ jobs:
               echo "source_paths = $SOURCE_PATHS"
               echo "also_copy = $ALSO_COPY"
               echo 'runner = "pytest -q --tb=no -x"'
+              # Surface progress instead of mutmut's CatchOutput buffering:
+              # debug=true makes CatchOutput.start() call stop() immediately
+              # (stdout/stderr stream to job log) and prepends -vv to every
+              # pytest invocation, including the clean-baseline pass that was
+              # still running at 45 min when run 39666692394 was killed. This
+              # is mutmut's own supported switch (Config.get().debug) and does
+              # not alter exclusion lists, assertions, seeded tests, force-fail
+              # calibration, or the exit-code propagation this job depends on.
+              echo 'debug = true'
               # These modules bind safety claims to the exact source tree.
               # Deliberate source mutations must make their assertions fail, so normal
               # CI owns them while mutmut excludes these modules from mutation executions.

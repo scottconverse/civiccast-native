@@ -22,11 +22,11 @@ def test_mutation_job_covers_complete_changed_surface_and_rejects_fork_pr_comput
     text, parsed = _workflow()
     mutation = parsed["jobs"]["mutation-report"]
 
-    # Was "360" -- GitHub's default, not a measured need. mutation-report is
-    # permanently informational and diff-scoped to the PR's changed non-test
-    # files, so it has no business holding a runner for six hours. Capped with
-    # every other job by scripts/policy/check_workflow_timeouts.py.
-    assert mutation["timeout-minutes"] == "120"
+    # 360 is a measured bounded runtime allowance, not an acceptance waiver:
+    # run 39666692394 showed 63-min stats PASS and a still-live clean lane at
+    # 45 min when the old 120 cap cancelled; the full phase is still unmeasured.
+    assert mutation["timeout-minutes"] == "360"
+    assert "echo 'debug = true'" in text
     assert (
         mutation["if"] == "${{ github.event_name != 'pull_request' || "
         "github.event.pull_request.head.repo.full_name == github.repository }}"
