@@ -2,7 +2,7 @@
 
 CivicCast combines native Windows playout, local AI captions, station backup,
 staff administration, and resident publication in one installation. This
-architecture describes the Beta 19 source.
+architecture describes the Beta 20 candidate source.
 
 The current published download is signed `v1.0.0-beta.19` ([release
 page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19)).
