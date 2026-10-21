@@ -21,7 +21,6 @@ from pathlib import Path
 import pytest
 
 from scripts import render_user_manual
-from scripts.policy.check_v17_adoption_gate import PUBLISHED_RELEASE_TAG
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SOURCE = _REPO_ROOT / "docs" / "USER-MANUAL.md"
@@ -52,17 +51,17 @@ def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
     assert "package record](" in manual
     assert "remains historical" in manual
     manual_version = render_user_manual._source_version_token(manual)
-    if manual_version != PUBLISHED_RELEASE_TAG:
-        edition = " ".join(
-            manual.split("## Edition and package evidence", 1)[1].split("## ", 1)[0].split()
-        )
-        published_edition = "Beta " + PUBLISHED_RELEASE_TAG.rsplit("beta.", 1)[1]
-        assert (
-            f"For an installed {published_edition} package, use the manual bundled with that release"
-            in edition
-        )
-        assert "have not replaced the published installer or its package evidence" in edition
-        assert "For an installed package, use its matching Help and verification record" in edition
+    edition = " ".join(
+        manual.split("## Edition and package evidence", 1)[1].split("## ", 1)[0].split()
+    )
+    edition_number = manual_version.rsplit("beta.", 1)[1]
+    assert f"This manual identifies the Beta {edition_number} software edition." in edition
+    assert (
+        "For publication, download, installation, and acceptance status, use the matching "
+        "release page and the version-specific verification record; do not infer status from this manual."
+        in edition
+    )
+    assert "For an installed package, use its matching Help and verification record" in edition
     assert "is the current native-line pre-release" not in manual
 
 
