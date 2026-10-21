@@ -4,6 +4,13 @@
 
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
+Beta20 caption limitation accepted by the owner: the resource-isolated installed
+observation measured approximately 8.8 seconds from one decoded-audio callback to
+its showing caption cue and showed previous-program captions over the following
+program picture. This documents accepted behavior, not a caption fix or universal
+latency bound. Sampled transcription includes substitutions; full-run input
+coverage and human-verified accuracy remain unverified.
+
 - Release an ended Live source immediately to the due program or configured
   slate, including when the incoming feed remains connected through a schedule gap.
 - Normalize playlist timestamps before the persistent software H.264 encoder,
