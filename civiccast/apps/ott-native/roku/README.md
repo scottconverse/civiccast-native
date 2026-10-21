@@ -76,17 +76,26 @@ in `getApiBaseUrl()` is only a first-launch prompt target.
 
 ## Validation
 
-The Roku platform ships a `bs` (BrightScript) static analyzer that runs
-on macOS/Linux/Windows. To check the BrightScript source for syntax +
-basic shape issues without a device:
+Roku static/package preparation:
 
 ```sh
-npm install -g brighterscript     # ~30s, no Roku SDK needed
-bsc --project bsconfig.json       # syntax + linting (TODO: add bsconfig.json)
+cd civiccast/apps/ott-native/roku
+npm ci
+npm run check
 ```
 
-`bsconfig.json` is included. Sideloading is still needed to check the actual
-device's playback and remote behavior.
+This uses the repository-pinned BrighterScript and existing `bsconfig.json`; it is not a Roku-provided tool.
+
+Cross-platform software checks:
+
+```sh
+cd civiccast/apps/app-platform-shells
+npm test
+```
+
+`npm test` includes mocked API/DOM smoke coverage for Roku and Android. `npm run smoke` is also available.
+
+These checks validate software and manufacturer API contracts; they do not emulate physical Roku firmware or remote input. Beta20 acceptance uses these software/API contract checks and does not require a device. Sideload instructions are deployment guidance only, not release acceptance.
 
 ## Architecture note (why SceneGraph and not Direct Publisher)
 

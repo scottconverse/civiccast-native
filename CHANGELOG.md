@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.0.0-beta.20] - 2026-10-21
+
+Unpublished candidate, not released.
+
+- Recovery station-state: replace permission handling; private-key protections unchanged.
+- Dependency pins: certifi2026.10.19/Pillow13/Vite8.3.5.
+- Relay stderr: bounded drain preserving UTF8, newlines, and performance threshold.
+- CG wrapping: font fit and cache refresh.
+- Reconcile chapter sources with generated Help.
+
 Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
 
 Beta20 caption limitation accepted by the owner: the resource-isolated installed
