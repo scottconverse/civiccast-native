@@ -267,6 +267,7 @@ function AppContent() {
     if (lastFocusedPathRef.current === location.pathname) return
     lastFocusedPathRef.current = location.pathname
     if (isFirstObservedPath || !hasInteractedRef.current) return
+    if (document.activeElement?.closest('[role="dialog"]')) return
     document.getElementById(MAIN_CONTENT_ID)?.focus({ preventScroll: false })
   }, [location.pathname])
 
