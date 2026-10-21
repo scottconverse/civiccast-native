@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import textwrap
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -30,6 +29,7 @@ from civiccast.cg.feed_fetcher import FeedCache
 from civiccast.cg.models import CgBulletinSubmission
 from civiccast.egress.board_compositor import (
     ImageResolver,
+    _fit_text_to_slot,
     _region_box,
     _safe_area_pixels,
     board_segment_cache_key,
@@ -67,7 +67,6 @@ BrandingProvider = Callable[[str], ChannelBranding | None]
 _DEFAULT_BACKGROUND = "0x1a2744"
 _LOG = logging.getLogger(__name__)
 _SLIDE_SECONDS = 10
-_WRAP_WIDTH = 46
 
 
 @dataclass(frozen=True)
@@ -510,6 +509,7 @@ class BulletinFillerSourceGenerator:
     ) -> str:
         digest = hashlib.sha256()
         for part in (
+            "text-fit-v1",
             bulletin.submission_id,
             bulletin.title,
             bulletin.message,
@@ -909,22 +909,33 @@ def build_bulletin_slide_args(
         f"anullsrc=r={profile.audio_sample_rate}:cl=stereo",
     ]
     if include_text:
-        title = _escape_drawtext(bulletin.title)
-        body = _escape_drawtext(textwrap.fill(bulletin.message, width=_WRAP_WIDTH))
-        organization = _escape_drawtext(bulletin.organization)
+        safe_width = max(1, int(profile.width * 0.9))
+        title_font, title_lines, title_line_height = _fit_text_to_slot(
+            bulletin.title, safe_width, max(1, int(profile.height * 0.22)), 40
+        )
+        body_font, body_lines, body_line_height = _fit_text_to_slot(
+            bulletin.message, safe_width, max(1, int(profile.height * 0.40)), 26
+        )
+        org_font, org_lines, org_line_height = _fit_text_to_slot(
+            bulletin.organization, safe_width, max(1, int(profile.height * 0.10)), 20
+        )
+        title_text = _escape_drawtext("\n".join(title_lines))
+        body_text = _escape_drawtext("\n".join(body_lines))
+        org_text = _escape_drawtext("\n".join(org_lines))
         filters = [
             (
-                f"drawtext=expansion=none:text='{title}':fontsize=40:fontcolor=white:"
-                "box=1:boxcolor=black@0.4:boxborderw=10:x=(w-text_w)/2:y=h*0.18"
+                f"drawtext=expansion=none:text='{title_text}':fontsize={title_font}:fontcolor=white:"
+                "box=1:boxcolor=black@0.4:boxborderw=10:x=(w-text_w)/2:y=h*0.18:"
+                f"line_spacing={title_line_height - title_font}"
             ),
             (
-                f"drawtext=expansion=none:text='{body}':fontsize=26:fontcolor=white:"
-                "box=1:boxcolor=black@0.4:boxborderw=8:"
-                "line_spacing=10:x=(w-text_w)/2:y=h*0.42"
+                f"drawtext=expansion=none:text='{body_text}':fontsize={body_font}:fontcolor=white:"
+                "box=1:boxcolor=black@0.4:boxborderw=8:x=(w-text_w)/2:y=h*0.42:"
+                f"line_spacing={body_line_height - body_font}"
             ),
             (
-                f"drawtext=expansion=none:text='{organization}':fontsize=20:fontcolor=white@0.85:"
-                "x=(w-text_w)/2:y=h*0.86"
+                f"drawtext=expansion=none:text='{org_text}':fontsize={org_font}:fontcolor=white@0.85:"
+                f"x=(w-text_w)/2:y=h*0.86:line_spacing={org_line_height - org_font}"
             ),
         ]
         if branding is not None:

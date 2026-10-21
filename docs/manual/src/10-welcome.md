@@ -89,7 +89,7 @@ flowchart LR
 
 After the meeting, the portal shows residents the recording on **Recordings** and on its own watch page, with captions when they are attached. The portal's **Schedule** page shows what airs on each channel over the next 72 hours.
 
-> **Packaging recordings:** A meeting captured on **Recording** can arrive in Assets as **Recorded**, with **Not servable yet** until a streamable copy exists. **Package for playback** is offered for both **Validated** and **Recorded** rows with a stored source file and no streamable copy. A recording that Live finalizes is checked and packaged by that step. See [Chapter 5](#ch-after-meeting).
+> **Packaging recordings:** A meeting captured on **Recording** can arrive in Assets as **Recorded**, with **Not servable yet** until a streamable copy exists. **Package for playback** is offered for both **Validated** and **Recorded** rows with a stored source file. If a streamable copy already exists, use **Repackage for playback** to replace it after changing a trim or source. A recording that Live finalizes is checked and packaged by that step. See [Chapter 5](#ch-after-meeting).
 
 ## What residents see
 

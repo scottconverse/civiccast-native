@@ -200,8 +200,10 @@ router and the daemon's stale-playlist discard still see ``playlist.m3u8``.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import math
@@ -1021,16 +1023,35 @@ class _RelayLogWriter:
     def _drain(self, stream: IO[str]) -> None:
         """Read the pipe to EOF, appending to the log. Never raises, never stalls."""
         try:
-            while True:
-                try:
-                    line = stream.readline(_RELAY_LOG_READ_CHARS)
-                except (OSError, ValueError):
-                    # The read end was closed under us (teardown, or a failed
-                    # child). Nothing left to drain.
-                    break
-                if not line:
-                    break  # EOF: the child exited
-                self._append(line)
+            buffer = getattr(stream, "buffer", None)
+            read1 = getattr(buffer, "read1", None)
+            if callable(read1):
+                decoder = io.IncrementalNewlineDecoder(
+                    codecs.getincrementaldecoder("utf-8")("replace"),
+                    translate=True,
+                )
+                while True:
+                    try:
+                        chunk = read1(_RELAY_LOG_READ_CHARS)
+                    except (OSError, ValueError):
+                        break
+                    if not chunk:
+                        text = decoder.decode(b"", final=True)
+                        if text:
+                            self._append(text)
+                        break
+                    text = decoder.decode(chunk)
+                    if text:
+                        self._append(text)
+            else:
+                while True:
+                    try:
+                        line = stream.readline(_RELAY_LOG_READ_CHARS)
+                    except (OSError, ValueError):
+                        break
+                    if not line:
+                        break
+                    self._append(line)
         finally:
             _close_quietly(stream)
             with self._lock:

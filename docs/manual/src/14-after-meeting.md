@@ -105,13 +105,13 @@ Trimming sets where the video starts and ends. It does not change the original f
 
 The preview has video playback controls. Use **Play selected trim** to inspect the chosen IN/OUT range. For packaged recordings, CivicCast plays the HLS copy and translates its playhead into the original source timeline, so trim points and chapter times retain their source positions. If the preview fails, use its retry action; the original recording is preserved.
 
-> **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). Do not promise residents chapter marks from this editor.
+> **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). To expose these markers to residents, use **Sync from chapters** on an agenda, review its times, and publish that agenda.
 
-> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. Once a video is packaged, the console does not offer **Package for playback** again for that row, so a later trim change does not reach the packaged copy. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
+> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and Spanish caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 
-> **Note:** A Beta 15 field run found generated caption cues before and after one trimmed playback range. The report did not establish the resident player's subtitle offset or a general behavior; retest the mapping against the package in use. The follow-up was recorded for Beta 17; this observation does not establish a defect in the current package. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** Caption review keeps timestamps from the original recording. Published English and Spanish captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
 
 If saving fails with a message about another writer, someone else changed the video while you were editing. Close the editor, open the video again and redo your change. If the video is already on a schedule item that is committed to air, the save is refused with the "cannot be edited ... already published" message described under [Edit a video's public details](#ch-after-meeting).
 
@@ -124,7 +124,7 @@ You should see the Status change to **Packaged**. This needs the publish_operato
 
 CivicCast packages one video at a time. If another is already running you see "Another recording is already being packaged…". Wait and try again. If packaging fails, the message is the server's text or "Packaging failed. The original file was kept; try again."
 
-The list offers **Package for playback** for Validated and Recorded assets with a stored source file and no streamable copy yet. This also lets you package a recording whose automatic packaging did not finish.
+The list offers **Package for playback** for Validated and Recorded assets with a stored source file, or **Repackage for playback** when a streamable copy already exists. This also lets you package a recording whose automatic packaging did not finish.
 
 Packaged is not the same as published. Next, go to the Publish screen ([Publishing, and what residents see](#ch-publishing)).
 
@@ -148,9 +148,9 @@ To place a **legal hold**, optionally type a reason, click **Place legal hold (b
 
 To replace the video file, choose a **Replacement video file** and confirm "Replace this asset's source file?". CivicCast renames the old file aside and never deletes it, and the video goes back to State **Validated**. This needs publish_operator or setup_admin.
 
-> **Warning:** The replace-source dialog says viewers see the new file "immediately once processing finishes". In beta.11 that is not what the code does. The replacement resets the video to Validated and clears its transcode jobs, but it leaves the old streamable copy and the publish date in place. Residents keep seeing the old video. The Assets list also hides **Package for playback** because a streamable copy still exists. Do not rely on replacing a published video's file to change what residents see.
+> **Warning:** The replace-source dialog says viewers see the new file "immediately once processing finishes". In beta.11 that is not what the code does. The replacement resets the video to Validated and clears its transcode jobs, but it leaves the old streamable copy and the publish date in place. Residents keep seeing the old video. Use **Repackage for playback** in the Assets list to rebuild the streamable copy from the replacement source. Until that succeeds, residents keep seeing the earlier package.
 
-> **For IT staff:** To rebuild the copy, an administrator can call `POST /api/staff/assets/{id}/package` for that asset. See the API appendix.
+> **For IT staff:** The repackage action uses `POST /api/staff/assets/{id}/package` for that asset. See the API appendix.
 
 ## Audio tracks, loudness plan and caption status
 
