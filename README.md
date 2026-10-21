@@ -8,7 +8,7 @@ has no per-minute software fee.
 
 ## Current source candidate
 
-v1.0.0-beta.20 is an unpublished candidate. Beta19 remains published until release. This source candidate adds station-state recovery repair so normal service can perform atomic session replacement without manual permission changes; private-key protection is unchanged. Security baselines: certifi 2026.10.19, Pillow 13, Vite 8.3.5; local portal audits pass, final CI pending. CG board/legacy slides wrap supported content and reduce text when needed; preview at intended resolution. Roku required acceptance is software only. Summary generation pending at a dated 6.5 GiB RAM observation versus 16 GiB guard. Final installed proof and release verification incomplete. See [verification](docs/releases/v1.0.0-beta.20-verification.md).
+`v1.0.0-beta.20` is an unpublished candidate. Installation verification is pending. Beta19 remains published until release. This source candidate adds station-state recovery repair so normal service can perform atomic session replacement without manual permission changes; private-key protection is unchanged. Security baselines: certifi 2026.10.19, Pillow 13, Vite 8.3.5; local portal audits pass, final CI pending. CG board/legacy slides wrap supported content and reduce text when needed; preview at intended resolution. Roku required acceptance is software only. Summary generation pending at a dated 6.5 GiB RAM observation versus 16 GiB guard. Final installed proof and release verification incomplete. See [verification](docs/releases/v1.0.0-beta.20-verification.md).
 
 ## Current published package
 
