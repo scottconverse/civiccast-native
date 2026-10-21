@@ -59,7 +59,7 @@ dependencies = [
   # (civiccast/agenda/pdf_import.py, product-hole fix). Pure-Python, ships
   # inline types (py.typed), no mypy override needed. Raised 2026-10-07 to
   # clear PDF parsing/text-extraction resource exhaustion in uploaded agendas.
-  "pypdf>=6.20.1",
+  "pypdf>=6.21.1",
   "keyring==25.7.0",
   # Floor raised 2026-08-06 for PYSEC-2026-3552 / CVE-2026-69247 (Bleichenbacher
   # oracle in PKCS#7 EnvelopedData decryption, fixed in 50.0.0). We don't use
