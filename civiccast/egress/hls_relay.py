@@ -964,7 +964,7 @@ class _RelayLogWriter:
         self._path = path
         self._cap_bytes = cap_bytes
         self._tail_bytes = tail_bytes
-        # Reentrant: :meth:`_append` holds it and may call :meth:`trim_if_over_cap`,
+        # Reentrant: :meth:`_drain` holds it and may call :meth:`trim_if_over_cap`,
         # which takes it again.
         self._lock = RLock()
         self._handle: IO[str] | None = None
@@ -1026,53 +1026,41 @@ class _RelayLogWriter:
             buffer = getattr(stream, "buffer", None)
             read1 = getattr(buffer, "read1", None)
             if callable(read1):
+                reader = read1
                 decoder = io.IncrementalNewlineDecoder(
                     codecs.getincrementaldecoder("utf-8")("replace"),
                     translate=True,
                 )
-                while True:
-                    try:
-                        chunk = read1(_RELAY_LOG_READ_CHARS)
-                    except (OSError, ValueError):
-                        break
-                    if not chunk:
-                        text = decoder.decode(b"", final=True)
-                        if text:
-                            self._append(text)
-                        break
-                    text = decoder.decode(chunk)
-                    if text:
-                        self._append(text)
             else:
-                while True:
-                    try:
-                        line = stream.readline(_RELAY_LOG_READ_CHARS)
-                    except (OSError, ValueError):
-                        break
-                    if not line:
-                        break
-                    self._append(line)
+                reader = stream.readline
+                decoder = None
+            while True:
+                try:
+                    chunk = reader(_RELAY_LOG_READ_CHARS)
+                except (OSError, ValueError):
+                    break
+                text = decoder.decode(chunk, final=not chunk) if decoder is not None else chunk
+                if text:
+                    with self._lock:
+                        if self._handle is None and not self._discarding:
+                            self._handle = self._open_append()
+                        handle = self._handle
+                        if handle is not None:
+                            try:
+                                handle.write(text)
+                                self._bytes += len(text)
+                            except OSError:
+                                self._note_write_failure()
+                            else:
+                                if self._bytes > self._cap_bytes:
+                                    self.trim_if_over_cap()
+                if not chunk:
+                    break
         finally:
             _close_quietly(stream)
             with self._lock:
                 handle, self._handle = self._handle, None
             _close_quietly(handle)
-
-    def _append(self, text: str) -> None:
-        with self._lock:
-            if self._handle is None and not self._discarding:
-                self._handle = self._open_append()
-            handle = self._handle
-            if handle is None:
-                return  # open failed (already warned): keep draining, discard
-            try:
-                handle.write(text)
-                self._bytes += len(text)
-            except OSError:
-                self._note_write_failure()
-                return
-            if self._bytes > self._cap_bytes:
-                self.trim_if_over_cap()
 
     def _open_append(self) -> IO[str] | None:
         try:
