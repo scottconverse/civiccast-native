@@ -56,16 +56,13 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This working source edition also includes unreleased Sprint 6 preparation,
-webhook, Roku and **Other stations** changes. For an installed Beta 19 package,
-use the manual bundled with that release. The source changes have not replaced
-the published installer or its package evidence.
+This manual identifies the Beta 20 software edition. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
 
 The October 17 documentation correction reconciles operating instructions and
 refreshes the CLI, API and settings references. Existing installed Help may still
 contain the older wording until its application package is updated.
 
-This unpublished Beta 20 candidate edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; use the Beta 19 verification record for claims about its installed package.
+This Beta 20 software edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record for the package you use.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 
@@ -205,7 +202,7 @@ These are the words used most in Part I. Each is explained again where it first 
 
 ### Source edition and release evidence
 
-This manual describes the unpublished Beta 20 candidate source; installation verification is pending. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Keep each historical result with its named release.
+This manual identifies the Beta 20 software edition. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Keep each historical result with its named release. For publication, download, installation, and acceptance status, use the matching release page and verification record; do not infer status from this manual.
 
 **Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This remains a Beta 11 host measurement; it does not establish performance of the current package. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
@@ -3204,7 +3201,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-This manual describes the unpublished Beta 20 candidate edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for published packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's results.
+This manual identifies the Beta 20 software edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) and the version-specific verification record for the package you use to confirm publication, download, installation, and acceptance status. Run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
 
 The complete offline kit contains the installer, its verification metadata, runtime packs, and signed station index/model packs. The exact file list comes from the matching release manifest; the Chapter 10 tree shows the working layout rather than every download or checksum file. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -3695,7 +3692,7 @@ Because the database password is deleted from the registry, the surviving databa
 
 ### Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package's checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
+This chapter identifies the Beta 20 software edition. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
 
 ### Related
 
