@@ -1148,7 +1148,8 @@ class _RelayLogWriter:
         header = _relay_log_header_line(path)
         try:
             with path.open("rb") as reader:
-                reader.seek(max(0, size - self._tail_bytes), os.SEEK_END)
+                actual_size = reader.seek(0, os.SEEK_END)
+                reader.seek(-min(actual_size, self._tail_bytes), os.SEEK_END)
                 tail = reader.read()
             # Drop the first (very likely partial) line so the retained tail
             # starts on a real line boundary.
