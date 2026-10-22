@@ -6,9 +6,9 @@ encrypted station backup and restore, staff and network administration,
 local-time scheduling, bounded operational storage, automatic output recovery,
 RTMP output, coordinated HLS retention, and configurable recorded captions.
 
-The current public package is signed `v1.0.0-beta.19`; the
-[Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md)
-tracks its package identity and scoped checks. Beta 19 adds the remaining
+The current public package is signed `v1.0.0-beta.20`; the
+[Beta 20 verification record](docs/releases/v1.0.0-beta.20-verification.md)
+tracks its package identity and scoped checks. Beta 19 added the remaining
 Sprint 5 remote-guest, board-media and viewer-app work.
 
 This matrix distinguishes implemented components, wired workflows, and
@@ -56,7 +56,7 @@ An `A -> B` entry means the component is `A` but its current limitation is `B`, 
 | Native viewer apps | `wired` source apps in Beta 19 | Roku, Apple, Android/Fire TV, Tizen and webOS clients browse channels and replays, show station images, search, accept deep links, and expose platform playback options. Hosted builds and package results remain separate from source implementation. App Admin's generic starter packages are a separate artifact. |
 | Internet Archive / YouTube publishing | `real component` -> `wired` (environment-gated) | The deterministic adapters are the default (`CIVICCAST_PROVIDER_INTERNET_ARCHIVE` and `CIVICCAST_PROVIDER_YOUTUBE` default to `mock`). Selecting `real` and supplying credentials in the service environment enables the adapters; Setup's `provider-credentials.json` does not feed that environment. Internet Archive uses the recording file when it resolves, but its fallback is an asset/title payload, not the media. YouTube VOD needs a resolvable recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live provisions and binds a broadcast/stream but this Publish path does not send CivicCast's live output to its ingest address. No external-provider acceptance is attached. |
 | NAS archive copy | `real component` -> `wired` (environment-gated) | With `CIVICCAST_PROVIDER_LOCAL_NAS=real` and `CIVICCAST_NAS_ARCHIVE_PATH`, approval copies to a mounted local or UNC directory and verifies each copy by SHA-256 read-back. It writes a canonical copy and dated snapshot; it does not ship an rsync or ZFS integration. If the recording file does not resolve, the adapter receives an asset/title payload, not full media. Mock is the default. No station-device evidence is attached against a real NAS appliance. |
-| Subscriber email and webhook dispatch | `wired in current source` | The optional Publish notifications surface delivers to confirmed subscribers with durable outcomes and retries. Mail and webhook adapters default to `mock`; real delivery requires configuration. Sprint 6 source adds destination-control challenges, random signing secrets delivered only to the receiver, and validated public HTTPS connections for webhook challenges, notices and retries. Older identifier-derived webhook credentials require registration and confirmation again. See [Integrations](docs/manual/src/26-integrations.md). These corrections are not yet part of the published Beta 19 package. |
+| Subscriber email and webhook dispatch | `wired in current source` | The optional Publish notifications surface delivers to confirmed subscribers with durable outcomes and retries. Mail and webhook adapters default to `mock`; real delivery requires configuration. Sprint 6 source adds destination-control challenges, random signing secrets delivered only to the receiver, and validated public HTTPS connections for webhook challenges, notices and retries. Older identifier-derived webhook credentials require registration and confirmation again. See [Integrations](docs/manual/src/26-integrations.md). These corrections are in Beta 20 source. |
 | Podcast publication | `wired in current source` | The optional Publish surface converts a local recording to MP3, stores the episode, and adds an enclosure to the channel RSS feed. Audio and feed access follow playback policy. A missing source or conversion error remains visible and retryable. This workflow ships in Beta 17. |
 | Analytics ingest (backend) | `wired` | Keyed server path plus allowlisted-Origin public path; the Origin check is only a soft browser deterrent, while public-path protection relies on resolved visitor-IP rate limiting plus payload bounds and retained-event age limits. |
 | Analytics (frontend) | `wired` (portal-public) | The resident portal emits privacy-safe routing (`schedule_browse`) and playback (`playback_start/heartbeat/complete/error`) events to the hardened public ingest over the Origin-allowlist path — no identifiers, fail-silent, self-disabling when ingest is unconfigured (runtime-verified end-to-end: served portal → 202 → analytics store). The operator console is intentionally not instrumented. |
@@ -86,8 +86,8 @@ Keep these states distinct when updating this file. A subsystem moving from `rea
 
 The matrix began as an internal build-ladder baseline and retains entries from the earlier retired WSL2 product line as history. This repository ships the native Windows product described in [BRANCHES.md](BRANCHES.md).
 
-The published Beta 19 package identity and its scoped evidence are in the
-[Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md);
+The published Beta 20 package identity and its scoped evidence are in the
+[Beta 20 verification record](docs/releases/v1.0.0-beta.20-verification.md);
 release identities are tracked in
 [release-truth.yaml](docs/releases/release-truth.yaml). The
 [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
@@ -105,7 +105,7 @@ Government, and Education with **99.78% live caption-input coverage**. The
 [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md)
 defines the measurement. It is not Beta 15 or Beta 16 field evidence.
 
-## Unreleased Sprint 6 station integration
+## Sprint 6 station integration in Beta 20
 
 The [October 17 documentation reconciliation](docs/ops/manual-reconciliation-2026-10-17.md)
 corrects older manual descriptions against these source capabilities. It does not

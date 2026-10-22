@@ -1780,7 +1780,7 @@ def _classify_traced_accesses(
         if (
             access_only
             and resolved_key not in loaded_path_keys
-            and _is_desktop_app_installer_resource_index(path, resolved)
+            and _is_reported_package_data_resource(path, resolved)
         ):
             file_id = _file_identity(resolved)
             if file_id is not None and file_id not in loaded_file_ids:
@@ -1924,16 +1924,23 @@ _APPINSTALLER_RESOURCE_INDEX = re.compile(
     r"^S-1-5-21-(?:\d+-){3}\d+-MergedResources-\d+\.pri$",
     re.IGNORECASE,
 )
+_OBSERVED_PACKAGE_MANIFEST_COMPONENTS = frozenset(
+    {
+        "microsoft.sechealthui_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+        "microsoft.windowsfeedbackhub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+    }
+)
 
 
-def _is_desktop_app_installer_resource_index(path: Path, resolved: Path) -> bool:
-    """Match only the observed DesktopAppInstaller PRI data-resource layout.
+def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
+    """Match only the observed package data-resource layouts.
 
-    This is intentionally not a WindowsApps or `.pri` allowlist. The original
-    and resolved existing file paths must both be canonical, contained directly
-    under the real package root, and have the same three-component relative
-    path. That rejects traversal, links/reparse points, nested lookalikes, and
-    aliases that resolve to a different package path.
+    The original DesktopAppInstaller exception is unchanged: a PRI resource
+    index directly under its ``microsoft.system.package.metadata`` directory.
+    The two additionally observed Microsoft package identities are accepted only
+    for ``AppxManifest.xml`` at the package root. Both cases require canonical
+    original and resolved paths under the real package root, reject traversal,
+    and leave executable/unknown mappings and loaded/hardlinked files strict.
     """
     if not path.is_absolute() or not resolved.is_absolute() or not path.is_file():
         return False
@@ -1957,14 +1964,20 @@ def _is_desktop_app_installer_resource_index(path: Path, resolved: Path) -> bool
         return False
     if any(part in {".", ".."} for part in original_relative.parts):
         return False
-    if len(original_relative.parts) != 3:
-        return False
-    package_name, metadata_directory, filename = original_relative.parts
-    return (
-        _APPINSTALLER_PACKAGE_COMPONENT.fullmatch(package_name) is not None
-        and metadata_directory.casefold() == "microsoft.system.package.metadata"
-        and _APPINSTALLER_RESOURCE_INDEX.fullmatch(filename) is not None
-    )
+    if len(original_relative.parts) == 3:
+        package_name, metadata_directory, filename = original_relative.parts
+        return (
+            _APPINSTALLER_PACKAGE_COMPONENT.fullmatch(package_name) is not None
+            and metadata_directory.casefold() == "microsoft.system.package.metadata"
+            and _APPINSTALLER_RESOURCE_INDEX.fullmatch(filename) is not None
+        )
+    if len(original_relative.parts) == 2:
+        package_name, filename = original_relative.parts
+        return (
+            package_name.casefold() in _OBSERVED_PACKAGE_MANIFEST_COMPONENTS
+            and filename.casefold() == "appxmanifest.xml"
+        )
+    return False
 
 
 def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
@@ -2108,10 +2121,12 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
     if package_resources:
         shown = "\n    ".join(package_resources)
         package_resource_note = (
-            f"\n  {len(package_resources)} data-only DesktopAppInstaller package resource "
-            "index file(s) were observed outside the payload. This narrow reported-data "
-            "exception does not apply to executable or unknown-protection mappings, or "
-            "any other WindowsApps path:\n    " + shown
+            f"\n  {len(package_resources)} data-only Windows package resource file(s) "
+            "were observed outside the payload. This narrow reported-data exception "
+            "covers only observed DesktopAppInstaller package resource indexes (PRI) "
+            "and observed SecHealthUI/WindowsFeedbackHub root AppxManifest.xml "
+            "manifests. It does not apply to executable or unknown-protection mappings, "
+            "DLLs, or any other WindowsApps path:\n    " + shown
         )
 
     return CheckResult(

@@ -18,7 +18,7 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The defaults target the Beta 19 release tag and product version.
+The defaults target the Beta 20 release tag and product version.
 For a historical release, specify both `-Tag` and `-Version` for that release.
 
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
@@ -30,8 +30,8 @@ For a historical release, specify both `-Tag` and `-Version` for that release.
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.19",
-  [string]$Version = "1.0.0-beta.19",
+  [string]$Tag = "v1.0.0-beta.20",
+  [string]$Version = "1.0.0-beta.20",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,

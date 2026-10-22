@@ -1,10 +1,10 @@
-# Beta 19 tester quickstart
+# Beta 20 tester quickstart
 
-**`v1.0.0-beta.19` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19). Check the [package verification record](../releases/v1.0.0-beta.19-verification.md) for the exact signed installer and scoped results.
+**`v1.0.0-beta.20` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20). Check the [package verification record](../releases/v1.0.0-beta.20-verification.md) for the exact signed installer and scoped results.
 
 ## Install, open, and check
 
-1. **Confirm package identity.** Use the published Beta 19 release and compare its installer with the verification record before testing.
+1. **Confirm package identity.** Use the published Beta 20 release and compare its installer with the verification record before testing.
 2. **Prepare the complete kit.** Keep `setup.exe`, `packs\\`, and `station\\`
    together. Compare its manifest, installer hash, and signature with the active
    handoff using [Windows release trust](../install/windows-release-trust.md).
@@ -23,10 +23,13 @@
    name it, create the first administrator, and save the recovery kit. Open
    **System Health** and confirm the station and configured services report
    their current state.
-5. **Run the assigned feature checks.** Beta 19 adds remote-guest channel output,
-   bulletin-board media and native viewer controls to the earlier Sprint 5
-   features. Check the feature paths relevant to this station and record what
-   you actually observed, including any incomplete or blocked step.
+5. **Run the assigned feature checks.** Beta 20 adds recovery station-state
+   replacement ACL repair that preserves private-key protection, dependency
+   security corrections, bounded relay log retention and efficient draining,
+   and CG text wrapping/reduction; long text may render small, so preview at
+   the intended resolution. Check the feature paths relevant to this station
+   and record what you actually observed, including any incomplete or blocked
+   step.
 6. **Send useful evidence.** Record the candidate version, package hash, station,
    date and time, steps, results, and relevant logs. Create a redacted
    [support bundle](support-bundle-instructions.md) when requested. Exclude passwords,
@@ -50,7 +53,7 @@ manual](../USER-MANUAL.md) describes operator features.
 
 The previous `v1.0.0-beta.15` release has [package-specific verification](../releases/v1.0.0-beta.15-verification.md). Its R9 field findings and follow-up work are listed in the
 [Beta 17 deferred backlog](../ops/beta17-deferred.md). Those observations do not
-establish Beta 19 runtime behavior.
+establish Beta 20 runtime behavior.
 
 Historical Beta11 evidence is separate from current package checks. A Beta11
 host ran Public, Government, and Education together for 72 hours, with 99.78%
@@ -59,7 +62,7 @@ live caption-input coverage and 216 healthy scheduled checkpoints. See the
 
 Older Beta10 and earlier verification records are retained in
 [`docs/releases`](../releases/). They describe their specific packages and do
-not establish Beta 19 results. Current native Windows source is in
+not establish Beta 20 results. Current native Windows source is in
 [civiccast-native](https://github.com/scottconverse/civiccast-native). The
 retired WSL2 product line and its `rc` releases belong to a separate repository
 and are not current tester instructions.

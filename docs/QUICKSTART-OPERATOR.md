@@ -1,7 +1,7 @@
 # CivicCast Beta 18 - Field-Test Quick Start (historical)
 
-For the current Beta 19 package, begin with the [Beta 19 tester quickstart](tester/START-HERE.md)
-and [Beta 19 user manual](USER-MANUAL.md). This page preserves the Beta 18
+For the current Beta 20 package, begin with the [Beta 20 tester quickstart](tester/START-HERE.md)
+and [Beta 20 user manual](USER-MANUAL.md). This page preserves the Beta 18
 field-test path.
 
 Beta 18 adds guided Cablecast station import to the native Windows station,

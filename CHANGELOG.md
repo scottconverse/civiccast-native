@@ -2,9 +2,7 @@
 
 ## [Unreleased]
 
-## [1.0.0-beta.20] - 2026-10-21
-
-Unpublished candidate, not released.
+## [1.0.0-beta.20]
 
 - Recovery station-state: replace permission handling; private-key protections unchanged.
 - Dependency pins: certifi2026.10.19/Pillow13/Vite8.3.5.
@@ -12,7 +10,7 @@ Unpublished candidate, not released.
 - CG wrapping: font fit and cache refresh.
 - Reconcile chapter sources with generated Help.
 
-Unpublished candidate `v1.0.0-beta.20` consolidates the changes below; installation verification is pending.
+`v1.0.0-beta.20` consolidates the changes below.
 
 Beta20 caption limitation accepted by the owner: the resource-isolated installed
 observation measured approximately 8.8 seconds from one decoded-audio callback to

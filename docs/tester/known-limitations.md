@@ -1,12 +1,12 @@
 # Known Limitations For Early-Adopter Builds
 
 > **Historical Beta 10 limitation record.** This page records evidence and
-> limits for Beta 10 only. Beta 19 is the latest published release. For Beta 19
+> limits for Beta 10 only. Beta 20 is the latest published release. For Beta 20
 > operating guidance, use the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> [tester start page](START-HERE.md), and [Beta 19 verification
-> record](../releases/v1.0.0-beta.19-verification.md). The Beta 10 results below
-> remain historical and do not establish Beta 19 behavior.
+> [tester start page](START-HERE.md), and [Beta 20 verification
+> record](../releases/v1.0.0-beta.20-verification.md). The Beta 10 results below
+> remain historical and do not establish Beta 20 behavior.
 
 ## Release State
 
