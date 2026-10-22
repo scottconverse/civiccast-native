@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Release-truth manifest — the SOLE AUTHORED SOURCE for CivicCast release state.
+# Release-truth manifest â€” the SOLE AUTHORED SOURCE for CivicCast release state.
 # (Native-Windows program WS1; charter section 3 in civiccast-audit-control.)
 #
 # Rules:
@@ -40,7 +40,18 @@ entries:
   - tag: v1.0.0-beta.20
     status: current
     notes: >-
-      Publicly published October 21, 2026 Mountain Time with 26 existing assets: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20. Signed installer source ea8fb79877c5d6f821fbbccbe9dc66ce3f46f3c8, build 39687830626. PR #259 merged to a17449189a39af6474d914137eab020169f91023. At premerge source 50734fe2, 33 checks SUCCESS, 3 inapplicable branch skips, 1 informational mutation job CANCELLED on owner request. Owner expressly ordered publication with no further testing/verification; no public-download verification performed. Exact-package installed recovery/login, CG and preservation verified; unaffected acceptance retains its original provenance. Moderate portal dev-tool findings GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp remain below the unchanged high gate. Current-main verification: https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md.
+      Originally published October 21, 2026 Mountain Time; documentation package
+      revised October 22 with signed source 2e19612467fda894d63e499580e4d7b5f029f5f2, build 39810481727.
+      Corrected Help and manuals are included. Setup SHA-256 6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d.
+      Installed exit 0, healthy current schema, full Help source/HTML/663-entry
+      contents comparison passed, no reboot. Two full documentation checks and
+      two full release-manual checks passed. Nine assets replaced, 17 unchanged;
+      model archive retains its original valid signed index. Original tag target
+      a17449189a39af6474d914137eab020169f91023 is unchanged; use revision source
+      for this package. Prior product evidence retains original provenance;
+      broad product tests were not rerun for this documentation revision.
+      Public release: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20.
+      Exact current evidence: https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md.
   - tag: v1.0.0-beta.19
     status: superseded
     superseded_by: v1.0.0-beta.20
