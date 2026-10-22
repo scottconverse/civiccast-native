@@ -59,10 +59,9 @@ CivicCast is open-source, self-hostable civic meeting recording and publication
 software. The application wires a production live-source probe into live
 pre-flight, in addition to the recorded-media and Portal workflows. A working
 probe is not proof that a particular station's source, hardware, output,
-archive, CDN or headend works end to end. The Beta 15 verification record
-separates its fresh-install and focused checks from unrun upgrade and soak
-paths; station-specific external services still require
-their own checks.
+archive, CDN or headend works end to end. The Beta 20 verification record
+identifies the installed package's scoped checks and limitations;
+station-specific external services still require their own checks.
 
 ## AI models: defaults and operator selection
 
@@ -263,8 +262,8 @@ complete kit without installing. Keep `setup.exe`, `packs\` and `station\`
 together. A standalone `setup.exe` download is not the complete install kit.
 Before running the helper, verify its own SHA-256 against the same release's
 `SHA256SUMS.txt`. See the [Windows Release Trust And Verification](install/windows-release-trust.md)
-checklist and the [operator quick start](QUICKSTART-OPERATOR.md). The
-[Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) is the
+checklist and the [operator quick start](tester/START-HERE.md). The
+[Beta 20 verification record](releases/v1.0.0-beta.20-verification.md) is the
 source for the current package's identity, installation evidence and limits.
 
 For a direct setup-app hash check when the handoff calls for one, compare it to
@@ -777,18 +776,7 @@ controls below the player. Residents can leave the default caption track on,
 turn captions off, or re-enable the posted language track with keyboard or
 pointer controls.
 
-Live caption stabilization requires corroboration across overlapping audio
-windows. Beta.8's live GPU recognizer supplies actual word timestamps and
-input-window identity. Confirmation requires matching words with overlapping
-observed time spans in distinct audio windows, not just overlapping audio.
-The default five-second retained context covers the previous five-second
-segment; explicit overlap overrides are preserved. Confirmed words form
-bounded phrase cues; `...` marks withheld interior words, not recognized speech.
-Unconfirmed timed words are retained for review only when they expire or the
-stream ends; stopping is not a second recognition pass and does not put them
-on air. Legacy/offline hypotheses without word metadata retain their separate
-low-confidence flush behavior. A committed live cue is not
-rewritten later. Low-confidence cues are flagged in the operator review queue
+Historical Beta.8 live GPU caption stabilization required corroboration across overlapping audio windows: matching words with overlapping observed time spans in distinct audio windows. The current native live path is different: Whistle publishes its first recognition, including low-confidence text, and removes overlap already aired; it does not require two readings to agree. Whisper supplies fallback while bounded recovery probes try to restore Whistle. A committed live cue is not rewritten later. Low-confidence cues are flagged in the operator review queue
 with a specific next step: compare the cue against the audio, then approve,
 edit, or reject it. The staff review API preserves the original machine cue
 text separately from approved or edited reviewer text so the UI keeps a clear
@@ -1080,7 +1068,8 @@ staff cannot. Requests are queued on the remote station, and operators refresh
 status to confirm execution. Administrators provision trusted public/staff HTTPS
 origins and credential references as described in
 [Station federation](ops/station-federation.md). This is separate from ActivityPub
-and TownLight suite integration (owner-deferred to 2.0), and is not in the published Beta 19 package.
+and TownLight suite integration (owner-deferred to 2.0). It shipped in the
+published Beta 20 package and was not in Beta 19.
 
 ### Podcast episodes
 
@@ -1359,12 +1348,11 @@ This reference is maintained in `docs/technical-ops-reference.md`. The user-faci
 
 ## Published package evidence and historical release identity
 
-This working-tree reference follows unpublished candidate `CivicCast 1.0.0-beta.20`; installation verification is pending.
-The [Beta 19 verification record](releases/v1.0.0-beta.19-verification.md)
-identifies the signed package and its scoped checks. No Beta 19
-cross-version upgrade or extended soak is claimed. Earlier results remain tied
-to their own release records. Consult
-`docs/releases/release-truth.yaml` for the authored release state; this
+This reference follows the published `CivicCast 1.0.0-beta.20`. The
+[Beta 20 verification record](releases/v1.0.0-beta.20-verification.md)
+identifies the signed package and its scoped checks. The [Beta 19 verification record](releases/v1.0.0-beta.19-verification.md)
+remains historical. Earlier results remain tied to their own release records.
+Consult `docs/releases/release-truth.yaml` for the authored release state; this
 reference does not claim an extended soak or general service-uptime result.
 
 The `v1.0.0-rcNN` line this document used to describe is the retired WSL2/Linux

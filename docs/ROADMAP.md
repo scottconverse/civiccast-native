@@ -3,18 +3,21 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
-## Completed Sprint 6 source work (unreleased)
+## Sprint 6 source work shipped in Beta 20
 
 [Sprint 6](ops/sprint6.md) addresses remaining webhook, Roku and documentation
 corrections, preparation efficiency and retry scheduling, hardware-aware encoding,
-and CivicCast station connections. Catalog sharing and central channel management
+and CivicCast station federation. Catalog sharing and central channel management
 are implemented. The owner deferred TownLight (formerly CivicSuite) integration,
-including TownLight: Station, to 2.0. This work does not change the published
-Beta 19 package until a separately authorized release.
+including TownLight: Station, to 2.0. This work shipped in Beta 20.
 
 The [documentation correction](ops/manual-reconciliation-2026-10-17.md) reconciles
-operating instructions and generated references for that next package. Existing
+operating instructions and generated references for that package. Existing
 release evidence retains its original identity.
+
+## Beta 20 release
+
+The [published Beta 20 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20) ships the Sprint 6 source work and the current manual. The [Beta 20 package record](releases/v1.0.0-beta.20-verification.md) records its release identity and scoped checks. Earlier release records remain historical.
 
 ## Beta 19 release
 
@@ -65,8 +68,8 @@ is not a Beta 15 field result or Beta 16 package qualification.
 
 ## Roadmap ownership and evidence
 
-The owner sets implementation and release scope. The [Beta 19 verification
-record](releases/v1.0.0-beta.19-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
+The owner sets implementation and release scope. The [Beta 20 verification
+record](releases/v1.0.0-beta.20-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
 identity and installation observations. The [Beta 17 deferred
 backlog](ops/beta17-deferred.md) cites the separate Beta 15 R9 field report and
 describes what that host evaluation did and did not establish. No release date

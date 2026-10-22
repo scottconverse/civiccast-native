@@ -10,11 +10,12 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-## Current release: Beta 19
+## Current release: Beta 20
 
-Beta 19 completes Sprint 5 remote-guest output, bulletin-board media and native
-viewer apps alongside the Beta 17 and 18 publication and import workflows.
-Its signed package and scoped checks are in the [Beta 19 record](docs/releases/v1.0.0-beta.19-verification.md).
+Beta 20 is the current published native Windows package. It includes the
+Sprint 6 preparation, hardware-aware encoding, webhook/Roku, and station
+federation changes; TownLight integration remains deferred to 2.0. Its signed
+package and scoped checks are in the [Beta 20 record](docs/releases/v1.0.0-beta.20-verification.md). Beta 19 remains historical.
 
 ## Historical Beta 17 release
 
@@ -63,7 +64,7 @@ notifications; bounded logs; summary approval/export; local administrator
 recovery; Control Room session recovery; remote contribution media controls;
 alert routing and emergency presentation; paywall secret preservation;
 target-machine operation; and documentation/release identity consistency.
-The current published release is source
+The Beta 12 published release was source
 `a0c98cb7367dc106042ec89d35a91905470d350c` from producer run `38097350705`.
 Its asset job and 19-member local kit completed with exact-run checksums,
 signature and station-index evidence. The release's separate randomized-suite

@@ -1,4 +1,4 @@
-> **Historical working record, preserved October 11, 2026.** Current Beta 12 guidance is in the [release verification record](../releases/v1.0.0-beta.12-verification.md) and [project status](../../PROJECT-STATUS.md). The dated checkpoints below do not define current release status.
+> **Historical working record, preserved October 11, 2026.** Current Beta 20 guidance is in the [release verification record](../releases/v1.0.0-beta.20-verification.md) and [project status](../../PROJECT-STATUS.md). The dated checkpoints below do not define current release status.
 
 # Beta 12 release verification
 

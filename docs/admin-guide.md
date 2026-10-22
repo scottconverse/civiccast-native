@@ -141,8 +141,8 @@ R2 fields by hand instead, if you already have them.
 Each AI feature — captions, summary, and translation — runs a model you can
 choose in the operator console under **Setup -> AI Models**. Every feature has
 a local default that runs on this machine. The summary default adapts to the hardware
-(the larger local model on a 16 GB-or-more box, the smaller one on a smaller
-box); the console shows which one this station got and lets you change it.
+(the larger local model on a box with an NVIDIA GPU and 16 GB or more RAM;
+otherwise the smaller one); the console shows which one this station got and lets you change it.
 
 Changing a model selection requires the **setup_admin** role. A
 **meeting_operator** can open the AI Models console to see the current models

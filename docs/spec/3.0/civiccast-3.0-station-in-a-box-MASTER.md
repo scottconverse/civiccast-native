@@ -11,7 +11,7 @@
 > language. See [LEGAL-NOTICES.md](../../../LEGAL-NOTICES.md).
 
 > **Design-target boundary (October 11, 2026):** This is the accepted CivicCast
-> 3.0 design target, not a statement of the current Beta 12 shipped scope.
+> 3.0 design target, not a statement of the current Beta 20 shipped scope.
 > The approval/build cursor below was checked against `main @ 69cc676` in June
 > 2026 and is a historical implementation snapshot. The dated October 10
 > caption-policy amendment later in this document remains an owner decision.

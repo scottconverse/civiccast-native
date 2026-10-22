@@ -623,10 +623,13 @@ sequenceDiagram
     participant M as Staff auth middleware
     participant T as Token check
     participant R as Route with role check
-    B->>S: POST /api/setup/login (admin name and password)
-    S-->>B: first-admin session token (12-hour expiry)
-    B->>M: POST /api/staff/auth/login (staff username and password)
-    M-->>B: staff session token (12-hour expiry)
+    alt first-admin login
+        B->>S: POST /api/setup/login (admin name and password)
+        S-->>B: first-admin session token (12-hour expiry)
+    else staff login
+        B->>M: POST /api/staff/auth/login (staff username and password)
+        M-->>B: staff session token (12-hour expiry)
+    end
     Note over B: token kept in browser storage as civiccast.staffToken
     B->>M: GET /api/staff/... with Authorization: Bearer token
     alt no Authorization header

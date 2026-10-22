@@ -54,19 +54,21 @@ Evidence by workstream:
   Help was inspected for the new workflow, anchor and setup example; a stripped
   relative link was replaced with self-contained setup guidance.
 
-These are source-level results. No new signed package, deployed federation TLS
-connection, Roku device session or physical GPU qualification is claimed.
+These are source-level results. No deployed federation TLS connection, Roku
+device session or physical GPU qualification is claimed. The Beta 20 package
+record separately identifies its signed package and scoped checks.
 No station settings, runtime, service or broadcast were changed. Historical
 signed manuals remain with their original package; source manual/Help describe
-the unreleased changes explicitly.
+the changes subsequently shipped in Beta 20.
 
 ## Boundaries
 
-The subsequent October 17 installed-verification goal authorizes one consolidated
-Beta 20 candidate, isolated install/uninstall/reinstall, a full installed walkthrough,
+The subsequent October 17 installed-verification goal authorized one consolidated
+Beta 20 package, isolated install/uninstall/reinstall, a full installed walkthrough,
 bounded three-channel and changed-feature operation, then an upgrade of the host
-station only after isolated checks pass. Those results are pending; source checks
-above do not establish them. A verified recovery backup precedes the host upgrade.
+station only after isolated checks pass. The signed Beta 20 verification record
+reports the package's scoped results; the source checks above do not establish
+them. A verified recovery backup precedes the host upgrade.
 
 No reopening completed earlier sprint work, external station/device qualification,
 store approvals, new soak, caption-percentage gates, generalized test harnesses,

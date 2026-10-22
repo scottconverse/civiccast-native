@@ -103,5 +103,5 @@ this publication). The human/station acceptance pass is not done. Its lab
 checks do not replace testing the exact installer you downloaded. See
 [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)
 and
-[Known Limitations](known-limitations.md#historical-beta-10-live-caption-evidence)
+[Known Limitations](known-limitations.md#historical-beta-10-evidence)
 for the current captions evidence boundary.

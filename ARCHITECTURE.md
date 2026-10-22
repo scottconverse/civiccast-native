@@ -274,7 +274,7 @@ through `civiccast.federation`. Administrators provision separate public/staff H
 origins and service-environment credential references; the operator console never
 receives those credentials. Fixed remote API routes preserve remote authorization,
 and a queued command is reported as queued rather than executed. See
-[station federation](docs/ops/station-federation.md). These changes are unreleased.
+[station federation](docs/ops/station-federation.md). These changes shipped in Beta 20.
 The owner deferred TownLight (formerly CivicSuite) integration, including
 TownLight: Station, to 2.0; see the
 [deferral record](docs/ops/civicsuite-bridge-contract-status.md).

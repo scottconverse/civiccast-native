@@ -40,7 +40,7 @@ entries:
   - tag: v1.0.0-beta.20
     status: current
     notes: >-
-      Publication snapshot prepared on the release branch; not a public-delivery receipt. Signed artifact source ea8fb79877c5d6f821fbbccbe9dc66ce3f46f3c8, build 39687830626. Exact-package installed recovery/login, CG and preservation verified; unaffected acceptance retains its original provenance. See v1.0.0-beta.20-verification.md for actual CI and delivery status.
+      Publicly published October 21, 2026 Mountain Time with 26 existing assets: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20. Signed installer source ea8fb79877c5d6f821fbbccbe9dc66ce3f46f3c8, build 39687830626. PR #259 merged to a17449189a39af6474d914137eab020169f91023. At premerge source 50734fe2, 33 checks SUCCESS, 3 inapplicable branch skips, 1 informational mutation job CANCELLED on owner request. Owner expressly ordered publication with no further testing/verification; no public-download verification performed. Exact-package installed recovery/login, CG and preservation verified; unaffected acceptance retains its original provenance. Moderate portal dev-tool findings GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp remain below the unchanged high gate. Current-main verification: https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md.
   - tag: v1.0.0-beta.19
     status: superseded
     superseded_by: v1.0.0-beta.20

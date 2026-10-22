@@ -53,7 +53,7 @@ You are signed in and taken to the same place as after a normal sign-in. Every o
 
 > **Warning:** Your printed kit may still list an old password. After a recovery, write the new password somewhere safe. While you can still sign in, a Setup admin can make a fresh set of eight codes with **Regenerate recovery kit** in the **Security** card on **Station Profile**; the old codes stop working at once, and the new kit lists the codes only, not the password. If the password and all recovery codes are lost, a local Windows administrator can recover the account offline with the administrator-reset command in [Security and privacy](#ch-security). That reset preserves station data, revokes existing first-admin sessions and old recovery codes, and requires a fresh recovery kit afterward.
 
-The Beta20 source candidate includes station-state recovery repair so the normal service can replace the session automatically without manually changing permissions. Expected behavior is a return to normal sign-in, with no permission edits needed; private-key protection is unchanged. Final installed proof is pending.
+The Beta20 package includes station-state recovery repair so the normal service can replace the session automatically without manually changing permissions. In the signed Beta20 package, recovery/reset and normal HTTP login were exercised without manual ACL repair; private-key protection remained in place. The interactive prompt was not exercised.
 
 ## Sign out
 
