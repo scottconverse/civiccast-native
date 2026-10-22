@@ -8,7 +8,40 @@ import pytest
 from civiccast.native.service_identity import SERVICE_SID
 from civiccast.native.station_secrets import StationSecretVault
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI vault")
+pytestmark = [
+    pytest.mark.windows_only,
+    pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI vault"),
+]
+
+
+def test_existing_credentials_directory_does_not_require_acl_ownership(tmp_path, monkeypatch):
+    from civiccast.native import service_identity, station_secrets
+
+    def deny_directory_acl(_path):
+        raise PermissionError("SetFileSecurity: Access is denied")
+
+    # Installed credentials directories grant the service Modify, not WRITE_DAC.
+    monkeypatch.setattr(service_identity, "restrict_data_directory", deny_directory_acl)
+    path = tmp_path / "backup-passphrase.dpapi"
+    station_secrets.write_protected_secret(path, b"first-recovery-passphrase")
+    assert station_secrets._unprotect(path.read_bytes()) == b"first-recovery-passphrase"
+    station_secrets.write_protected_secret(path, b"replacement-recovery-passphrase")
+    assert station_secrets._unprotect(path.read_bytes()) == b"replacement-recovery-passphrase"
+    assert b"recovery-passphrase" not in path.read_bytes()
+
+
+def test_new_credentials_directory_is_restricted_before_secret_write(tmp_path, monkeypatch):
+    from civiccast.native import service_identity, station_secrets
+
+    def deny_directory_acl(_path):
+        raise PermissionError("SetFileSecurity: Access is denied")
+
+    monkeypatch.setattr(service_identity, "restrict_data_directory", deny_directory_acl)
+    path = tmp_path / "new-credentials" / "backup-passphrase.dpapi"
+    with pytest.raises(PermissionError, match="Access is denied"):
+        station_secrets.write_protected_secret(path, b"recovery-passphrase")
+    assert not path.exists()
+    assert not path.parent.exists()
 
 
 @pytest.mark.windows_only

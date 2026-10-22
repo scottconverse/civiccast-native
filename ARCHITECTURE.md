@@ -2,10 +2,12 @@
 
 CivicCast combines native Windows playout, local AI captions, station backup,
 staff administration, and resident publication in one installation. This
-architecture describes the Beta 19 source.
+architecture describes the Beta 20 source.
 
-The current published download is signed `v1.0.0-beta.19` ([release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19)).
+The current published download is signed `v1.0.0-beta.20` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20)).
+The [Beta 20 verification record](docs/releases/v1.0.0-beta.20-verification.md)
+identifies exact package provenance and scoped acceptance.
 
 This document orients engineers and integrators to the current CivicCast
 system. The binding product contract is
@@ -71,8 +73,8 @@ flowchart LR
 | Schedule | `civiccast.schedule` | Assets, premieres, embargoes, operator asset library. |
 | Live | `civiccast.live` | Live sessions, fail-closed source verification, and recording finalization. |
 | Captions | `civiccast.captions` | Recorded-media transcription with faster-whisper, native live Whistle/Whisper runtimes, bounded live cue history, WebVTT output, recorded-caption review queue. |
-| Summary | `civiccast.summary` | Sourced summaries, approval, transcript CSV export. |
-| Records | `civiccast.records` | PDF/A-3B signed-record export and provenance. |
+| Summary | `civiccast.summary` | Sourced summaries, approval, transcript CSV export. Console generation selects approved captions; authorized API callers supply cues. Citation checks do not establish semantic truth. |
+| Records | `civiccast.records` | PDF/A-3B record export and provenance. Real RFC 3161 timestamping needs a configured authority; the default emits a deterministic local token, not an RFC 3161 authority-issued timestamp. |
 | Publish | `civiccast.publish` | Portal, Internet Archive, NAS, YouTube, subscriber, and podcast surfaces. |
 | Subscribe | `civiccast.subscribe` | Double opt-in, signed unsubscribe, webhook payloads. |
 | Podcast | `civiccast.podcast` | Podcast episode and RSS generation. |
@@ -149,8 +151,8 @@ required, and successful recovery is not guaranteed by a fixed deadline.
 Recorded-media captions use faster-whisper. Needle usage telemetry is disabled,
 and the speech models run locally. Live captions, SDI/NDI hardware paths, and
 cable-headend delivery are described with their evidence boundaries in the
-[User Manual](docs/USER-MANUAL.md) and the current
-[Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md).
+[User Manual](docs/USER-MANUAL.md) and the historical
+[Beta 17 verification record](docs/releases/v1.0.0-beta.17-verification.md).
 Historical Beta 13 package observations remain in the [Beta 13 verification
 record](docs/releases/v1.0.0-beta.13-verification.md).
 
@@ -170,13 +172,15 @@ asset metadata, schedules, publish state, summaries, signed records,
 subscriptions, and podcast state. External provider proofs are credential-gated;
 deterministic mocks are not public-provider evidence.
 
-Media files, station state, and credentials live outside the database, so a
-database dump alone is not a complete station backup. `civiccast dr run-drill`
-backs up the database and restores it into a scratch database; its media
-manifest is not a copy of the media. Beta 11 has no scheduled backup or
-supported live-database restore. The as-run outbox is a separate local SQLite
-journal that retries delivery to PostgreSQL. See the [User Manual](docs/USER-MANUAL.md)
-for the file locations and recovery limits.
+Station backup creates encrypted `.ccbackup` archives containing the database,
+configured station files, portable CivicCast credentials and selected media.
+Operators can schedule backups, bound retained archives and inspect progress.
+Restoration runs offline with station writers stopped and supports replacement
+paths; see [station backup and restore](docs/ops/station-backup.md).
+`civiccast dr run-drill` remains a separate scratch-database rehearsal, not the
+station restore command. Installer transaction recovery is also separate and
+temporary. The as-run outbox is a local SQLite journal that retries delivery to
+PostgreSQL. See the [User Manual](docs/USER-MANUAL.md) for the file locations.
 
 Audience analytics is separate from caption-engine telemetry. The resident
 portal's audience beacons are accepted only when the service's analytics key
@@ -263,7 +267,17 @@ supersedes ADR 0001's NATS JetStream choice).
 
 ## Current Source Contracts
 
-These describe current source behavior and test coverage. The [Beta 19 package record](docs/releases/v1.0.0-beta.19-verification.md) identifies the signed artifacts and scoped verification:
+These describe current source behavior and test coverage. The [Beta 20 package record](docs/releases/v1.0.0-beta.20-verification.md) identifies the signed artifacts and scoped verification:
+
+Sprint 6 source adds trusted-station catalog browsing and central channel controls
+through `civiccast.federation`. Administrators provision separate public/staff HTTPS
+origins and service-environment credential references; the operator console never
+receives those credentials. Fixed remote API routes preserve remote authorization,
+and a queued command is reported as queued rather than executed. See
+[station federation](docs/ops/station-federation.md). These changes are unreleased.
+The owner deferred TownLight (formerly CivicSuite) integration, including
+TownLight: Station, to 2.0; see the
+[deferral record](docs/ops/civicsuite-bridge-contract-status.md).
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.
@@ -283,7 +297,9 @@ These describe current source behavior and test coverage. The [Beta 19 package r
 
 ## Release evidence and history
 
-Beta 19 is the published download. Its package-specific checks are in the
-[Beta 19 record](docs/releases/v1.0.0-beta.19-verification.md).
-Historical package results are retained in the [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md);
+Beta 20 is the published download. Its package-specific checks are in the
+[Beta 20 record](docs/releases/v1.0.0-beta.20-verification.md), which identifies exact
+package provenance and scoped acceptance. Historical package results are retained
+in the [Beta 19 record](docs/releases/v1.0.0-beta.19-verification.md) and the
+[Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md);
 [Beta 17 follow-up](docs/ops/beta17-deferred.md) records the owner-deferred field findings.

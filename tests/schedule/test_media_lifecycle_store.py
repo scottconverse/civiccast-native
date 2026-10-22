@@ -69,6 +69,40 @@ def _seed_asset(engine: Engine, **overrides: object) -> None:
 
 
 class TestReadiness:
+    @pytest.mark.parametrize("snapshot", ["pending_transcode", "transcoding"])
+    @pytest.mark.parametrize("job_status", ["completed", "pending", "running"])
+    def test_transient_readiness_requires_live_jobs(
+        self, engine: Engine, store: MediaLifecycleStore, snapshot: str, job_status: str
+    ) -> None:
+        _seed_asset(engine, asset_id="a1", state="recorded")
+        with Session(bind=engine) as session:
+            session.add(
+                AssetReadiness(
+                    asset_id="a1",
+                    readiness_state=snapshot,
+                    readiness_reason="Transcode in progress",
+                )
+            )
+            session.add(
+                TranscodeJob(asset_id="a1", output_format="h264_720p_5mbps", status=job_status)
+            )
+            session.commit()
+        active = job_status != "completed"
+        expected_state = snapshot if active else "ready"
+        expected_reason = "Transcode in progress" if active else None
+        detail = store.get_readiness("a1")
+        assert detail is not None
+        assert detail.readiness_state == expected_state
+        assert detail.readiness_reason == expected_reason
+        assert len(detail.in_flight_transcode_jobs) == int(active)
+        dashboard = store.dashboard()
+        assert dashboard.by_asset[0].readiness_state == expected_state
+        assert dashboard.by_asset[0].readiness_reason == expected_reason
+        assert dashboard.by_asset[0].in_flight_jobs_count == int(active)
+        assert dashboard.ready_count == int(not active)
+        with Session(bind=engine) as session:
+            assert session.get(AssetReadiness, "a1").readiness_state == snapshot
+
     def test_get_readiness_for_unknown_asset_returns_none(self, store: MediaLifecycleStore) -> None:
         assert store.get_readiness("nope") is None
 

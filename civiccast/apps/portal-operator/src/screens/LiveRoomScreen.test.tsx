@@ -39,6 +39,8 @@ vi.mock('../api/client', () => ({
 
 import {
   ApiError,
+  createLiveSession,
+  getLiveSession,
   getLiveIngestPlan,
   getLiveSourceById,
   getSafeToBroadcast,
@@ -58,7 +60,7 @@ import {
   SourceReadinessDetail,
   SourceSwitcher,
 } from './LiveRoomScreen'
-import type { LiveSourceResponse } from '../types/live'
+import type { LiveSessionResponse, LiveSourceResponse } from '../types/live'
 import type {
   ChannelProfile,
   LiveIngestPlan,
@@ -67,6 +69,10 @@ import type {
   SystemHealthReport,
 } from '../types/api.generated'
 
+beforeEach(() => {
+  localStorage.removeItem('civiccast.liveRoom.sessionId')
+  vi.mocked(getLiveSession).mockRejectedValue(new ApiError('Missing session', 404))
+})
 afterEach(cleanup)
 
 /**
@@ -108,10 +114,31 @@ describe('LiveRoomScreen preview', () => {
   it('does not present simulated video or audio as real source telemetry', () => {
     render(<PreviewPanel source={source()} />)
 
-    expect(screen.getByText('Source preview unavailable')).not.toBeNull()
-    expect(screen.getByText(/CivicCast has not verified incoming video or audio/i)).not.toBeNull()
+    expect(screen.getByText('Channel preview unavailable')).not.toBeNull()
+    expect(screen.getByText(/Enable this channel's HLS web output/i)).not.toBeNull()
     expect(screen.queryByText('-18 dBFS')).toBeNull()
     expect(screen.queryByLabelText('Source dropped')).toBeNull()
+  })
+
+  it('plays the selected channel output and retains the actual source readiness', () => {
+    const channel: ChannelProfile = {
+      channel_id: 'government', slug: 'government', kind: 'government',
+      branding: { display_name: 'Government', short_name: 'Gov', color: '#123456', logo_text: 'Gov' },
+      fallback_behavior: 'slate',
+      outputs: [{ kind: 'hls', label: 'Web', target: '/media/live/government/playlist.m3u8',
+        proof_boundary: 'actual', next_step: 'Watch', enabled: true }],
+    }
+    const { rerender } = render(<PreviewPanel channel={channel} source={source({
+      readiness: 'ready', next_action: 'Source check passed.',
+    })} />)
+    const frame = screen.getByTitle('On-air preview for government') as HTMLIFrameElement
+    expect(frame.getAttribute('src')).toBe('/?manifest=%2Fmedia%2Flive%2Fgovernment%2Fplaylist.m3u8')
+    expect(screen.getByText('Source check passed.')).not.toBeNull()
+    expect(screen.queryByText(/has not verified incoming/)).toBeNull()
+    rerender(<PreviewPanel source={source()} channel={{ ...channel, outputs: channel.outputs?.map(
+      (output) => ({ ...output, enabled: false }),
+    ) }} />)
+    expect(screen.queryByTitle('On-air preview for government')).toBeNull()
   })
 })
 
@@ -523,6 +550,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
   stubCommonQueries()
+  vi.mocked(getLiveSession).mockRejectedValue(new ApiError('Missing session', 404))
 })
 
 describe('LiveRoomScreen probe-button role gate (finding: Probe button rendered for everyone)', () => {
@@ -668,5 +696,51 @@ describe('LiveRoomScreen edit-conflict reload (finding: 409 resends the same sta
       'sample-source',
       { name: 'Chamber Cam', expected_row_version: 2 },
     ])
+  })
+})
+
+
+describe('LiveRoomScreen persisted meeting recovery', () => {
+  const session = {
+    live_session_id: 'saved-live-meeting', channel_id: 'government', title: 'Saved meeting',
+    state: 'on_air', started_at: '2026-10-20T01:00:00Z', ended_at: null,
+  } as LiveSessionResponse
+
+  beforeEach(() => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    vi.mocked(listLiveSources).mockResolvedValue([source()])
+  })
+
+  it('recovers a stored on-air meeting after remount so End Live Stream stays available', async () => {
+    localStorage.setItem('civiccast.liveRoom.sessionId', session.live_session_id)
+    vi.mocked(getLiveSession).mockResolvedValue(session)
+    const first = renderLiveRoomScreen()
+    await waitFor(() => expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(false))
+    first.unmount()
+    renderLiveRoomScreen()
+    await waitFor(() => expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(getLiveSession).toHaveBeenCalledWith(session.live_session_id)
+    expect((screen.getByRole('button', { name: 'Create live session' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('starts a fresh meeting ID after the previous meeting ends and stores it for reload', async () => {
+    const ended = { ...session, state: 'ending' } as LiveSessionResponse
+    vi.mocked(getLiveSession).mockImplementation(async id => {
+      if (id === 'council-live-room') return ended
+      throw new ApiError('Missing session', 404)
+    })
+    vi.mocked(createLiveSession).mockImplementation(async payload => ({
+      ...session, ...payload, state: 'idle', started_at: null,
+    } as LiveSessionResponse))
+    renderLiveRoomScreen()
+    fireEvent.click(await screen.findByRole('button', { name: 'New live session' }))
+    const create = screen.getByRole('button', { name: 'Create live session' }) as HTMLButtonElement
+    await waitFor(() => expect(create.disabled).toBe(false))
+    fireEvent.click(create)
+    await waitFor(() => expect(createLiveSession).toHaveBeenCalled())
+    const createdId = vi.mocked(createLiveSession).mock.calls.at(-1)![0].live_session_id
+    expect(createdId).not.toBe('council-live-room')
+    expect(createdId).not.toBe(session.live_session_id)
+    await waitFor(() => expect(localStorage.getItem('civiccast.liveRoom.sessionId')).toBe(createdId))
   })
 })

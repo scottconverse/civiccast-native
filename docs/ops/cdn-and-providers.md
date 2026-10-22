@@ -196,6 +196,26 @@ options. A mock is never a silent fallback.
 | `webhook` | No credentials (each subscription carries its own sealed signing secret). Optional `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` (30 default). Delivery: POST of the canonical JSON payload with `X-CivicCast-Signature: sha256=<hmac>`; failures queue durably and the webhook retry worker re-delivers with backoff (`CIVICCAST_WEBHOOK_RETRY_WORKER=inline\|off`, `CIVICCAST_WEBHOOK_RETRY_POLL_SECONDS` 60, `CIVICCAST_WEBHOOK_RETRY_BACKOFF_SECONDS` 120, `CIVICCAST_WEBHOOK_RETRY_MAX_ATTEMPTS` 8; see `docs/ops/background-workers.md`). |
 | `local_nas` | `CIVICCAST_NAS_ARCHIVE_PATH` — the mounted archive directory (local mount or UNC path; the OS mount is the transport, covering SMB/NFS appliances). No credentials. Each publish approval writes `archive/{asset_id}` (canonical, overwritten on republish) plus `snapshots/{asset_id}/{timestamp}` (write-once per run); each copy is fsynced and independently sha256 read-back verified — no proof is minted on a mismatch. |
 
+Subscriber webhook registration requires a public HTTPS receiver. With
+`CIVICCAST_PROVIDER_WEBHOOK=real`, `POST /api/public/subscribe/webhook` sends
+the receiver a JSON challenge with `type: "civiccast.subscription_confirmation"`,
+`confirmation_token`, and a new random `signing_secret`. The signup response
+contains neither token nor secret. Keep the secret on the receiver, then call
+`GET /api/public/subscribe/confirm?token=<confirmation_token>` on the station
+to activate notices. A successful challenge POST alone does not activate them.
+Use the secret to verify HMAC-SHA256 over the exact notification body; compare
+the hex digest to `x-civiccast-signature` after its `sha256=` prefix.
+
+Challenges, notices and retries reject private, loopback, link-local and other
+non-public IP destinations, including mixed public/private DNS answers. Each
+real connection uses a validated IP while retaining the hostname for TLS
+verification; redirects and environment proxies are disabled. Registration
+returns 400 for an unsafe destination or 502 when challenge delivery fails.
+Only explicit endpoint confirmation activates a subscription. Re-register a pending request to
+send a fresh challenge; its previous token becomes invalid. Older subscriptions
+with identifier-derived secrets must register and confirm again before they
+can deliver. Mock mode records a simulated challenge only and contacts nobody.
+
 For paywall sign-in links in post-Beta 18 source, select `CIVICCAST_PROVIDER_MAIL=real`
 and configure the SMTP variables above. Set `CIVICCAST_RESIDENT_PORTAL_URL`
 to the public resident portal address, or `CIVICCAST_PUBLIC_BASE_URL` when the

@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import heapq
+import itertools
 import json
 import logging
 import os
@@ -69,6 +71,7 @@ from civiccast.stream._ffmpeg import (
     FfmpegCancelledError,
     FfmpegNotFoundError,
     FfmpegResult,
+    probe_canonical_video,
     probe_has_decodable_stream,
     probe_media_duration_seconds,
     run_ffmpeg,
@@ -120,15 +123,10 @@ _WARM_CONFORM_TIMEOUT_FACTOR = 1.5
 #: covers an asset longer than a day. No asset the station has recorded comes
 #: anywhere near it (the longest observed, 9154s, designs to ~29 min).
 _WARM_CONFORM_TIMEOUT_CEILING_SECONDS = 7200.0
-#: BETA.10 U29: how long a warm that FAILED or timed out is left alone before
-#: the scheduler will try that asset again. The live failure mode re-queued the
-#: same asset on its own rotation (measured re-queue gap ~1800s), so the CPU
-#: burn was continuous. Six hours suppresses roughly twelve consecutive airings
-#: -- long enough that a permanently unwarmable asset costs a handful of
-#: whole-asset attempts a day instead of one per airing, short enough that a
-#: transient cause (disk pressure, a saturated box) gets another attempt the
-#: same working day with no operator action.
-_WARM_FAILURE_BACKOFF_SECONDS = 6 * 60 * 60.0
+#: Failed warms retry on later scheduling passes after 60s, doubling up to
+#: 30 minutes. Cancellation does not consume a retry; success resets the delay.
+_WARM_FAILURE_BACKOFF_SECONDS = 60.0
+_WARM_FAILURE_MAX_BACKOFF_SECONDS = 30 * 60.0
 
 #: F3 fix (hostile-review follow-up, 2026-09-06): the age-only GC this replaced
 #: had no size/count budget at all, so a channel doing frequent rollovers (the
@@ -258,13 +256,14 @@ def _dir_size_bytes(directory: Path) -> int:
     return total
 
 
-_warm_queue: queue.Queue[Callable[[], None]] = queue.Queue()
+_warm_queue: queue.PriorityQueue[tuple[int, int, Callable[[], None]]] = queue.PriorityQueue()
+_warm_sequence = itertools.count()
 _warm_worker_lock = threading.Lock()
 _warm_worker_started = False
 
 
 def _warm_worker() -> None:
-    """Single background worker draining ``_warm_queue`` FIFO, one job at a
+    """Single background worker draining ``_warm_queue`` by priority, one job at a
     time, forever -- see ``_default_warm_scheduler``. A job's own exception
     handling (``_schedule_warm``'s ``_job`` already catches and logs) should
     make this outer catch unreachable in practice; it exists purely so a
@@ -273,7 +272,7 @@ def _warm_worker() -> None:
     ``_warm_worker_started`` -- so a thread that dies uncaught would never
     be replaced)."""
     while True:
-        job = _warm_queue.get()
+        _, _, job = _warm_queue.get()
         try:
             job()
         except Exception:
@@ -290,7 +289,7 @@ def _default_warm_scheduler(job: Callable[[], None]) -> None:
     PER job -- unbounded, so every distinct asset aired while a previous
     warm was still running got its own thread, all contending for CPU with
     the synchronous foreground conforms this whole feature exists to keep
-    fast. Now FIFO through one long-lived worker: at most one background
+    fast. Upcoming-plan jobs precede opportunistic jobs, FIFO within each priority: at most one background
     warm conform runs at a time, queued jobs simply wait. ``_schedule_warm``'s
     own per-key dedupe (``self._warming``) still prevents the same asset
     from being queued twice while its warm is pending or running.
@@ -300,7 +299,17 @@ def _default_warm_scheduler(job: Callable[[], None]) -> None:
         if not _warm_worker_started:
             threading.Thread(target=_warm_worker, name="conform-cache-warm", daemon=True).start()
             _warm_worker_started = True
-    _warm_queue.put(job)
+    _warm_queue.put((getattr(job, "_warm_priority", 10), next(_warm_sequence), job))
+
+
+def _promote_queued_warm(key: str) -> None:
+    """Promote queued work under the queue lock; a dequeued job is untouched."""
+    with _warm_queue.mutex:
+        for index, (priority, sequence, job) in enumerate(_warm_queue.queue):
+            if priority > 0 and getattr(job, "_warm_key", None) == key:
+                _warm_queue.queue[index] = (0, sequence, job)
+                heapq.heapify(_warm_queue.queue)
+                break
 
 
 def _cache_budget_bytes() -> float:
@@ -565,6 +574,9 @@ class SourcePreparer:
         # whenever an expired entry is read, so it is bounded by the assets
         # that have failed inside one backoff window.
         self._warm_backoff_until: dict[str, float] = {}
+        self._warm_failure_counts: dict[str, int] = {}
+        self._video_copy_checks: dict[tuple[object, ...], bool] = {}
+        self._video_copy_guard = threading.Lock()
         # Hostile-review follow-up, item 5: this module has no visibility of
         # its own into which per-plan directories a caller still considers
         # LIVE (an active on-air plan, an armed-but-not-yet-settled reload) --
@@ -590,6 +602,52 @@ class SourcePreparer:
         self._protected_plan_dirs_provider = provider
 
     # -- persistent conform cache -------------------------------------------
+
+    def _copy_video(
+        self, source: Path, profile: CanonicalProfile, segment: EgressSourceSegment | None
+    ) -> bool:
+        # Input seeking without a known random-access boundary cannot preserve
+        # an exact inpoint through stream copy. Keep accurate decoded trimming.
+        if segment is not None and segment.inpoint_seconds:
+            return False
+        if "264" not in profile.video_codec:
+            return False
+        try:
+            stat = source.stat()
+        except OSError:
+            return False
+        key = (
+            str(source),
+            stat.st_size,
+            stat.st_mtime_ns,
+            profile.width,
+            profile.height,
+            profile.fps,
+        )
+        with self._video_copy_guard:
+            cached = self._video_copy_checks.get(key)
+        if cached is not None:
+            return cached
+        # Probing may take seconds; never hold the cache lock across subprocess
+        # work. Return our own decision even if another worker evicts the entry.
+        decision = probe_canonical_video(
+            source, width=profile.width, height=profile.height, fps=profile.fps
+        )
+        with self._video_copy_guard:
+            if len(self._video_copy_checks) >= 512:
+                self._video_copy_checks.clear()
+            self._video_copy_checks[key] = decision
+        return decision
+
+    def _record_warm_failure(self, key: str) -> float:
+        with self._warming_guard:
+            count = min(self._warm_failure_counts.get(key, 0) + 1, 6)
+            self._warm_failure_counts[key] = count
+            delay = min(
+                _WARM_FAILURE_BACKOFF_SECONDS * 2 ** (count - 1), _WARM_FAILURE_MAX_BACKOFF_SECONDS
+            )
+            self._warm_backoff_until[key] = time.monotonic() + delay
+            return float(delay)
 
     def _cache_dir(self) -> Path:
         return self._work_dir / _CACHE_DIR_NAME
@@ -958,6 +1016,7 @@ class SourcePreparer:
                         output_path=tmp_path,
                         segment=segment,
                         profile=config.canonical_profile,
+                        copy_video=self._copy_video(source_path, config.canonical_profile, segment),
                         threads=threads,
                     ),
                     cancel_event,
@@ -1210,6 +1269,7 @@ class SourcePreparer:
                     output_path=tmp,
                     segment=None,
                     profile=config.canonical_profile,
+                    copy_video=self._copy_video(source_path, config.canonical_profile, None),
                     loudness_target_lufs=config.loudness_target_lufs if normalized else None,
                     threads=threads,
                     measured_loudness=measured_loudness,
@@ -1559,6 +1619,7 @@ class SourcePreparer:
                     self._warming.discard(key)
 
         try:
+            _job.__dict__["_warm_key"] = key
             self._warm_scheduler(_job)
         except Exception:
             with self._warming_guard:
@@ -1805,8 +1866,7 @@ class SourcePreparer:
                 # the operator cannot act on. ``_run_ffmpeg`` has already
                 # turned a timeout into a ``SourcePrepareError`` naming the
                 # bound it exceeded; ffmpeg's own stderr is in the log.
-                with self._warming_guard:
-                    self._warm_backoff_until[key] = time.monotonic() + _WARM_FAILURE_BACKOFF_SECONDS
+                retry_seconds = self._record_warm_failure(key)
                 # U42: the DURATION THE WARM USED (its own probe's value when
                 # the caller had none), so this line and the bound next to it
                 # always describe the same attempt.
@@ -1820,13 +1880,14 @@ class SourcePreparer:
                     reason = f"{type(exc).__name__} (details in the ffmpeg log)"
                 _LOG.warning(
                     "Conform-cache warm failed for %r (%s, allowed %gs to conform, "
-                    "reason: %s); not retrying it for 6h. Airings of this asset "
+                    "reason: %s); retrying after %gs. Airings of this asset "
                     "keep serving their bounded per-segment conform and the "
                     "full-asset cache entry stays cold in the meantime.",
                     source_path.name,
                     duration_text,
                     warm_timeout_seconds,
                     reason,
+                    retry_seconds,
                 )
             else:
                 # The warm completed the attempt. Only a populated cache entry
@@ -1838,11 +1899,13 @@ class SourcePreparer:
                 if populated is not None:
                     with self._warming_guard:
                         self._warm_backoff_until.pop(key, None)
+                        self._warm_failure_counts.pop(key, None)
             finally:
                 with self._warming_guard:
                     self._warming.discard(key)
 
         try:
+            _job.__dict__["_warm_key"] = key
             self._warm_scheduler(_job)
         except Exception:
             with self._warming_guard:
@@ -1871,7 +1934,7 @@ class SourcePreparer:
         (the cache key, the loudnorm probe window, the conform arguments, the
         whole-asset promotion gate) runs unchanged and this can never populate
         the cache with an artifact the air path would not have produced itself.
-        The jobs are queued on the same single-worker warm FIFO
+        The jobs are queued on the same single-worker priority queue
         ``_schedule_warm`` uses, at lowered priority and on a duration-scaled
         budget, and they share its per-key dedupe and failure backoff: a warm
         already running for an asset makes a later one a no-op, and one that
@@ -1922,6 +1985,8 @@ class SourcePreparer:
         # racing the first is the one outcome worse than a cold cache.
         with self._warming_guard:
             if key in self._warming:
+                if self._warm_scheduler is _default_warm_scheduler:
+                    _promote_queued_warm(key)
                 return
             backoff_until = self._warm_backoff_until.get(key)
             if backoff_until is not None:
@@ -1987,13 +2052,16 @@ class SourcePreparer:
                     lower_priority=True,
                     timeout_seconds=warm_timeout_seconds,
                 )
+                if cached_ts.is_file():
+                    with self._warming_guard:
+                        self._warm_backoff_until.pop(key, None)
+                        self._warm_failure_counts.pop(key, None)
             except SourcePreparationCancelledError:
                 # A shutdown/pause is not a property of the asset: no warning,
                 # no backoff window -- the same rule ``_schedule_warm`` states.
                 pass
             except Exception as exc:
-                with self._warming_guard:
-                    self._warm_backoff_until[key] = time.monotonic() + _WARM_FAILURE_BACKOFF_SECONDS
+                retry_seconds = self._record_warm_failure(key)
                 duration_text = (
                     "unknown duration"
                     if warm_duration_seconds is None
@@ -2004,13 +2072,14 @@ class SourcePreparer:
                     reason = f"{type(exc).__name__} (details in the ffmpeg log)"
                 _LOG.warning(
                     "U60 plan look-ahead warm failed for %r (%s, allowed %gs to "
-                    "conform, reason: %s); not retrying it for 6h. The air path "
+                    "conform, reason: %s); retrying after %gs. The air path "
                     "is unaffected and will prepare this asset synchronously if "
                     "it reaches it.",
                     source_path.name,
                     duration_text,
                     warm_timeout_seconds,
                     reason,
+                    retry_seconds,
                 )
             finally:
                 shutil.rmtree(scratch, ignore_errors=True)
@@ -2018,6 +2087,7 @@ class SourcePreparer:
                     self._warming.discard(key)
 
         try:
+            _job.__dict__["_warm_priority"] = 0
             self._warm_scheduler(_job)
         except Exception:
             with self._warming_guard:
@@ -3022,6 +3092,7 @@ class SourcePreparer:
                 output_path=tmp_output_path,
                 segment=segment,
                 profile=config.canonical_profile,
+                copy_video=self._copy_video(source_path, config.canonical_profile, segment),
                 loudness_target_lufs=config.loudness_target_lufs if normalized else None,
                 threads=conform_threads,
                 measured_loudness=measured_loudness,
@@ -3346,6 +3417,7 @@ def build_conform_source_args(
     loudness_target_lufs: float | None = None,
     threads: int | None = None,
     measured_loudness: dict[str, str] | None = None,
+    copy_video: bool = False,
 ) -> list[str]:
     """Build FFmpeg args that conform one media source to the canonical profile.
 
@@ -3376,7 +3448,8 @@ def build_conform_source_args(
     # shared definition (``loudness_ride.canonical_video_filter``), which the
     # ride's program mux calls too -- so a ridden conform and a loudnorm
     # conform of the same window cannot drift apart in geometry.
-    args.extend(["-vf", canonical_video_filter(profile)])
+    if not copy_video:
+        args.extend(["-vf", canonical_video_filter(profile)])
     if loudness_target_lufs is not None:
         if measured_loudness is None:
             args.extend(["-af", f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5"])
@@ -3398,14 +3471,23 @@ def build_conform_source_args(
             )
     if threads is not None:
         args.extend(["-threads", str(threads)])
+    if copy_video:
+        # Probe and emitted stream must name the same video stream even when
+        # the source contains another default/higher-resolution video track.
+        args.extend(["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy"])
+    else:
+        args.extend(
+            [
+                "-c:v",
+                profile.video_codec,
+                "-b:v",
+                f"{profile.video_bitrate_kbps}k",
+                "-g",
+                str(profile.gop_size),
+            ]
+        )
     args.extend(
         [
-            "-c:v",
-            profile.video_codec,
-            "-b:v",
-            f"{profile.video_bitrate_kbps}k",
-            "-g",
-            str(profile.gop_size),
             "-c:a",
             profile.audio_codec,
             "-b:a",

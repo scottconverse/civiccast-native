@@ -9,10 +9,12 @@ Deferred, non-blocking work stays out of `civiccast/` source per
 `scripts/policy/check_no_todos.py` (no TODO/FIXME/HACK markers are allowed in
 shipped source). Completed entries remain below as disposition records.
 
-## Beta 17
+## Historical Beta 17 follow-up
 
 Owner-deferred R9 findings are tracked in [Beta 17 follow-up](docs/ops/beta17-deferred.md).
-Address them after Beta 16 packaging, testing and authorized publication.
+That document preserves the original follow-up scope; Beta 16 packaging and
+publication are complete. Current authorized work is tracked in
+[Sprint 6](docs/ops/sprint6.md), rather than reopening those earlier release steps.
 
 ## Completed follow-up
 

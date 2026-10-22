@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 afterEach(cleanup)
@@ -135,6 +135,13 @@ describe('ZoneForm', () => {
 })
 
 describe('FeedForm', () => {
+  it('keeps the feed kind immutable while editing an existing feed', () => {
+    const { getByLabelText } = render(
+      <FeedForm initial={FEED} submitting={false} onSubmit={vi.fn()} />,
+    )
+    expect((getByLabelText('Feed kind') as HTMLSelectElement).disabled).toBe(true)
+  })
+
   it('converts refresh minutes to seconds on submit', () => {
     const onSubmit = vi.fn()
     const { getByText, getByLabelText } = render(
@@ -224,8 +231,19 @@ vi.mock('../api/client', () => ({
   deleteCgFeed: vi.fn(),
 }))
 
-import type { StaffIdentityResponse } from '../types/api.generated'
-import { getAppPlatformConfig, getCgBoard, getStaffIdentity, listCgBoardAudit } from '../api/client'
+import type { BoardView, StaffIdentityResponse } from '../types/api.generated'
+import {
+  ApiError,
+  getAppPlatformConfig,
+  getCgBoard,
+  getCgBoardAudio,
+  getStaffIdentity,
+  listCgBoardAudit,
+  listLiveSources,
+  listStaffAssets,
+  previewCgBoard,
+  updateCgFeed,
+} from '../api/client'
 import { CgBoardDesignerScreen } from './CgBoardDesignerScreen'
 
 function identity(roles: StaffIdentityResponse['roles']): StaffIdentityResponse {
@@ -242,6 +260,46 @@ function renderScreen() {
 }
 
 describe('CgBoardDesignerScreen container role gate', () => {
+  it('sends only mutable feed fields when editing a feed', async () => {
+    vi.clearAllMocks()
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['publish_operator']))
+    vi.mocked(getAppPlatformConfig).mockResolvedValue({ channels: [] } as never)
+    vi.mocked(getCgBoard).mockResolvedValue({
+      board: {
+        board_id: 'board_public',
+        channel_id: 'public',
+        template_id: 'standard-community-board',
+        created_by: 'op',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+      zones: [],
+      feeds: [FEED],
+    } as BoardView)
+    vi.mocked(getCgBoardAudio).mockResolvedValue(null)
+    vi.mocked(listStaffAssets).mockResolvedValue([])
+    vi.mocked(listLiveSources).mockResolvedValue([])
+    vi.mocked(previewCgBoard).mockRejectedValue(new ApiError('Not found', 404))
+    vi.mocked(listCgBoardAudit).mockResolvedValue([])
+    vi.mocked(updateCgFeed).mockResolvedValue(FEED)
+
+    const { findByText, getByLabelText, getByText } = renderScreen()
+    await findByText('City news')
+    fireEvent.click(getByText('Edit'))
+    fireEvent.change(getByLabelText('Feed label'), { target: { value: 'Updated city news' } })
+    fireEvent.click(getByText('Save changes'))
+
+    await waitFor(() => expect(updateCgFeed).toHaveBeenCalledTimes(1))
+    expect(updateCgFeed).toHaveBeenCalledWith('public', 'feed_rss', {
+      label: 'Updated city news',
+      source_url: 'https://x.gov/news.rss',
+      trust_tier: 'operator_curated',
+      refresh_seconds: 900,
+      enabled: true,
+      tags: [],
+    })
+  })
+
   it('shows an access note for an operator without a CG role', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
     vi.mocked(getAppPlatformConfig).mockResolvedValue({ channels: [] } as never)

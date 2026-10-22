@@ -22,7 +22,7 @@ CURRENT_VERSION = (
 CURRENT_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
 # The source version can be the next owner-held candidate while the published
 # public release remains current. Public release links come from the authored
-# release-truth manifest; the helper's default tag follows the source version.
+# release-truth manifest; the helper's default tag follows the published release.
 PUBLISHED_RELEASE_TAG = yaml.safe_load(
     (ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
 )["current"]
@@ -113,8 +113,8 @@ def test_current_release_identity_is_consistent_across_runtime_and_installer() -
     downloader = (ROOT / "scripts" / "download_windows_release_artifacts.ps1").read_text(
         encoding="utf-8"
     )
-    assert f'$Tag = "{CURRENT_CANDIDATE_TAG}"' in downloader
-    assert f'$Version = "{CURRENT_VERSION}"' in downloader
+    assert f'$Tag = "{PUBLISHED_RELEASE_TAG}"' in downloader
+    assert f'$Version = "{PUBLISHED_RELEASE_TAG.removeprefix("v")}"' in downloader
 
 
 def test_retired_wsl_install_docs_are_explicitly_historical() -> None:
@@ -141,11 +141,16 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
     assert PUBLISHED_RELEASE_TAG.casefold() in normalized
     assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in normalized
     if CURRENT_CANDIDATE_TAG.casefold() != PUBLISHED_RELEASE_TAG.casefold():
+        candidate_section = normalized.split("## current source candidate", 1)[1].split("## ", 1)[0]
+        published_section = normalized.split("## current published package", 1)[1].split("## ", 1)[
+            0
+        ]
         assert (
-            f"preparing `{CURRENT_CANDIDATE_TAG}` as an unpublished candidate from the current source".casefold()
-            in normalized
+            f"`{CURRENT_CANDIDATE_TAG}` is an unpublished candidate".casefold() in candidate_section
         )
-        assert "the current downloadable release remains signed" in normalized
+        assert "installation verification is pending" in candidate_section
+        assert "signed" in published_section
+        assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in published_section
     assert (
         "historical beta 11 host result: 72 hours across public, government, and education, "
         "with 99.78% live caption-input coverage" in normalized

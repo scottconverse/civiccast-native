@@ -3796,6 +3796,28 @@ export interface RelinkAssetRequest {
   new_file_path: string
 }
 
+export interface RemoteChannel {
+  channel_id: string
+  enabled: boolean
+  state?: string | null
+  current_source_label?: string | null
+  last_health_at?: string | null
+}
+
+export interface RemoteCommandReceipt {
+  station_id: string
+  channel_id: string
+  action: 'start' | 'stop'
+  command_id: string
+  queued?: boolean
+  message?: string
+}
+
+export interface RemoteCommandRequest {
+  action: 'start' | 'stop'
+  confirm_stop?: boolean
+}
+
 export interface RemoteGuestSession {
   session_id: string
   room_id: string
@@ -4235,6 +4257,14 @@ export interface SessionOpenInput {
   confirm_on_air?: boolean
 }
 
+export interface SharedProgram {
+  asset_id: string
+  title: string
+  duration_seconds: number | null
+  published_at: string
+  portal_url: string
+}
+
 export interface ShowsReport {
   station_id: string
   from_ts: string
@@ -4581,10 +4611,21 @@ export interface StationBoxProfile {
   cable_os_verdict: CableOsVerdict
 }
 
+export interface StationCatalog {
+  station_id: string
+  items: Array<SharedProgram>
+  truncated: boolean
+}
+
 export interface StationChannelProfile {
   channel_id: string
   display_name: string
   purpose: string
+}
+
+export interface StationChannels {
+  station_id: string
+  channels: Array<RemoteChannel>
 }
 
 export interface StationLoginRequest {
@@ -4650,6 +4691,14 @@ export interface StationStorageLocations {
   media_library: string
   recordings: string
   backups: string
+}
+
+export interface StationSummary {
+  station_id: string
+  label: string
+  public_origin: string
+  channel_ids: Array<string>
+  control_configured: boolean
 }
 
 export interface StationTimeZone {

@@ -937,6 +937,134 @@ class TestSlateReplan:
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["reload"]
 
+    def test_slate_prepares_upcoming_programs_without_airing_early(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        start = _NOW + timedelta(seconds=180)
+        first = _plan_with_duration("public", 75.0)
+        second = _plan_with_duration("public", 90.0)
+        clock = {"t": 0.0}
+        calls: list[datetime] = []
+        warmed: list[EgressSourcePlan] = []
+
+        class Provider:
+            due = False
+
+            def __call__(self, _channel_id: str) -> EgressSourcePlan | None:
+                return first if self.due else None
+
+            def next_item_start_at(self, _channel_id: str, after: datetime) -> datetime:
+                calls.append(after)
+                return start
+
+        class Daemon(_FakeDaemon):
+            def warm_source_plan(self, _channel_id: str, plan: EgressSourcePlan) -> None:
+                warmed.append(plan)
+
+        def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan | None:
+            if at == start:
+                return first
+            if at == start + timedelta(seconds=75):
+                return second
+            return None
+
+        provider = Provider()
+        service = ChannelAutomationService(
+            store,
+            Daemon(live_channels={"public"}),
+            provider,
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=boundary,
+            monotonic=lambda: clock["t"],
+        )
+        service.run_once(now=_NOW)
+        assert warmed == [first, second]
+        assert _pending_actions(store, "public") == []
+        clock["t"] = 2.0
+        service.run_once(now=_NOW + timedelta(seconds=2))
+        assert calls == [_NOW]
+        # A schedule edit can be observed after the bounded warm retry interval.
+        clock["t"] = 31.0
+        service.run_once(now=_NOW + timedelta(seconds=31))
+        assert calls == [_NOW, _NOW + timedelta(seconds=31)]
+        # The warm cooldown never postpones a program that is now due.
+        provider.due = True
+        clock["t"] = 32.0
+        service.run_once(now=start)
+        assert _pending_actions(store, "public") == ["reload"]
+
+    @pytest.mark.parametrize("failure_stage", ["lookup", "boundary", "warm"])
+    def test_slate_warm_failure_does_not_block_due_reload(self, failure_stage: str) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        plan = _plan("public")
+
+        class Provider:
+            due = False
+
+            def __call__(self, _channel_id: str) -> EgressSourcePlan | None:
+                return plan if self.due else None
+
+            def next_item_start_at(self, _channel_id: str, after: datetime) -> datetime:
+                if failure_stage == "lookup":
+                    raise RuntimeError("lookup unavailable")
+                return after + timedelta(seconds=180)
+
+        class Daemon(_FakeDaemon):
+            def warm_source_plan(self, _channel_id: str, _plan: EgressSourcePlan) -> None:
+                if failure_stage == "warm":
+                    raise RuntimeError("warm queue unavailable")
+
+        def boundary(_channel_id: str, _at: datetime) -> EgressSourcePlan:
+            if failure_stage == "boundary":
+                raise RuntimeError("schedule unavailable")
+            return plan
+
+        provider = Provider()
+        service = ChannelAutomationService(
+            store,
+            Daemon(live_channels={"public"}),
+            provider,
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=boundary,
+        )
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+        provider.due = True
+        service.run_once(now=_NOW + timedelta(seconds=180))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    @pytest.mark.parametrize("future_seconds", [None, 3600])
+    def test_slate_does_not_warm_absent_or_distant_programs(self, future_seconds) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        warmed: list[EgressSourcePlan] = []
+
+        class Provider:
+            def __call__(self, _channel_id: str) -> None:
+                return None
+
+            def next_item_start_at(self, _channel_id: str, after: datetime):
+                return None if future_seconds is None else after + timedelta(seconds=future_seconds)
+
+        class Daemon(_FakeDaemon):
+            def warm_source_plan(self, _channel_id: str, plan: EgressSourcePlan) -> None:
+                warmed.append(plan)
+
+        service = ChannelAutomationService(
+            store,
+            Daemon(live_channels={"public"}),
+            Provider(),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=lambda cid, _at: _plan(cid),
+        )
+        service.run_once(now=_NOW)
+        assert warmed == []
+        assert _pending_actions(store, "public") == []
+
     def test_due_program_waits_for_the_fallback_workers_first_control_connection(
         self,
     ) -> None:

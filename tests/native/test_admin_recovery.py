@@ -13,7 +13,7 @@ from civiccast.installer import station_state
 from civiccast.native import admin_recovery as recovery
 
 
-def _assert_restricted_state_acl(path):
+def _assert_restricted_state_acl(path, *, replaceable=True):
     import ntsecuritycon
     import win32security
 
@@ -66,6 +66,10 @@ def _assert_restricted_state_acl(path):
             if trustee_sid == SERVICE_SID
             else ntsecuritycon.FILE_ALL_ACCESS
         )
+        if trustee_sid == SERVICE_SID and replaceable:
+            # An administrator-created recovery state must be replaceable by
+            # the service's ordinary atomic session save, without WRITE_DAC.
+            expected_mask |= ntsecuritycon.DELETE
         assert access_mask == expected_mask, ace_diagnostic
 
         effective_sid = trustee_sid
@@ -126,8 +130,8 @@ def test_reset_preserves_data_and_revokes_credentials(station, legacy):
     before_reset = path.read_bytes()
     backup = recovery.reset_password(path, "new-password-value")
     if sys.platform == "win32":
-        for protected in (path, backup):
-            _assert_restricted_state_acl(protected)
+        _assert_restricted_state_acl(path)
+        _assert_restricted_state_acl(backup, replaceable=False)
     updated = json.loads(path.read_text(encoding="utf-8"))
     assert backup.read_bytes() == before_reset
     assert updated["station"] == original["station"]
@@ -402,7 +406,7 @@ def test_acl_failure_writes_no_credentials_and_preserves_original(monkeypatch, s
     path, _ = station
     before = path.read_bytes()
 
-    def deny(target):
+    def deny(target, **kwargs):
         assert target.read_bytes() == b""
         raise RuntimeError("ACL denied")
 

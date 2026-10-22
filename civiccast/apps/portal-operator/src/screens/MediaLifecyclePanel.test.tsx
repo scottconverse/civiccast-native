@@ -69,7 +69,9 @@ describe('MediaLifecyclePanel', () => {
 
     expect(await findByText('Ready')).toBeTruthy()
     expect(await findByText(/OK \(-16.2 LUFS\)/)).toBeTruthy()
-    expect(await findByText('Not archive-complete yet')).toBeTruthy()
+    expect(await findByText('Archive verification status')).toBeTruthy()
+    expect(await findByText(/Publish lists the destinations required for this recording/)).toBeTruthy()
+    expect(await findByText('Some archive tiers are not verified')).toBeTruthy()
   })
 
   it('shows the archive-complete confirmation when all three tiers are verified', async () => {
@@ -77,7 +79,7 @@ describe('MediaLifecyclePanel', () => {
       baseReadiness({ archive_complete: true, archive_ia_verified: true, archive_nas_verified: true }),
     )
     const { findByText } = renderPanel()
-    expect(await findByText('✓ Archive-complete')).toBeTruthy()
+    expect(await findByText('✓ All archive tiers verified')).toBeTruthy()
   })
 
   it('does not place a legal hold until the operator confirms', async () => {

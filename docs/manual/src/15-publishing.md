@@ -35,18 +35,18 @@ At the top of the screen, tiles count your recordings: Total, Draft, Portal live
 
 ### What happens behind the button
 
-When you approve the Portal row, CivicCast does these things in this order:
+When you approve publishing, CivicCast does these things in this order:
 
 1. It checks the recording has a streamable copy. If not, it stops with "Publish preflight blocked: this asset has no manifest_url. Run the packager or fix ingest before approving publish."
-2. This edition queues recorded-caption work only when the station's recorded-caption setting is enabled, and only for a recording with a stored video file. When captions are disabled, approval can proceed without captions; existing jobs pause, and uncaptioned media is not marked caption-complete. The Beta 15 package predates this setting and attempts to queue caption work on approval. See [Recorded-caption settings](#recorded-captions) for the controls. If enabled caption work cannot be queued, publishing stops with "Publish blocked: CivicCast cannot queue this recording's caption job ... Nothing was published." and names the cause.
+2. This edition queues recorded-caption work only when the station's recorded-caption setting is enabled, and only for a recording with a stored video file. This happens even if the Portal row is not selected. When captions are disabled, approval can proceed without captions; existing jobs pause, and uncaptioned media is not marked caption-complete. The Beta 15 package predates this setting and attempts to queue caption work on approval. See [Recorded-caption settings](#recorded-captions) for the controls and whether reviewed English attaches first or waits for all selected languages. If enabled caption work cannot be queued, publishing stops with "Publish blocked: CivicCast cannot queue this recording's caption job ... Nothing was published." and names the cause.
 3. It runs the surfaces you ticked.
-4. It sets the public publish date. If that fails, the Portal row shows "Failed", the message says "The recording remains private", and you can click **Retry this surface**.
+4. If the Portal row is selected, it sets the public publish date. If that fails, the Portal row shows "Failed", the message says "The recording remains private", and you can click **Retry this surface**.
 
 > **Warning:** If the station's federation setting is on, every approval that leaves the recording public on the portal also posts a public notice, "New CivicCast recording published: {title}.", to the outside servers that follow the station. (Federation is a setting that shares public notices with other servers on the internet.) The Publish screen does not mention this, and a notice that has gone out cannot be taken back. Ask your IT person whether federation is on.
 
 ## The publishing steps (surfaces)
 
-Each card has nine rows. Each row shows a status dot, a name, badges (**Required**, an approval word, or **Coming in a future release**), a line such as "archive / Succeeded", a message and a **Next step**.
+Each card has nine rows. Each row shows a status dot, a name, badges such as **Required** or an approval word, a line such as "archive / Succeeded", a message and a **Next step**. All nine surfaces below are implemented; optional surfaces still need their provider settings and prerequisites.
 
 | Row | What it does in the current source |
 | --- | --- |
@@ -60,7 +60,7 @@ Each card has nine rows. Each row shows a status dot, a name, badges (**Required
 
 Provider selectors default to mocks, which do not send or archive media. The Setup Provider form saves values for station setup but does not configure these publishing adapters; IT must set the service environment described in [Integrations](#ch-integrations). The [capability matrix](https://github.com/scottconverse/civiccast-native/blob/main/CAPABILITIES.md) lists the current support boundary.
 
-A step's status reads **Not run yet**, **Running**, **Succeeded**, **Failed**, **Blocked**, **Overridden** or **Not set up yet**. (The two "coming in a future release" rows show "not built yet" instead.) The recording as a whole shows one of **Draft**, **Preflight blocked**, **Publishing**, **Archive pending**, **Archive verified**, **Reaching fewer places than planned**, **Complete** or **Needs action**.
+A step's status reads **Not run yet**, **Running**, **Succeeded**, **Failed**, **Blocked**, **Overridden** or **Not set up yet**. The recording as a whole shows one of **Draft**, **Preflight blocked**, **Publishing**, **Archive pending**, **Archive verified**, **Reaching fewer places than planned**, **Complete** or **Needs action**.
 
 A recording that has not been packaged still gets a card. Its Portal row reads **Blocked** with the message "The portal cannot publish this asset until an HLS manifest exists.", the card reads **Preflight blocked**, and **Approve and Publish selected** stays disabled while that row is ticked.
 
@@ -76,7 +76,7 @@ If a required archive copy cannot be made, a publish operator can skip it with a
 
 ### Retry a failed step
 
-When a row shows **Failed**, read its message and **Next step**, fix the cause, then click **Retry this surface** on that row. A successful retry of the Portal row also queues captions.
+When a row shows **Failed**, read its message and **Next step**, fix the cause, then click **Retry this surface** on that row. A Portal retry queues caption work when recorded captions are enabled and the recording has a stored video file. Retrying another surface does not start caption work.
 
 > **Known issue (beta.11):** If you approve a second time, CivicCast rebuilds the whole run. Any step you did not tick again goes back to "Not run yet", including the Portal row, and the card can read **Draft** and "Portal pending" even though the recording is still public. The screen's own text says archive and outside steps are opt-in "this time", which invites exactly this. Workaround: tick every step you want, all in one approval. To redo a single step, use **Retry this surface** on a Failed row instead of approving again: a retry changes only that row. If the Portal row has gone back to "Not run yet", its checkbox appears again; make sure it is ticked along with your other steps and approve again.
 
@@ -175,7 +175,7 @@ Home has these parts, top to bottom:
 
 If nothing at all is posted the page says "Nothing is posted yet. Check back after the station schedules a premiere or publishes a recording." If a part cannot load, an amber list "Some portal sections need attention" says which. If all three fail the page says "The public portal could not load right now. Refresh the page, then contact the station if the problem continues."
 
-> **Known issue (beta.11):** The emergency notice on Home appears only when the page address has `?emergency=1` added. A resident browsing normally never sees it. Do not rely on the portal Home page to show emergency alerts.
+The Home page reads the real emergency notice for its current channel automatically and checks again every five seconds. No special page link is needed. Its notice reflects alerts presented by the station. See [Understand emergency alerts](#understand-emergency-alerts).
 
 ### Recordings: search and filters
 
@@ -219,13 +219,13 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 > **Note:** The share link uses the address the resident used to reach the portal. If your station is reached by an inside address, a copied link will not work for people outside.
 
-> **Note:** A Beta 15 field run could not confirm that **Copy share link** changed the clipboard: the clipboard still held an earlier Library URL, and the action itself was not verified. This is an unconfirmed observation, not a confirmed defect or a statement about Beta 16. See the [Beta 17 deferred follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** A Beta 15 field run could not confirm that **Copy share link** changed the clipboard: the clipboard still held an earlier Library URL, and the action itself was not verified. This remains an unconfirmed Beta 15 observation; it does not establish a defect in the current package. See the [Beta 17 deferred follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 ### What a resident sees when the paywall is on
 
 Only if a setup administrator has turned the paywall on. The video is replaced by a gate. While it checks, a small label says "Checking access…". The gate shows "Subscription required", a reason line, a **Sign in by email** form with **Email me a sign-in link**, a "New here?" block with a plan list and **Subscribe**, and "Already signed in as {email}? Switch email".
 
-In the Beta 19, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
+In Beta 19, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
 
 ### Subscribing to new recordings
 

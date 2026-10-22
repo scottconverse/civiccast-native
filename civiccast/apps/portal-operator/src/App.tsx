@@ -62,6 +62,7 @@ const StationProfileScreen = lazy(() => import('./screens/StationProfileScreen')
 const CommissioningWizardScreen = lazy(() => import('./screens/CommissioningWizardScreen').then((module) => ({ default: module.CommissioningWizardScreen })))
 const BackupScreen = lazy(() => import('./screens/BackupScreen').then((module) => ({ default: module.BackupScreen })))
 const StationImportScreen = lazy(() => import('./screens/StationImportScreen').then((module) => ({ default: module.StationImportScreen })))
+const StationFederationScreen = lazy(() => import('./screens/StationFederationScreen').then((module) => ({ default: module.StationFederationScreen })))
 const NetworkSettingsScreen = lazy(() => import('./screens/NetworkSettingsScreen').then((module) => ({ default: module.NetworkSettingsScreen })))
 const StaffAccountsScreen = lazy(() => import('./screens/StaffAccountsScreen').then((module) => ({ default: module.StaffAccountsScreen })))
 
@@ -75,7 +76,7 @@ function StaffLoginRoute() {
     routeState.returnTo.startsWith('/') &&
     !routeState.returnTo.startsWith('//')
       ? routeState.returnTo
-      : '/schedule'
+      : null
 
   return (
     <main className="min-h-screen px-6 py-12" style={{ background: 'var(--cc-paper)', color: 'var(--cc-ink)' }}>
@@ -93,7 +94,14 @@ function StaffLoginRoute() {
             storeStaffToken(result.access_token)
             window.sessionStorage.removeItem(STAFF_SIGNED_OUT_NOTICE_KEY)
             queryClient.removeQueries({ queryKey: ['staff-identity'] })
-            navigate(returnTo, { replace: true })
+            // Schedule reads require a publishing/admin role. Clerks and
+            // meeting operators start with work their existing roles allow.
+            const defaultDestination = result.roles.some((role) =>
+              role === 'publish_operator' || role === 'setup_admin' || role === 'support_admin',
+            ) ? '/schedule'
+              : result.roles.includes('records_clerk') ? '/review'
+                : result.roles.includes('meeting_operator') ? '/assets' : '/help'
+            navigate(returnTo ?? defaultDestination, { replace: true })
           }}
         />
         <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
@@ -259,6 +267,7 @@ function AppContent() {
     if (lastFocusedPathRef.current === location.pathname) return
     lastFocusedPathRef.current = location.pathname
     if (isFirstObservedPath || !hasInteractedRef.current) return
+    if (document.activeElement?.closest('[role="dialog"]')) return
     document.getElementById(MAIN_CONTENT_ID)?.focus({ preventScroll: false })
   }, [location.pathname])
 
@@ -352,6 +361,7 @@ function AppContent() {
         <Route path="/staff-accounts" element={<StaffAccountsScreen api={staffAccountsApi} />} />
         <Route path="/backups" element={<BackupScreen />} />
         <Route path="/station-import" element={<StationImportScreen />} />
+        <Route path="/stations" element={<StationFederationScreen />} />
         <Route path="/network" element={<NetworkSettingsScreen />} />
         <Route path="/commissioning" element={<CommissioningWizardScreen />} />
         <Route path="/custom-fields" element={<CustomFieldsScreen />} />

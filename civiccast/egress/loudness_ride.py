@@ -985,12 +985,14 @@ def build_video_from_source_args(
     segment: EgressSourceSegment | None,
     profile: CanonicalProfile,
     threads: int | None = None,
+    copy_video: bool = False,
 ) -> list[str]:
-    """Final pass: video re-encoded from the SOURCE, audio stream-copied.
+    """Final pass: source video copied when compatible, otherwise re-encoded.
 
     The video is taken from the original file (input 0) and the ride's audio
     from the ride's own MPEG-TS (input 1), so the emitted program has exactly one
-    encode of each stream.  ``-c:a copy`` is what makes the ride's work survive
+    encode of each stream (or zero video encodes after compatibility approval).
+    ``-c:a copy`` is what makes the ride's work survive
     into the program untouched -- any audio filter here would fight the ride.
 
     No ``-b:a``/``-ar``/``-ac`` may be emitted alongside ``-c:a copy``: they are
@@ -1015,17 +1017,26 @@ def build_video_from_source_args(
     args.extend(["-i", str(audio_path)])
     if segment is not None:
         args.extend(["-t", f"{segment.duration_seconds:g}"])
-    args.extend(["-map", "0:v:0", "-map", "1:a:0", "-vf", canonical_video_filter(profile)])
+    args.extend(["-map", "0:v:0", "-map", "1:a:0"])
+    if not copy_video:
+        args.extend(["-vf", canonical_video_filter(profile)])
     if threads is not None:
         args.extend(["-threads", str(threads)])
+    if copy_video:
+        args.extend(["-c:v", "copy"])
+    else:
+        args.extend(
+            [
+                "-c:v",
+                profile.video_codec,
+                "-b:v",
+                f"{profile.video_bitrate_kbps}k",
+                "-g",
+                str(profile.gop_size),
+            ]
+        )
     args.extend(
         [
-            "-c:v",
-            profile.video_codec,
-            "-b:v",
-            f"{profile.video_bitrate_kbps}k",
-            "-g",
-            str(profile.gop_size),
             "-c:a",
             "copy",
             "-f",

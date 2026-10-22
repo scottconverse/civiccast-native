@@ -124,17 +124,36 @@ def test_takeover_command_drives_a_seamless_content_reload(tmp_path: Path) -> No
     assert strategy.swaps == []  # live is not a selector pad
 
 
+def test_explicit_takeover_supersedes_prior_operator_stop(tmp_path: Path) -> None:
+    sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
+    sup._operator_stopped_channels.add("public")
+    stopped_during_reload: list[bool] = []
+    sup._request_reload = lambda cid: stopped_during_reload.append(
+        sup.has_operator_stop_intent(cid)
+    )
+    sup._process_command(_command("takeover"))
+    assert stopped_during_reload == [False]
+    assert not sup.has_operator_stop_intent("public")
+
+
 def test_handback_command_clears_takeover_and_reloads_scheduled(tmp_path: Path) -> None:
     strategy = _SwapStrategy()
     sup = _supervisor(_FakeReader(_session()), strategy, tmp_path)
-    reloads: list[str] = []
-    sup._request_reload = lambda channel_id: reloads.append(channel_id)  # type: ignore[method-assign]
+    reloads: list[tuple[str, datetime | None]] = []
+    sup._request_reload = lambda channel_id, *, handoff_at=None: reloads.append(  # type: ignore[method-assign]
+        (channel_id, handoff_at)
+    )
     sup._process_command(_command("takeover"))
+    before_handback = datetime.now(UTC)
     sup._process_command(_command("handback"))
+    after_handback = datetime.now(UTC)
     assert "public" not in sup._live_takeover_plans
     # Both takeover and handback are content-reloads of the program leg; neither is
     # a pad swap (the always-hot slate pad is untouched throughout).
-    assert reloads == ["public", "public"]
+    assert reloads[0] == ("public", None)
+    assert reloads[1][0] == "public"
+    assert reloads[1][1] is not None
+    assert before_handback <= reloads[1][1] <= after_handback
     assert strategy.swaps == []
 
 
@@ -270,7 +289,7 @@ class TestHasManualOverride:
 
     def test_handback_clears_the_takeover_override(self, tmp_path: Path) -> None:
         sup = _supervisor(_FakeReader(_session()), _SwapStrategy(), tmp_path)
-        sup._request_reload = lambda channel_id: None  # type: ignore[method-assign]
+        sup._request_reload = lambda channel_id, *, handoff_at=None: None  # type: ignore[method-assign]
         sup.request_live_takeover(channel_id="public", live_source_plan=_live_plan())
         sup.request_live_handback(channel_id="public")
         assert sup.has_manual_override("public") is False

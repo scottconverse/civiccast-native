@@ -54,6 +54,7 @@ import os
 import threading
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -67,6 +68,9 @@ from civiccast.reporting.asrun_outbox import (
 )
 from civiccast.reporting.models import AsRunLogEntry, Slug
 from civiccast.reporting.store import ReportingStore
+
+if TYPE_CHECKING:
+    from civiccast.underwriting.store import UnderwritingStore
 
 _LOG = logging.getLogger(__name__)
 
@@ -123,6 +127,7 @@ class StoreAsRunRecorder:
         *,
         station_id: str | None = None,
         outbox: AsRunOutbox | None = None,
+        underwriting_store: UnderwritingStore | None = None,
     ) -> None:
         self._store = store
         self._station_id = station_id or resolve_station_id()
@@ -130,6 +135,7 @@ class StoreAsRunRecorder:
         self._open: dict[str, tuple[str, datetime]] = {}
         self._lock = threading.Lock()
         self._outbox = outbox or AsRunOutbox(store, db_path=ephemeral_outbox_path())
+        self._underwriting = underwriting_store
 
     def record_transition(
         self,
@@ -140,6 +146,7 @@ class StoreAsRunRecorder:
         source_label: str,
         actual_start: datetime,
         proof_event_id: str,
+        schedule_item_id: str | None = None,
     ) -> None:
         try:
             with self._lock:
@@ -154,10 +161,13 @@ class StoreAsRunRecorder:
                     station_id=self._station_id,
                     channel_id=channel_id,
                     asset_id=asset_id,
+                    schedule_item_id=schedule_item_id,
                     actual_start=actual_start,
                     actual_end=actual_start,
                     duration_s=0,
-                    source_kind=source_kind,  # type: ignore[arg-type]
+                    source_kind=self._airing_kind(
+                        source_kind, schedule_item_id, channel_id, asset_id
+                    ),  # type: ignore[arg-type]
                     verified=True,
                 )
                 # BUG C2 fix: journal-first, then drain — never a bare direct
@@ -217,6 +227,27 @@ class StoreAsRunRecorder:
             )
 
     # --- internals (caller holds the lock) ------------------------------
+
+    def _airing_kind(
+        self, source_kind: str, schedule_item_id: str | None, channel_id: str, asset_id: str | None
+    ) -> str:
+        # A sponsor asset aired as an ordinary program is not proof of a
+        # trafficked spot. Match the exact occurrence AND the chosen creative.
+        if source_kind != "program" or not schedule_item_id or self._underwriting is None:
+            return source_kind
+        try:
+            placement = self._underwriting.get_placement(f"pl-{schedule_item_id}")
+            if placement is None or placement.channel_id != channel_id:
+                return source_kind
+            flight = self._underwriting.get_flight(placement.flight_id)
+            spot = self._underwriting.get_spot(flight.spot_id) if flight else None
+            if spot and spot.station_id == self._station_id and spot.asset_id == asset_id:
+                return "spot"
+        except Exception:
+            # Preserve the verified airing even if optional attribution cannot
+            # be resolved. Never invent a billable spot on a lookup failure.
+            _LOG.exception("Underwriting attribution unavailable for schedule %s", schedule_item_id)
+        return source_kind
 
     def _close_locked(self, channel_id: str, actual_end: datetime) -> None:
         open_row = self._open.get(channel_id)

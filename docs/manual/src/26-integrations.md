@@ -262,7 +262,7 @@ The public overlay data is at `/api/public/cg/emergency-overlay`.
 
 > **Known issue (beta.11):** A feed that fails raises the alert kind `eas-source-unavailable`, but the console still shows the feed as "polling". Watch the **Alerts** screen, not that word.
 
-> **Known issue (beta.11):** We could not confirm whether the emergency crawl is burned into the video that goes to the cable headend, or shown only on the web overlay (HELP-03 of the emergency-alerts inventory). Do not assume it reaches cable.
+With `CIVICCAST_EAS=inline` configured before channel startup, the GStreamer channel reserves an emergency compositor layer. Configured crawls, overlays and forced slates are drawn into the outgoing video, including MPEG-TS output. Automatic presentation separately requires `CIVICCAST_EAS_AUTO_SURFACE`; neither polling nor automatic presentation is enabled by default.
 
 ## Webhooks and subscriptions
 
@@ -276,7 +276,7 @@ When a subscriber webhook is delivered, the station sends a JSON body with `asse
 
 > **Beta.11 history:** Only staff test dispatch could send subscriber notices. Current source can send them when the optional Publish surface is selected.
 
-> **Known issue (beta.11):** The signing secret for a subscriber webhook is calculated from the subscription's own identifier, not chosen at random, and it is never shown to the subscriber. A receiver therefore cannot check the signature. Webhook "confirmation" does not prove that the person owns the address: the confirmation token is returned in the sign-up response, and any `http` or `https` address is accepted. If `CIVICCAST_PROVIDER_WEBHOOK` is set to `real`, this can be used to make the station send requests to addresses of an attacker's choosing (audit findings E-001 and B-002). Leave the webhook provider on `mock` until this is fixed.
+With `CIVICCAST_PROVIDER_WEBHOOK=real`, register a public HTTPS endpoint. CivicCast sends that endpoint a JSON challenge containing `type: "civiccast.subscription_confirmation"`, a `confirmation_token` and a random `signing_secret`. Neither secret nor token is returned in the signup reply. The receiver keeps the secret and confirms through `GET /api/public/subscribe/confirm?token=<confirmation_token>` on the station before notices can send. Verify notice signatures over the exact JSON bytes with that secret. A pending registration can be retried for a fresh challenge; the previous token then stops working. Existing subscriptions with the old identifier-derived secret must register and confirm again. Challenges, notices and retries reject non-public addresses and DNS results, pin connections to a validated IP with hostname TLS verification, and do not follow redirects or use environment proxies. Unsafe destinations return 400; failed challenge delivery returns 502. Mock mode records a simulated challenge and contacts nobody. See `docs/ops/cdn-and-providers.md` for the receiver contract.
 
 ### Alert destinations
 
@@ -297,6 +297,41 @@ A **Setup admin** can open **Setup → Import station** to bring Cablecast show 
 Review the proposed rows and acknowledge them before choosing **Apply this import**. The screen reports the created show and schedule counts and any rows that failed. **Import history** lists batches, and **Roll back this batch** removes the rows created by that batch after a second confirmation. If an Apply request reports an error, check batch history before retrying because some rows may already have been committed. Import progress names the current phase; the server does not provide a percentage.
 
 This workflow imports metadata and media references, not the media files themselves. Check that referenced media is available to the new station before scheduling it on air. The screen supports Cablecast; other vendor file adapters are separate workflows.
+
+## Other stations {#station-federation}
+
+Open **Run meeting → Other stations** to browse published programs and check channels at a trusted CivicCast station. A **Setup admin**, **Meeting operator**, **Support admin** or **Publish operator** can view this screen. Choose a station from **Other station**, then use **Watch on …** to open a published program on that station's public portal in a new tab. The list contains at most 100 published programs; it does not copy media to this station.
+
+The channel section shows the remote station's reported state, current program and last health-report time. **Refresh channel status** requests a fresh snapshot. A missing report does not establish whether the channel is on air. If a catalog or status request fails, retry that section; the other section remains usable.
+
+A **Setup admin** or **Meeting operator** can choose **Start** or **Stop** for a shared channel. Check the station and channel named in the confirmation before continuing: these actions can affect the remote station's on-air stream. A successful request says the command was **queued**. Use **Refresh channel status** to confirm execution. If the request fails, refresh status before retrying because the remote station may already have received it.
+
+An empty station list means no peers are configured. A station administrator provisions a service-owned `federation.json` beside `station-state.json`, or selects its location with `CIVICCAST_FEDERATION_CONFIG`. Each peer has a fixed HTTPS public origin. Remote status and commands additionally require its staff origin, a server environment variable holding a remote staff token, and an explicit list of channel IDs. The screen does not accept addresses or credentials. Remote staff-token roles are still enforced by the peer. Use the configuration example below; this is separate from ActivityPub above.
+
+Example `federation.json`:
+
+```json
+{
+  "stations": [{
+    "station_id": "neighbor",
+    "label": "Neighbor station",
+    "public_origin": "https://watch.neighbor.example",
+    "staff_origin": "https://staff.neighbor.example",
+    "token_env": "CIVICCAST_NEIGHBOR_STAFF_TOKEN",
+    "channel_ids": ["public", "government"]
+  }]
+}
+```
+
+Replace the example origins and channel IDs with the peer's actual values.
+Both HTTPS origins need trusted certificates; configure the staff proxy to
+allow the central station's network. Set the named service environment variable
+to a remote staff bearer token with the required remote role, using the service
+environment procedure in [Running it day to day](#ch-operations). Never put the
+token itself in this JSON. File changes take effect on the next request;
+service-environment changes require a planned service restart. For catalog-only
+sharing, omit `staff_origin`, `token_env` and `channel_ids`. This source feature
+is not included in the published Beta 19 package.
 
 ## External agenda import
 
@@ -332,7 +367,7 @@ $env:DATABASE_URL = (Get-ItemProperty 'HKLM:\SOFTWARE\CivicCast\Native').Databas
 .\runtime\python.exe -m civiccast.cli token issue --operator-id integrations --display-name "Integrations script" --scopes operator --json
 ```
 
-`<install folder>` is where setup put CivicCast. The command prints the secret **once**; copy it into a password manager at once. The command needs `DATABASE_URL`; without it the message is "DATABASE_URL must point at the CivicCast database before running staff token lifecycle commands." The value is held in the registry where only SYSTEM and Administrators can read it. Close the window afterwards so the variable is gone.
+`<install folder>` is where setup put CivicCast. The command prints the secret **once**; copy it into a password manager at once. The command needs `DATABASE_URL`; without it the message is "DATABASE_URL must point at the CivicCast database before running staff token lifecycle commands." The value is held in the registry where SYSTEM, Administrators and the station service identity can read it. Close the window afterwards so the variable is gone.
 
 The scopes `operator` and `admin` each grant all five roles (Setup admin, Meeting operator, Records clerk, Publish operator and Support admin); a token with no scopes grants none. To give a script only what it needs, name the roles instead, comma-separated: `setup_admin`, `meeting_operator`, `records_clerk`, `publish_operator`, `support_admin` (the code also accepts the hyphenated and short forms such as `meeting-operator` and `meeting`). See [Security and privacy](#ch-security). Other token commands are `token list`, `token revoke` and `token rotate`.
 
@@ -427,7 +462,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ## Package status and verification
 
-This chapter describes the Beta 19 edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the unpublished Beta 20 candidate edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
 
 ## Related
 

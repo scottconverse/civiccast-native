@@ -574,7 +574,7 @@ def delete_feed(
 
 
 @board_staff_router.post(
-    "/channels/{channel_id}/feeds/{feed_source_id}/items/{item_id}/approve",
+    "/channels/{channel_id}/feeds/{feed_source_id}/items/{item_id:path}/approve",
     response_model=CgFeedItemApproval,
     status_code=status.HTTP_201_CREATED,
     summary="Approve a feed item for an approval-gated zone",

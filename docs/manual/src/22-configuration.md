@@ -17,7 +17,7 @@ Scheduling forms use the time zone in **Station Profile**; reports, exports and 
 
 ## Where settings live
 
-Settings are kept in five different places. Knowing which place holds a setting tells you how to change it, how to back it up, and why a change in one place does not move anything in another.
+Settings are kept in six different places. Knowing which place holds a setting tells you how to change it, how to back it up, and why a change in one place does not move anything in another.
 
 | Where | What is kept there | How you change it |
 | --- | --- | --- |
@@ -30,7 +30,7 @@ Settings are kept in five different places. Knowing which place holds a setting 
 
 The service's `station-state.json` and related profile files live under its configured service profile. The installer sets that profile to `C:\ProgramData\CivicCast\profile`; when migrating a default LocalSystem installation, it copies the old profile and imports CivicCast Credential Manager entries before changing service identity. See the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md) for migration details.
 
-> **Known issue (beta.11):** Back up `station-state.json` and the files beside it as well as `C:\ProgramData\CivicCast`. The admin account, the recovery-code hashes, the saved provider credentials and the commissioning record are in the state files, which in the default layout are not under `ProgramData`. The chapter on backups ([Running it day to day](#ch-operations)) describes what to copy.
+> **Backup:** Include the service profile and its state files in the station backup. Current native installations use `C:\ProgramData\CivicCast\profile`; older Beta 11 LocalSystem installations could use a profile outside `ProgramData`. Verify the configured path when recovering an older installation. See [Running it day to day](#ch-operations).
 
 The folder layout is described in the installing chapter. The two folders that matter for configuration are `C:\ProgramData\CivicCast\data\uploads` (uploaded media and recordings, in a `recordings` sub-folder) and `C:\ProgramData\CivicCast\data\egress` (the playout work area: prepared copies of programs, slates, the live web-preview segments, the conform cache).
 
@@ -73,7 +73,7 @@ Too many wrong passwords are limited. The default is 10 failures per 60 seconds 
 
 To use a recovery code, click **Recover account**, enter one code and a new password (at least 12 characters), and click **Recover account** a second time. The second click is the real action.
 
-> **Warning:** Using a recovery code permanently consumes it. Only eight exist for the station. After the eighth, the only route back in is the environment switch below, or a regenerated kit made while you are still signed in.
+> **Warning:** Using a recovery code permanently consumes it. If the password and all eight codes are lost, an elevated local administrator can use the offline `civiccast admin reset-password` procedure in [Security and privacy](#ch-security). Do not reset first setup to recover a password. While signed in, you can also regenerate the recovery kit.
 
 To make First Setup run again on a station that is already set up, the service must have the environment variable `CIVICCAST_ALLOW_FIRST_ADMIN_RESET=1`. Without it, a second First Setup is refused with "First-admin setup is already complete. Use the recovery flow or set CIVICCAST_ALLOW_FIRST_ADMIN_RESET=1 for an intentional local reset." Treat this variable as a station reset. We did not trace everything the reset replaces, so do not use it on a station with real records without help from support.
 
@@ -185,7 +185,7 @@ Applying a cable preset replaces the channel's whole canonical profile and sets 
 
 ### Sink kinds {#configuration-sinks}
 
-A **sink** is one output of a channel. The native station always uses the GStreamer engine, which supports these kinds. A configuration with an `rtmp` sink is refused at save time with a message that names the supported kinds.
+A **sink** is one output of a channel. The native station uses the GStreamer engine and supports the sink kinds below. Output destinations and any required credentials must be configured for the receiving service.
 
 | Kind | URI form | What it is for | Notes from the code |
 | --- | --- | --- | --- |
@@ -195,7 +195,7 @@ A **sink** is one output of a channel. The native station always uses the GStrea
 | `srt` | `srt://...` | An SRT receiver | See the secret note below |
 | `hls` | A local folder path or `file://` | The resident-portal web preview: a playlist and 2-second segments written to the folder | Delivered by a supervised ffmpeg helper because the shipped GStreamer has no HLS element. The folder must be inside the HLS root (below) |
 | `sdi` | Not a network address | SDI output through a supervised relay using your own DeckLink-capable ffmpeg | Needs `CIVICCAST_SDI_FFMPEG` |
-| `rtmp` | `rtmp://` or `rtmps://` | Not supported by the GStreamer engine | Refused when the GStreamer engine is selected |
+| `rtmp` | `rtmp://` or `rtmps://` | FLV through `rtmp2sink` | Configure the destination and stream-key handle; the worker resolves the secret when opening the output |
 
 Each sink also has: a **label** (1 to 80 characters, unique within the channel), **latency** (0 to 60,000 ms, default 2,000), **extra output arguments** (only `-mpegts_flags`, `-muxrate`, `-pkt_size`, `-flush_packets` and `-max_delay` are allowed; shell characters and extra inputs are rejected), a **loudness regime** and optional target and tolerance, and an **EAS tone strip** switch (default on; it strips the 853/960 Hz attention tone on internet outputs and leaves a cable feed untouched).
 
@@ -273,10 +273,10 @@ CivicCast captions in two different ways and they are configured separately. Nat
 | | Live captions | Offline captions on recordings |
 | --- | --- | --- |
 | What it is | A real-time speech-to-text tap on each on-air channel's audio, with the text embedded in the video as CEA-708 captions | A job that captions a published recording after the meeting |
-| Switch | **Show live captions on air** (Station Profile), default **off** in beta.11. The tap worker rechecks it on each scan; video routing changes at the next channel start | Cannot be switched off (see below) |
-| Where results go | Into the picture; live history is bounded and ordinary live operation does not create permanent per-cue review records or evidence WAVs | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
+| Switch | **Show live captions on air** (Station Profile); the tap rechecks it on each scan and video routing changes at the next channel start | **Enable recorded captions** in Station Profile; disabling pauses caption work and stops new jobs being queued |
+| Where results go | Into the stream as captions; live history is bounded and ordinary live operation does not create permanent per-cue review records or evidence WAVs | To the review queue; attach after all selected languages are reviewed, or attach reviewed English first if that completion option is selected |
 | Engine | Whistle CPU primary by default, with Whisper fallback; service environment can select Whisper directly | Whisper speech recognition and the translation model |
-| Needs | CPU for Whistle and video playout; no CUDA GPU is required | Medium Whisper floor and a working translation model; optional Large/CUDA may speed Whisper |
+| Needs | CPU for Whistle and video playout; no CUDA GPU is required | Whisper; a translation model is needed only when Spanish is selected |
 
 ### The caption tiers
 
@@ -307,9 +307,9 @@ A separate proof loop decodes the emitted stream, compares the captions it finds
 
 ### Offline captions and Spanish
 
-When a recording is published, a job transcribes it in 30-second chunks (`CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS`), checks the queue every 60 seconds (`CIVICCAST_OFFLINE_CAPTION_POLL_SECONDS`), retries after 300 seconds (`CIVICCAST_OFFLINE_CAPTION_BACKOFF_SECONDS`) and gives up after 4 attempts (`CIVICCAST_OFFLINE_CAPTION_MAX_ATTEMPTS`). A reviewer then approves the English cues. The approved English is translated to Spanish by the translation model, and the Spanish cues go to their own review. Neither track attaches to the recording until both reviews are finished. The recording itself is public the whole time.
+When recorded captions are enabled and the recording has a stored source file, publication queues a caption job. It transcribes in 30-second chunks (`CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS`), polls every 60 seconds, retries after 300 seconds and permits 4 attempts by default. A reviewer approves the English cues. If Spanish is selected, the translation model creates Spanish cues for separate review. **Wait for all selected languages** attaches tracks after those reviews; **Attach English after its review** allows English to attach while Spanish work continues. The recording remains public while caption work proceeds.
 
-> **Warning:** Offline captioning cannot be turned off, and a Spanish track is required. If you put `CIVICCAST_OFFLINE_CAPTION_JOB=off` in the service environment the control plane refuses to start, with a message that begins "CIVICCAST_OFFLINE_CAPTION_JOB=off disables offline captioning entirely". If you put `CIVICCAST_OFFLINE_CAPTION_SPANISH=0` (or `false`, `no`, `off`) it also refuses to start, saying a published recording must carry an operator-reviewed Spanish track. The value `1` or `true` is accepted and ignored. If no translation model is available, the job cannot finish producing the required Spanish caption track. Its message currently says "This recording's English captions are approved, but CivicCast has no translation model available to produce the required Spanish track, so the recording cannot finish publishing." The recording itself remains public while the captions wait; the job retries after the model is repaired. If you are looking for the reason a service stopped right after you edited the environment, read the control plane log first (see [Troubleshooting](#ch-troubleshooting)).
+> **Settings:** Use **Station Profile > Recorded captions** to disable recorded captions, select English only, or choose English-first completion. Legacy `CIVICCAST_OFFLINE_CAPTION_JOB=off` and `CIVICCAST_OFFLINE_CAPTION_SPANISH=0` are accepted defaults before profile settings are saved; they do not inherently prevent startup. Saved station settings take precedence. Spanish requires a working translation model only when selected.
 
 ### Caption evidence and retention
 
@@ -398,7 +398,7 @@ The helper behind this is the **TSR sidecar**, a separate small Node.js program 
 
 > **Known issue (beta.11):** **Save profile** always sends empty options. Saving a profile replaces earlier settings, including a public-host override recorded elsewhere. The take-delay and post-roll boxes start at 0 and do not show the saved values. The headline can never read "Ready": equipment verification is fixed to "pending" in this build, so the best result is "Check before meeting". Nothing on the screen disables or enables a device, although a readiness hint talks about it.
 
-> **Known issue (beta.11):** An On-Air session on the operate screen silently expires after 30 minutes and the screen does not show the time left. See the chapter on running the meeting ([Running the meeting](#ch-running-meeting)).
+The Control Room displays its On-Air session deadline and remaining time, restores the owner's open session after a refresh, and lets a Setup admin or Support admin force-close a locked session. A previous dry-run result is not restored; dry-run the cue again before firing it. See [Running the meeting](#ch-running-meeting).
 
 ## Define Custom Fields {#configuration-custom-fields}
 
@@ -469,7 +469,7 @@ The first admin has every role, so it sees all three work. A token with only `se
 
 ## Environment variables {#configuration-env}
 
-The program reads about 400 environment variable names (412 appear in the source scan, including test and build ones). Almost all have a safe default. This section covers the ones a station's IT person will plausibly need, with the real default and what happens. Every variable below is read from the **service's** environment unless the table says it belongs to a command you run yourself.
+The current source inventory contains 443 environment variable names, including development and build settings. Almost all have a safe default. This section covers the ones a station's IT person will plausibly need, with the real default and what happens. Every variable below is read from the **service's** environment unless the table says it belongs to a command you run yourself.
 
 ### How to set one on the Windows service {#configuration-env-how}
 
@@ -536,7 +536,7 @@ Defaults are what the code uses when the variable is unset or blank. "Off/on" va
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `CIVICCAST_STATION_STATE_PATH` | `%LOCALAPPDATA%\CivicCast\station-state.json` of the service account | Where the state file lives; `provider-credentials.json`, `provider-proof-evidence.json` and `tester-ops-state.json` sit beside it |
+| `CIVICCAST_STATION_STATE_PATH` | Installer-configured service profile under `C:\ProgramData\CivicCast\profile`; when unconfigured, `%LOCALAPPDATA%\CivicCast\station-state.json` | Overrides the state file location; related state/credential files sit beside it |
 | `CIVICCAST_STATION_NAME` | The profile's name, else "CivicCast Station" | Overrides the station name shown and used |
 | `CIVICCAST_STATION_TZ` | The profile's zone, else `local` (= UTC) | An IANA zone for dayparts and retention dates; an invalid name gives UTC and a warning |
 | `CIVICCAST_STATION_ID` | `civiccast-station` | Single-station id used by custom fields, paywall, agendas, recordings and as-run logs. Leave it unset |
@@ -585,7 +585,7 @@ Defaults are what the code uses when the variable is unset or blank. "Off/on" va
 | `CIVICCAST_WHISPER_DEVICE` / `CIVICCAST_WHISPER_COMPUTE_TYPE` | CUDA with supported NVIDIA GPU and staged runtime; otherwise `cpu` / `int8` | Forces `cuda` or `cpu` and the compute type |
 | `CIVICCAST_WHISPER_CPU_THREADS` / `CIVICCAST_CAPTION_TAP_CPU_THREADS` | live: 1, up to 2 with 16 or more CPUs | CPU threads for captioning; live ignores 0 and caps above 2 |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` / `..._POLL_SECONDS` / `..._MAX_BACKLOG_SEGMENTS` | 5.0 / 2.0 / 2 | Live caption audio segment, scan period, tolerated backlog |
-| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `off` stops the service from starting (see the Warning above) |
+| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `off` disables recorded-caption work by default until station settings are saved; use Station Profile for ongoing configuration |
 | `CIVICCAST_OFFLINE_CAPTION_POLL_SECONDS` / `..._BACKOFF_SECONDS` / `..._MAX_ATTEMPTS` / `..._CHUNK_SECONDS` | 60 / 300 / 4 / 30 | Offline caption job timing |
 | `CIVICCAST_SUMMARY_JOB` and `..._POLL_SECONDS` / `..._BACKOFF_SECONDS` / `..._MAX_ATTEMPTS` | `inline`; 15 / 120 / 3 | Summary job |
 | `CIVICCAST_OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Read only by the alerting self-test; the summary and translation adapters use the loopback address directly |
@@ -621,9 +621,9 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 | "First-admin setup is already complete. Use the recovery flow or set CIVICCAST_ALLOW_FIRST_ADMIN_RESET=1 for an intentional local reset." | The station is already set up | Sign in; use a recovery code if the password is lost |
 | "Too many sign-in attempts from this station. Wait N seconds, then try again with the correct password, or use a printed recovery code." | The sign-in limit was reached | Wait the number of seconds shown |
 | "Durable storage is not ready." or HTTP 503 on a screen | The database was not prepared or the service is still starting | Click **Prepare storage** on First Setup; check the service and `postgres.log` |
-| The service stops soon after you edit the environment | An invalid value, or a forbidden switch such as `CIVICCAST_OFFLINE_CAPTION_JOB=off` | Read `control_plane.log` and `control_plane-app.log` in `C:\ProgramData\CivicCast\logs`; remove the variable and restart |
+| The service stops soon after an environment edit | A value is invalid or a configured dependency cannot start | Read the exact control-plane error and correct the named value. `CIVICCAST_OFFLINE_CAPTION_JOB=off` is supported; it is not itself a startup error |
 | "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." | The channel has no configuration | Apply a preset on the Channels screen |
-| "Sink kind(s) [...] are not supported by the active GStreamer egress engine." | An `rtmp` sink was saved | Use `srt`, `udp-ts`, `local-ts`, `file`, `sdi` or `hls` |
+| "Sink kind(s) [...] are not supported by the active GStreamer egress engine." | The configuration contains an unsupported sink kind | Use a supported kind: `srt`, `rtmp`, `udp-ts`, `local-ts`, `file`, `sdi` or `hls`; check the exact kind named in the error |
 | "No hardware video encoder was found on this machine. To broadcast on the CPU instead (slower)..." | The profile names a hardware encoder this computer does not have | Tick **Allow software (CPU) encoding fallback**, or change the profile |
 | "Start was queued but the feed did not start. The outgoing-feed worker did not report Starting or On air within 20s..." | The feed worker did not respond | Check the service in System Health, then try Start again |
 | "channel '&lt;id&gt;' has no udp-ts sink to verify — apply a headend delivery profile first." | Commissioning proof on a channel with no UDP output | Apply the headend preset first |
@@ -634,7 +634,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ## Package status
 
-These instructions describe the Beta 19 edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
+These instructions describe the unpublished Beta 20 candidate edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
 
 ## Related
 

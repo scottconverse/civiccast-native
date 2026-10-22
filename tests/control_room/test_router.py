@@ -805,3 +805,39 @@ def test_autouse_fixture_disposes_the_engine_after_the_test() -> None:
         "the autouse fixture must close _build()'s SQLite DBAPI connection "
         f"once the test ends; found a still-open one: {connection_record.dbapi_connection!r}"
     )
+
+
+@pytest.mark.parametrize("role", ["setup_admin", "meeting_operator", "support_admin"])
+def test_read_device_profile_preserves_saved_configuration(role):
+    app, store, _, _ = _build(scopes=(role,))
+    _seed(store)
+    profile = store.get_profile_for_device("dev_obs")
+    store.upsert_profile(
+        profile.model_copy(
+            update={
+                "take_delay_ms": 125,
+                "post_roll_ms": 250,
+                "options": {"adapter": {"channel": 2}},
+                "capability_map": {"scene": "take"},
+            }
+        )
+    )
+    response = TestClient(app).get("/api/staff/control-room/devices/dev_obs/profile")
+    assert response.status_code == 200
+    assert response.json() == store.get_profile_for_device("dev_obs").model_dump(mode="json")
+
+
+def test_read_device_profile_absent_missing_and_denied():
+    app, store, _, _ = _build()
+    _seed(store, with_profile=False)
+    client = TestClient(app)
+    response = client.get("/api/staff/control-room/devices/dev_obs/profile")
+    assert response.status_code == 200
+    assert response.json() is None
+    assert client.get("/api/staff/control-room/devices/missing/profile").status_code == 404
+    for role in ("records_clerk", "publish_operator"):
+        other_app, _, _, _ = _build(scopes=(role,), store=store)
+        assert (
+            TestClient(other_app).get("/api/staff/control-room/devices/dev_obs/profile").status_code
+            == 403
+        )

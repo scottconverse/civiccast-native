@@ -36,7 +36,7 @@ from civiccast.egress.models import (
     EgressStateRow,
 )
 from civiccast.egress.preparer import PreparedSegmentRecord, SourcePreparationReport
-from civiccast.egress.source_plan import ScheduleSourcePlanProvider
+from civiccast.egress.source_plan import ScheduleSourcePlanProvider, SlateSourceGenerator
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.supervisor import PlayoutSupervisor
 from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
@@ -285,8 +285,10 @@ def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> Non
     assert "captions disabled" in (store.read_state("gov").last_error or "")
 
 
+@pytest.mark.parametrize("fallback_slate", [False, True])
 def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(
     tmp_path: Path,
+    fallback_slate: bool,
 ) -> None:
     """A distinct second START is delivered as a no-op, not a session reset.
 
@@ -305,7 +307,8 @@ def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_se
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
-        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        source_plan_provider=lambda _channel_id: None if fallback_slate else _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
         ffmpeg_starter=lambda _args: process,
         channel_start_hook=hook_calls.append,
     )
@@ -321,6 +324,10 @@ def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_se
     assert store.peek_pending_commands("gov") == []
     assert daemon.process_once("gov") == 0
 
+    before_duplicate = store.read_state("gov")
+    assert before_duplicate is not None
+    assert before_duplicate.current_proof_event_id is not None
+
     # A distinct command id reaches the daemon.  The live-process guard makes
     # START a no-op: process identity and hook count must not change.
     second = _command().model_copy(update={"command_id": "cmd-start-2"})
@@ -331,6 +338,9 @@ def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_se
     state = store.read_state("gov")
     assert state is not None
     assert state.pid == 4242
+    assert state.state == before_duplicate.state
+    assert state.current_proof_event_id == before_duplicate.current_proof_event_id
+    assert state.current_source_label == before_duplicate.current_source_label
     assert process.terminated is False
     assert hook_calls == ["gov"], (
         "a distinct START on a live tracked process must be delivered but "
@@ -1145,17 +1155,38 @@ def test_daemon_logs_last_error_at_info_on_fallback_slate_transition(
     ), [r.getMessage() for r in info_records]
 
 
-def test_daemon_runs_fallback_slate_provider_when_no_source_plan(tmp_path: Path) -> None:
+@pytest.mark.parametrize("generated_slate", [False, True])
+def test_daemon_runs_fallback_slate_provider_when_no_source_plan(
+    tmp_path: Path, generated_slate: bool
+) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
     captured: dict[str, list[str]] = {}
     process = _FakeProcess()
+    prepared: list[EgressSourcePlan] = []
+
+    def render(args: list[str]) -> Any:
+        Path(args[-1]).write_text("fake canonical TS", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    fallback_plan = (
+        SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=render)(_config())
+        if generated_slate
+        else _slate_plan(tmp_path)
+    )
+    expected_label = fallback_plan.segments[0].label
+
+    def prepare(plan: EgressSourcePlan, _config: EgressConfig) -> SourcePreparationReport:
+        prepared.append(plan)
+        return SourcePreparationReport(source_plan=plan, records=())
+
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _channel_id: None,
-        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        fallback_source_provider=lambda _config: fallback_plan,
+        source_preparer=prepare,
         ffmpeg_starter=lambda args: captured.setdefault("args", args) and process,
     )
 
@@ -1164,12 +1195,15 @@ def test_daemon_runs_fallback_slate_provider_when_no_source_plan(tmp_path: Path)
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "FALLBACK_SLATE"
-    assert state.current_source_label == "Fallback slate"
+    assert state.current_source_label == expected_label
+    assert state.pid == process.pid
+    assert prepared == ([] if generated_slate else [fallback_plan])
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
     assert state.current_proof_event_id is not None
     assert any("egress-source-plan.ffconcat" in arg for arg in captured["args"])
     proof_event = store.recent_proof_events("gov", 1)[0]
     assert proof_event.state == "FALLBACK_SLATE"
-    assert proof_event.source_label == "Fallback slate"
+    assert proof_event.source_label == expected_label
     assert "entered fallback slate" in proof_event.machine_summary
     assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
 
@@ -1583,6 +1617,7 @@ def test_real_strategy_default_takes_the_seamless_reload_path_env_unset(
         worker_launcher=lambda argv, stdout, stderr: _start_fake_process(pending, started),
         pipe_channel_factory=pipe_channel_factory,  # type: ignore[arg-type]
         is_windows=True,  # exercises the D2 pipe path platform-agnostically
+        encoder_probe=lambda _factory: False,  # no physical GPU/gi in this pipe-path fixture
     )
     assert strategy.supports_content_reload is True  # sanity: the default this test relies on
 
@@ -1644,9 +1679,11 @@ def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
     assert strategy.switch_at_end_of_current_calls == [True]
 
 
+@pytest.mark.parametrize("generated_slate", [False, True])
 def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    generated_slate: bool,
 ) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -1654,14 +1691,30 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
     started: list[_FakeProcess] = []
     strategy = _FakeContentReloadStrategy(processes, started)
+    prepared: list[str] = []
+
+    def render(args: list[str]) -> Any:
+        Path(args[-1]).write_text("fake canonical TS", encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    fallback_plan = (
+        SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=render)(_config())
+        if generated_slate
+        else _source_plan_with_label(tmp_path, "CivicCast filler")
+    )
+    fallback_label = fallback_plan.segments[0].label
+
+    def prepare(plan: EgressSourcePlan, _config: EgressConfig) -> SourcePreparationReport:
+        prepared.append(plan.segments[0].label)
+        return SourcePreparationReport(source_plan=plan, records=())
+
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
-        fallback_source_provider=lambda _config: _source_plan_with_label(
-            tmp_path, "CivicCast filler"
-        ),
+        fallback_source_provider=lambda _config: fallback_plan,
         encoder_strategy=strategy,
+        source_preparer=prepare,
     )
 
     daemon.process_once("gov")
@@ -1674,7 +1727,8 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     store.enqueue_command(_command("reload"))
     daemon.process_once("gov")
 
-    assert strategy.reload_calls == ["CivicCast filler"]
+    assert prepared == ["Terminal program"] + ([] if generated_slate else [fallback_label])
+    assert strategy.reload_calls == [fallback_label]
     assert strategy.switch_at_end_of_current_calls == [True]
     assert len(started) == 1
 
@@ -1698,7 +1752,7 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "FALLBACK_SLATE"
-    assert state.current_source_label == "CivicCast filler"
+    assert state.current_source_label == fallback_label
     assert state.pid == 111
     assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
     assert sink_states == ["FALLBACK_SLATE"]
@@ -5432,6 +5486,52 @@ def test_playout_supervisor_live_takeover_and_handback_use_explicit_live_plan(
     assert any("released live source" in summary for summary in summaries)
 
 
+@pytest.mark.parametrize("program_due", [False, True])
+@pytest.mark.parametrize(
+    ("content_reload", "reload_refused"), [(False, False), (True, False), (True, True)]
+)
+def test_live_handback_cuts_open_feed_to_due_program_or_slate(
+    tmp_path: Path, program_due: bool, content_reload: bool, reload_refused: bool
+) -> None:
+    """End must release an open live feed without waiting for its EOS."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy_type = _FakeContentReloadStrategy if content_reload else _FakeNonReloadCapableStrategy
+    strategy = strategy_type(processes, started, reload_ok=not reload_refused)
+    scheduled = _source_plan_with_label(tmp_path, "Mayor interview")
+    slate = _slate_plan(tmp_path)
+    supervisor = PlayoutSupervisor(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: scheduled if program_due else None,
+        fallback_source_provider=lambda _config: slate,
+        encoder_strategy=strategy,
+    )
+    supervisor._live_takeover_plans["gov"] = _live_source_plan(tmp_path)
+    supervisor.process_once("gov")
+    live_process = started[0]
+
+    supervisor.request_live_handback(channel_id="gov")
+    if content_reload and not reload_refused:
+        assert strategy.reload_calls == [
+            scheduled.segments[0].label if program_due else slate.segments[0].label
+        ]
+        assert strategy.switch_at_end_of_current_calls == [False]
+        assert not live_process.terminated
+    else:
+        assert live_process.terminated, "An open live feed cannot finish a graceful drain"
+    supervisor.process_once("gov")
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == ("ON_AIR" if program_due else "FALLBACK_SLATE")
+    assert state.current_source_label == (
+        scheduled.segments[0].label if program_due else slate.segments[0].label
+    )
+
+
 def test_quality_recovery_cleanup_only_clears_its_matching_forced_slate(
     tmp_path: Path,
 ) -> None:
@@ -6012,6 +6112,44 @@ def test_start_releases_the_prepared_plan_on_a_failure_after_prepare_succeeds(
     assert daemon.live_prepared_plan_dirs("gov") == frozenset()
     assert len(started) == 0  # the encoder never even started
     assert daemon._active_prepared_plan_dir.get("gov") is None  # never tracked as active
+
+
+def test_unexpected_encoder_start_failure_does_not_claim_a_running_slate(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    failures: list[Exception] = []
+
+    class _BrokenEncoder:
+        name = "broken-encoder"
+        supports_live_swap = False
+        supports_content_reload = False
+        starts = 0
+
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            self.starts += 1
+            raise ModuleNotFoundError("No module named 'gi'")
+
+    encoder = _BrokenEncoder()
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=encoder,  # type: ignore[arg-type]
+        command_failure_hook=lambda _cid, _cmd, exc: failures.append(exc),
+    )
+
+    assert daemon.process_once("gov") == 1
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ERROR"
+    assert "No module named 'gi'" in (state.last_error or "")
+    assert state.pid is None
+    assert store.recent_health("gov", 1)[0].state == "ERROR"
+    assert len(failures) == 1 and isinstance(failures[0], ModuleNotFoundError)
+    assert daemon.process_once("gov") == 0
+    assert encoder.starts == 1  # command remains consumed; no new retry policy
 
 
 def test_encoder_unavailable_with_no_fallback_provider_is_error_not_a_crash(
@@ -7726,6 +7864,120 @@ def _hold_fallback_slate_restart_plan(tmp_path: Path) -> SimpleNamespace:
         old_process=old_process,
         new_process=new_process,
     )
+
+
+def test_second_reload_after_dead_slate_worker_clears_old_restart_state(
+    tmp_path: Path,
+) -> None:
+    """A second reload that starts past a dead slate worker cannot inherit
+    the first reload's TRANSITIONING pin or deliberate-kill bookkeeping."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    started: list[_FakeProcess] = []
+    old_process = _FakeProcess(pid=111)
+    new_process = _FakeProcess(pid=222)
+    strategy = _FakeContentReloadStrategy([new_process], started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+    daemon._processes["gov"] = old_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="Fallback slate",
+            pid=old_process.pid,
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+    store.enqueue_commands(
+        [
+            EgressCommand(
+                channel_id="gov",
+                action="reload",
+                issued_at=datetime.now(UTC),
+                issued_by="operator",
+                command_id=command_id,
+            )
+            for command_id in ("reload-first", "reload-second")
+        ]
+    )
+    assert daemon.process_once("gov") == 2
+    assert old_process.terminated is True
+    assert started == [new_process]
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert daemon._pending_reloads == {}
+    assert daemon._reload_kills == set()
+    assert daemon._reload_kill_reasons == {}
+    assert daemon._reload_stall_since == {}
+    assert daemon._reload_stall_bound_s == {}
+    assert daemon._reload_stall_rungs == {}
+
+
+def test_fresh_start_releases_abandoned_plan_and_uses_supplied_plan(tmp_path: Path) -> None:
+    """Fresh-start cleanup releases a stale held plan without releasing a
+    distinct prepared plan explicitly handed to that start."""
+    from civiccast.egress.daemon import _ReusePreparedPlan
+
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    supplied_dir = tmp_path / "supplied-plan"
+    supplied_dir.mkdir()
+    supplied = _ReusePreparedPlan(
+        report=SourcePreparationReport(
+            source_plan=_source_plan_with_label(tmp_path, "Supplied program"),
+            records=(),
+            plan_dir=supplied_dir,
+        ),
+        target_state="ON_AIR",
+    )
+
+    run.daemon._start("gov", prepared_reload=supplied)
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.strategy.started_labels == ["Supplied program"]
+    assert run.daemon._active_prepared_plan_dir["gov"] == supplied_dir
+    assert run.daemon._prepared_restart_plans == {}
+
+
+def test_live_worker_start_noop_preserves_reload_bookkeeping(tmp_path: Path) -> None:
+    """A start that finds a live worker leaves its reload state to that worker."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    process = _FakeProcess(pid=111)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy([_FakeProcess(pid=222)], []),
+    )
+    daemon._processes["gov"] = process
+    daemon._pending_reloads["gov"] = ("FALLBACK_SLATE", "Fallback slate")
+    daemon._reload_kills.add("gov")
+    daemon._reload_kill_reasons["gov"] = "still belongs to the live worker"
+    daemon._reload_stall_since["gov"] = 1.0
+    daemon._reload_stall_bound_s["gov"] = 600.0
+    daemon._reload_stall_rungs["gov"] = 1
+
+    daemon._start("gov")
+
+    assert daemon._processes["gov"] is process
+    assert daemon._pending_reloads == {"gov": ("FALLBACK_SLATE", "Fallback slate")}
+    assert daemon._reload_kills == {"gov"}
+    assert daemon._reload_kill_reasons == {"gov": "still belongs to the live worker"}
+    assert daemon._reload_stall_since == {"gov": 1.0}
+    assert daemon._reload_stall_bound_s == {"gov": 600.0}
+    assert daemon._reload_stall_rungs == {"gov": 1}
 
 
 def test_fallback_slate_immediate_reload_restarts_onto_the_plan_it_prepared(

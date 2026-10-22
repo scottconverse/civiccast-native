@@ -103,6 +103,7 @@ def _asset(asset_id: str) -> StaffAssetRow:
         asset_id=asset_id,
         title=f"Meeting {asset_id}",
         state="recorded",
+        published_at=APPROVED_AT,
         meeting_body="city-council",
         retention_policy="permanent",
     )

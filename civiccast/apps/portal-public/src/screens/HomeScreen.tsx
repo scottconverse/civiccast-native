@@ -337,7 +337,9 @@ export function HomeScreen() {
           description: submissionForm.description,
           tags,
           producer_name: submissionForm.producerName,
-          requested_air_date: submissionForm.requestedAirDate || null,
+          requested_air_date: submissionForm.requestedAirDate
+            ? new Date(submissionForm.requestedAirDate).toISOString()
+            : null,
           media,
           agreements: [
             {

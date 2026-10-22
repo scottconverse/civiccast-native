@@ -15,6 +15,7 @@ import contextlib
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 import pytest
 from fastapi import FastAPI, Request, Response
@@ -98,8 +99,18 @@ def _build_app(
     return app
 
 
-def _client(factory, **kwargs) -> TestClient:  # type: ignore[no-untyped-def]
-    return TestClient(_build_app(factory, **kwargs))
+def _client(factory, *, decode_path_from_raw: bool = False, **kwargs) -> TestClient:  # type: ignore[no-untyped-def]
+    app = _build_app(factory, **kwargs)
+    if decode_path_from_raw:
+        # This Starlette TestClient version unquotes httpx's already-decoded
+        # URL.path a second time. Restore the ASGI contract for percent-literal
+        # IDs by deriving scope.path from the original raw request path once.
+        @app.middleware("http")
+        async def _decode_raw_path_once(request: Request, call_next):  # type: ignore[no-untyped-def]
+            request.scope["path"] = unquote(request.scope["raw_path"].decode("ascii"))
+            return await call_next(request)
+
+    return TestClient(app)
 
 
 def _stub_png_runner(*, payload: bytes = b"PNG") -> Callable[[list[str]], FfmpegResult]:
@@ -174,6 +185,16 @@ class TestRoleGate:
             _BOARD, json={"template_id": "standard-community-board"}
         )
         assert resp.status_code == 403
+
+    def test_complex_feed_item_approval_is_still_write_role_gated(self, factory) -> None:  # type: ignore[no-untyped-def]
+        owner = _client(factory)
+        owner.post(_BOARD, json={"template_id": "standard-community-board"})
+        feed_id = owner.post(_FEEDS, json=_RSS).json()["feed_source_id"]
+        item_id = "https://www.bbc.co.uk/news/videos/ckzd60dy746qo#1"
+        response = _client(factory, scopes=("meeting",)).post(
+            f"{_FEEDS}/{feed_id}/items/{quote(item_id, safe='')}/approve"
+        )
+        assert response.status_code == 403
 
     def test_support_admin_may_read(self, factory) -> None:  # type: ignore[no-untyped-def]
         # No board yet -> 200 + null (not 403): the read gate admits support_admin.
@@ -274,6 +295,26 @@ class TestBoardLifecycle:
         assert resp.status_code == 201
         assert resp.json()["item_id"] == "item-1"
         assert resp.json()["approved_by_operator"] == "dana"
+
+    @pytest.mark.parametrize(
+        ("item_id", "decode_path_from_raw"),
+        [
+            ("https://www.bbc.co.uk/news/videos/ckzd60dy746qo#1", False),
+            ("https://example.org/items/42?edition=2&source=rss#clip%2F100%25", True),
+        ],
+    )
+    def test_approve_feed_item_preserves_encoded_native_id(
+        self, factory, item_id, decode_path_from_raw
+    ) -> None:  # type: ignore[no-untyped-def]
+        client = _client(factory, decode_path_from_raw=decode_path_from_raw)
+        client.post(_BOARD, json={"template_id": "standard-community-board"})
+        feed_id = client.post(_FEEDS, json=_RSS).json()["feed_source_id"]
+
+        response = client.post(f"{_FEEDS}/{feed_id}/items/{quote(item_id, safe='')}/approve")
+
+        assert response.status_code == 201
+        assert response.json()["item_id"] == item_id
+        assert response.json()["approved_by_operator"] == "dana"
 
     def test_preview_png_route_via_format_query(self, factory) -> None:  # type: ignore[no-untyped-def]
         client = _client(factory, ffmpeg_runner=_stub_png_runner())
@@ -445,4 +486,9 @@ class TestErrors:
         client.post(_BOARD, json={"template_id": "standard-community-board"})
         assert client.patch(f"{_ZONES}/ghost", json={"manual_text": "x"}).status_code == 404
         assert client.patch(f"{_FEEDS}/ghost", json={"label": "x"}).status_code == 404
-        assert client.post(f"{_FEEDS}/ghost/items/i/approve").status_code == 404
+        item_id = "https://example.org/items/42?edition=2&source=rss#clip%2F100%25"
+        missing_feed = _client(factory, decode_path_from_raw=True).post(
+            f"{_FEEDS}/ghost/items/{quote(item_id, safe='')}/approve"
+        )
+        assert missing_feed.status_code == 404
+        assert "feed 'ghost' not on channel 'public'" in missing_feed.json()["detail"]

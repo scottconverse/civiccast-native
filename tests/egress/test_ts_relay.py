@@ -16,6 +16,7 @@ import shutil
 import socket
 import subprocess
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -202,51 +203,120 @@ def _cc_sequence(data: bytes, pid: int) -> list[int]:
 
 
 @pytest.mark.skipif(shutil.which("tsp") is None, reason="TSDuck tsp not installed")
-def test_real_tsp_relay_makes_cc_continuous_across_session_reset() -> None:
+def test_real_tsp_relay_makes_cc_continuous_across_session_reset(tmp_path: Path) -> None:
     """Feed two 'encoder sessions' (CC restarting from 0 — the #151 splice)
     through a real tsp continuity --fix relay and assert the OUTPUT counters
     are continuous mod 16 with no repeats/jumps.
 
-    What the 2026-07 rework changed, and what "robust" means here:
-
-    * Both UDP sockets are context-managed, so ANY failure below still closes
-      them. A leaked socket resurfaces later as an unraisable ResourceWarning
-      that the "error" filterwarnings policy escalates onto whichever
-      unrelated test the garbage collector interrupts — this test was one of
-      the two leak sources poisoning the randomized-order lane.
-    * The receive side is DEADLINE-DRIVEN (poll until enough packets arrive
-      or 5s elapses), so the assertions never depend on a magic sleep being
-      long enough on a loaded machine. The remaining time.sleep() calls only
-      pace the SEND side (letting tsp bind, spacing packets, simulating the
-      relaunch gap); they can make the test slower, never wrongly green or
-      wrongly red.
-    * The assertions test the PROPERTY (output continuity mod 16, no
-      repeats/jumps across the session splice), not a byte-exact capture, so
-      packet timing variation cannot flake the verdict.
+    Readiness is established by a bounded warmup probe, not a fixed sleep:
+    we repeatedly send short bursts on a separate warmup PID and read the
+    relay's output until we actually see a warmup packet (or 30s elapses).
+    This avoids the startup race where UDP packets sent before ``tsp`` has
+    bound its listen socket are silently dropped. The 30s readiness deadline
+    is intentionally separate from the 5s capture deadline: a cold process
+    and plugin load/bind is not a forwarding acceptance requirement, and this
+    test makes no general startup-time guarantee. The probe PID is discarded
+    before the real capture. Both session payloads (0xAA and 0xBB) must be
+    present in the output, so a relay that only forwards one session cannot
+    pass. The receive side is still deadline-driven (5s) and the assertions
+    test the PROPERTY (output continuity mod 16), not a byte-exact capture.
     """
-    listen, out_port = 17997, 17998
     recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # Context-managed so a failure anywhere below (a busy 17998, a tsp that
-    # will not spawn) still closes both. A leaked socket is not a local
-    # problem: it resurfaces later as an *unraisable* ResourceWarning, which
-    # the "error" filterwarnings policy escalates onto whichever unrelated
-    # test the garbage collector happens to interrupt.
-    with recv, send:
-        recv.bind(("127.0.0.1", out_port))
+    # Reserve the relay input and local-output source ports alongside the
+    # existing recv/send sockets. Fixed ports made concurrent/interrupted
+    # fixture runs contend with each other; that is fixture isolation, not a
+    # demonstrated cause of the CI readiness failure.
+    input_reservation = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    output_reservation = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Context-managed so a failure anywhere below (a contended ephemeral port,
+    # a tsp that will not spawn) still closes them. A leaked socket is not a
+    # local problem: it resurfaces later as an *unraisable* ResourceWarning,
+    # which the "error" filterwarnings policy escalates onto whichever
+    # unrelated test the garbage collector happens to interrupt.
+    with (
+        recv,
+        send,
+        input_reservation,
+        output_reservation,
+        (tmp_path / "tsp-stderr.log").open("w+b") as stderr_log,
+    ):
+        recv.bind(("127.0.0.1", 0))
+        out_port = recv.getsockname()[1]
         recv.settimeout(5.0)
+        input_reservation.bind(("127.0.0.1", 0))
+        listen = input_reservation.getsockname()[1]
+        output_reservation.bind(("127.0.0.1", 0))
+        local_out_port = output_reservation.getsockname()[1]
+        assert len({listen, out_port, local_out_port}) == 3
 
         args = build_tsp_relay_args(
             shutil.which("tsp") or "tsp",
             listen_port=listen,
             dest_host="127.0.0.1",
             dest_port=out_port,
-            local_out_port=17999,
+            local_out_port=local_out_port,
             rcvbuf_bytes=1 << 20,
         )
-        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Test-only TSDuck debug output exposes the loading/binding stage in
+        # the failure diagnostic. Production relay arguments are unchanged.
+        args.insert(1, "--debug")
+        input_reservation.close()
+        output_reservation.close()
+        proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=stderr_log)
+
+        def relay_diagnostic() -> str:
+            stderr_log.seek(0)
+            stderr = stderr_log.read().decode("utf-8", errors="replace")[-8000:]
+            return f"tsp exit={proc.poll()}; args={args!r}; stderr={stderr!r}"
+
         try:
-            time.sleep(1.0)  # let tsp bind
+            # Warmup: wait until the relay actually forwards packets.
+            # A fixed sleep is not sufficient: UDP sent before tsp binds is
+            # lost, and the receive side cannot recover it. Probe with a
+            # separate PID so the real session counters stay clean.
+            warmup_pid = _PID + 1
+            startup_started = time.monotonic()
+            warmup_deadline = startup_started + 30.0
+            warmup_ready = False
+            recv.settimeout(0.1)
+            while time.monotonic() < warmup_deadline:
+                assert proc.poll() is None, relay_diagnostic()
+                for cc in range(4):
+                    send.sendto(_ts_packet(warmup_pid, cc, 0x55), ("127.0.0.1", listen))
+                try:
+                    while True:
+                        chunk, _ = recv.recvfrom(65536)
+                        for i in range(0, len(chunk) - 187, 188):
+                            pkt = chunk[i : i + 188]
+                            if pkt[0] != 0x47:
+                                continue
+                            p = ((pkt[1] & 0x1F) << 8) | pkt[2]
+                            if p == warmup_pid:
+                                warmup_ready = True
+                                break
+                        if warmup_ready:
+                            break
+                except TimeoutError:
+                    pass
+                if warmup_ready:
+                    break
+                time.sleep(0.05)
+            assert warmup_ready, (
+                f"relay did not become ready after "
+                f"{time.monotonic() - startup_started:.3f}s: {relay_diagnostic()}"
+            )
+
+            # Discard any remaining warmup packets so they cannot pollute the
+            # real capture or satisfy the receive threshold.
+            recv.setblocking(False)
+            try:
+                while True:
+                    recv.recvfrom(65536)
+            except BlockingIOError:
+                pass
+            recv.settimeout(5.0)  # restore the real capture timeout
+
             # Session A: CC 0..9. Session B (relaunch): CC restarts at 0 — the
             # exact discontinuity a headend logs.
             for cc in range(10):
@@ -257,16 +327,36 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset() -> None:
                 send.sendto(_ts_packet(_PID, cc, 0xBB), ("127.0.0.1", listen))
                 time.sleep(0.01)
 
-            received = b""
+            # Capture only the tested PID; any stray warmup packets are ignored.
+            received = bytearray()
+            buffer = b""
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline and len(received) < 188 * 18:
                 try:
                     chunk, _ = recv.recvfrom(65536)
-                    received += chunk
                 except TimeoutError:
                     break
+                buffer += chunk
+                while len(buffer) >= 188:
+                    pkt = buffer[:188]
+                    buffer = buffer[188:]
+                    if pkt[0] != 0x47:
+                        continue
+                    p = ((pkt[1] & 0x1F) << 8) | pkt[2]
+                    if p == _PID:
+                        received += pkt
             ccs = _cc_sequence(received, _PID)
-            assert len(ccs) >= 16, f"too few relayed packets: {len(ccs)}"
+            assert len(ccs) >= 16, f"too few relayed packets: {len(ccs)}; {relay_diagnostic()}"
+            payloads = set()
+            for i in range(0, len(received) - 187, 188):
+                pkt = received[i : i + 188]
+                if pkt[0] != 0x47:
+                    continue
+                p = ((pkt[1] & 0x1F) << 8) | pkt[2]
+                if p == _PID:
+                    payloads.add(pkt[4])
+            assert 0xAA in payloads, f"missing session A payload; {relay_diagnostic()}"
+            assert 0xBB in payloads, f"missing session B payload; {relay_diagnostic()}"
             for a, b in itertools.pairwise(ccs):
                 assert b == (a + 1) % 16, f"CC discontinuity survived the relay: {ccs}"
         finally:

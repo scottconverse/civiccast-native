@@ -116,6 +116,46 @@ def _plan(
     )
 
 
+def test_compatible_cold_video_copy_preserves_all_decoded_frames(
+    tmp_path: Path, real_asset: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args: list[str], **kwargs):
+        calls.append(args)
+        return run_ffmpeg(args, **kwargs)
+
+    config = _config()
+    measured = check_streaming_loudness(media_path=real_asset, target_lufs=-24, tolerance_lufs=1)
+    assert measured.measured_lufs is not None
+    config.loudness_target_lufs = measured.measured_lufs
+    config.canonical_profile = config.canonical_profile.model_copy(update={"fps": 15})
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work", ffmpeg_runner=runner, warm_scheduler=lambda job: None
+    )
+    report = preparer.prepare(
+        _plan(real_asset, duration_seconds=_ASSET_DURATION_S, label="copy"), config
+    )
+    video_args = next(args for args in calls if "-c:v" in args)
+    assert video_args[video_args.index("-c:v") + 1] == "copy"
+    assert "-vf" not in video_args
+    hashes = []
+    for path in (real_asset, Path(report.source_plan.segments[0].path)):
+        result = run_ffmpeg(
+            ["-v", "error", "-i", str(path), "-map", "0:v:0", "-an", "-f", "framemd5", "-"]
+        )
+        assert result.returncode == 0, result.stderr
+        hashes.append(
+            [
+                line.split(",")[-1].strip()
+                for line in result.stdout.splitlines()
+                if not line.startswith("#")
+            ]
+        )
+    assert len(hashes[0]) == 120
+    assert hashes[0] == hashes[1]
+
+
 def test_slot_capped_untrimmed_segment_then_longer_slot_no_dead_air(
     tmp_path: Path, real_asset: Path
 ) -> None:

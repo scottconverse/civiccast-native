@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import secrets as secrets_lib
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from urllib.parse import quote
@@ -17,12 +18,14 @@ from civiccast.platform.providers import (
 )
 from civiccast.subscribe.crypto import (
     SecretBox,
+    require_random_webhook_secret,
     signed_token,
 )
 from civiccast.subscribe.delivery import (
     DeliveryRecorder,
     LocalMailbox,
     LocalWebhookClient,
+    WebhookProvider,
     delivery_error_code,
     delivery_proof,
     redact_delivery_detail,
@@ -46,6 +49,7 @@ from civiccast.subscribe.secrets import (
     verify_subscription_token,
 )
 from civiccast.subscribe.store import SubscribeStore
+from civiccast.subscribe.webhook import validate_webhook_url
 
 _LOG = logging.getLogger(__name__)
 
@@ -75,37 +79,19 @@ def _public_response(record: SubscriptionRecord) -> SubscriptionPublicResponse:
             else "Subscription is unsubscribed."
         ),
         next_step=(
-            "Open the confirmation link sent to this address."
+            (
+                "Read the confirmation token sent to your HTTPS endpoint, then confirm it with this station."
+                if record.channel == "webhook"
+                else "Open the confirmation link sent to this address."
+            )
             if record.status == "pending_confirmation"
             else "You will receive notifications when matching recordings publish."
             if record.status == "confirmed"
             else "Sign up again if you want to receive future notices."
         ),
-        # EMAIL: never echoed (GauntletGate rc18 QA-1, Critical). This field
-        # used to carry the live confirmation token whenever the subscription
-        # was pending, so the requester could confirm an address they had no
-        # access to -- two HTTP calls to subscribe a stranger to a government
-        # notification list. Possession of the token IS the proof of inbox
-        # access; handing it back to whoever asked destroys the only thing
-        # double opt-in checks. The token still reaches the mail body, which is
-        # the one place it belongs. The paywall module's magic-link route has
-        # always done this correctly and says so in its docstring.
-        #
-        # WEBHOOK: still echoed, deliberately and narrowly. Unlike email,
-        # `create_webhook_subscription` delivers NOTHING out of band -- there is
-        # no callback to the registered URL -- so the response body is the only
-        # place the token exists. Blanking it here would not harden the webhook
-        # flow, it would break confirmation outright. That leaves webhook
-        # "confirmation" proving nothing about URL ownership, which is a real
-        # but SEPARATE gap: closing it needs a delivery mechanism, not a field
-        # change, and inventing one inside a Critical fix would be scope creep.
-        # Recorded in the rc18 verification record instead of silently half-done.
-        confirmation_token=(
-            record.confirmation_token
-            if record.status == "pending_confirmation" and record.channel != "email"
-            else None
-        ),
-        unsubscribe_token=record.unsubscribe_token,
+        # Ownership proof is delivered out of band to the inbox or endpoint.
+        confirmation_token=None,
+        unsubscribe_token=record.unsubscribe_token if record.channel == "email" else None,
     )
 
 
@@ -158,14 +144,31 @@ def create_webhook_subscription(
     store: SubscribeStore,
     secrets: SubscriptionSecrets | None = None,
     secret_box: SecretBox | None = None,
+    webhook_client: WebhookProvider | None = None,
 ) -> SubscriptionPublicResponse:
     subscription_secrets = secrets or load_subscription_secrets()
     box = secret_box or subscription_secrets.secret_box
     handle = str(request.webhook_url)
+    validate_webhook_url(handle)
     subscription_id = _subscription_id("webhook", handle, request.target_type, request.target_id)
-    webhook_secret = hashlib.sha256(f"{subscription_id}:webhook".encode()).hexdigest()
+    existing = store.get(subscription_id)
+    if existing is not None and existing.status == "confirmed":
+        try:
+            require_random_webhook_secret(
+                subscription_id,
+                box.open(existing.encrypted_webhook_secret or "", aad=f"{subscription_id}:secret"),
+            )
+        except ValueError:
+            pass  # Legacy rows must complete the new endpoint challenge.
+        else:
+            return _public_response(existing)
+    webhook_secret = secrets_lib.token_urlsafe(32)
     confirmation_token = signed_token(
-        {"subscription_id": subscription_id, "action": "confirm"},
+        {
+            "subscription_id": subscription_id,
+            "action": "confirm",
+            "nonce": secrets_lib.token_urlsafe(24),
+        },
         subscription_secrets.token_secret,
     )
     unsubscribe_token = signed_token(
@@ -184,20 +187,39 @@ def create_webhook_subscription(
         unsubscribe_token=unsubscribe_token,
         created_at=datetime.now(UTC),
     )
-    store.create(record)
+    if existing is None:
+        store.create(record)
+    else:
+        store.update(record)
+    client = webhook_client or default_registry().resolve(PROVIDER_KIND_WEBHOOK)
+    client.send_confirmation(
+        url=handle, confirmation_token=confirmation_token, secret=webhook_secret
+    )
     return _public_response(record)
 
 
 def confirm_subscription(
     token: str, *, store: SubscribeStore, secrets: SubscriptionSecrets | None = None
 ) -> SubscriptionConfirmResponse:
-    payload = verify_subscription_token(token, secrets or load_subscription_secrets())
+    subscription_secrets = secrets or load_subscription_secrets()
+    payload = verify_subscription_token(token, subscription_secrets)
     subscription_id = payload.get("subscription_id")
     if payload.get("action") != "confirm" or not isinstance(subscription_id, str):
         raise ValueError("Confirmation link is invalid. Request a new signup link.")
     record = store.get(subscription_id)
     if record is None:
         raise KeyError(subscription_id)
+    if record.channel == "webhook" and not secrets_lib.compare_digest(
+        token, record.confirmation_token
+    ):
+        raise ValueError("Webhook confirmation is invalid. Register the endpoint again.")
+    if record.channel == "webhook":
+        require_random_webhook_secret(
+            record.subscription_id,
+            subscription_secrets.secret_box.open(
+                record.encrypted_webhook_secret or "", aad=f"{record.subscription_id}:secret"
+            ),
+        )
     if record.status == "confirmed":
         return SubscriptionConfirmResponse(
             subscription_id=record.subscription_id,
@@ -423,6 +445,7 @@ def dispatch_notifications(
                 subscription.encrypted_webhook_secret or "",
                 aad=f"{subscription.subscription_id}:secret",
             )
+            require_random_webhook_secret(subscription.subscription_id, secret)
             signature = webhooks.post(url=handle, payload=recipient_payload, secret=secret)
         except Exception as exc:
             # Issue #111: a failed real delivery is queued durably and the

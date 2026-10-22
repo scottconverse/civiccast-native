@@ -156,13 +156,19 @@ export function MediaLifecyclePanel({ assetId }: { assetId: string }) {
 
           <div className="flex flex-col gap-1 border-t pt-2" style={{ borderColor: 'var(--cc-line)' }}>
             <span className="text-[11px] font-medium" style={{ color: 'var(--cc-ink-2)' }}>
-              Archival (CLAUDE.md §4.6): portal + Internet Archive + local NAS, all verified
+              Archive verification status
             </span>
+            <p className="m-0 text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
+              These checks show available archive proofs. Publish lists the destinations required
+              for this recording.
+            </p>
             <ArchiveTierRow label="Portal (published)" verified={query.data.archive_portal_verified} />
             <ArchiveTierRow label="Internet Archive" verified={query.data.archive_ia_verified} />
             <ArchiveTierRow label="Local NAS" verified={query.data.archive_nas_verified} />
             <div className="mt-1 text-[11px] font-medium" style={{ color: query.data.archive_complete ? 'var(--cc-ink)' : 'var(--cc-ink-2)' }}>
-              {query.data.archive_complete ? '✓ Archive-complete' : 'Not archive-complete yet'}
+              {query.data.archive_complete
+                ? '✓ All archive tiers verified'
+                : 'Some archive tiers are not verified'}
             </div>
           </div>
 

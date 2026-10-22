@@ -132,6 +132,17 @@ PATH, or None if no such strategy is available in this deployment. See
 _LOG = logging.getLogger(__name__)
 
 
+def _is_ready_generated_slate(plan: EgressSourcePlan) -> bool:
+    """The built-in plain slate is canonical and extended by stream copy."""
+    return bool(plan.segments) and all(
+        segment.kind == "slate"
+        and segment.source_ref == "civiccast-slate"
+        and segment.inpoint_seconds is None
+        and segment.outpoint_seconds is None
+        for segment in plan.segments
+    )
+
+
 def _default_independent_slate_strategy() -> EncoderStrategy | None:
     """Best-effort construction of an ffmpeg-PATH-independent encoder, used only
     as the last-resort slate retry after a ``FfmpegNotFoundError`` (K2-1 follow-up,
@@ -2418,26 +2429,11 @@ class EgressDaemon:
                     log_root=self._work_dir,
                 )
             if worker_already_live:
-                state = self._store.read_state(channel_id)
-                current_state: EgressState = (
-                    "DRAINING" if channel_id in self._draining_channels else "ON_AIR"
-                )
-                self._write_state(
-                    channel_id,
-                    current_state,
-                    current_source_label=state.current_source_label if state else None,
-                    pid=_process_pid(existing_process),
-                )
-                self._append_health(
-                    channel_id,
-                    current_state,
-                    sink_connected=self._sink_connected(
-                        channel_id,
-                        config,
-                        state=current_state,
-                    ),
-                    seconds_on_air=self._seconds_on_air(channel_id),
-                )
+                # A duplicate START leaves the current plan and its observation
+                # unchanged. Promoting FALLBACK_SLATE to ON_AIR here strands an
+                # unbounded slate: automation no longer requests the due program.
+                # Clearing its proof ID also loses the actual dispatched horizon.
+                # The regular worker poll already refreshes state and health.
                 # F3(b): this start is a no-op (a live worker already owns the
                 # channel), so the reuse branch below is never reached and a
                 # carried plan would be neither aired nor released -- the
@@ -2446,6 +2442,25 @@ class EgressDaemon:
                     channel_id, prepared_reload, reason="a live worker already owns this channel"
                 )
                 return None
+            # This is a genuine fresh start: the worker that owned any prior
+            # reload pin and deliberate-kill marker is no longer live. Clear
+            # that worker's restart bookkeeping now, after the live-worker
+            # no-op above, so it cannot mark this new session TRANSITIONING.
+            self._pending_reloads.pop(channel_id, None)
+            self._reload_kills.discard(channel_id)
+            self._reload_kill_reasons.pop(channel_id, None)
+            self._reload_stall_since.pop(channel_id, None)
+            self._reload_stall_bound_s.pop(channel_id, None)
+            self._reload_stall_rungs.pop(channel_id, None)
+            held_prepared_reload = self._prepared_restart_plans.pop(channel_id, None)
+            if held_prepared_reload is not None and held_prepared_reload is not prepared_reload:
+                # A different caller-held plan superseded this abandoned one.
+                # Keep ``prepared_reload`` alive: this fresh start owns it.
+                self._release_prepared_restart_plan(
+                    channel_id,
+                    held_prepared_reload,
+                    reason="a fresh start superseded the held restart plan",
+                )
             # Hostile-review follow-up, items 1 & 4: reaching here means either
             # no process was tracked at all, or the tracked one has ALREADY
             # exited (the guard above only returns early while it is still
@@ -2693,7 +2708,7 @@ class EgressDaemon:
                 # source label BEFORE preparation so the screen never says
                 # Stopped during a start. The early slate flips above already
                 # wrote FALLBACK_SLATE with their own last_error -- leave those
-                # in place (the slate's prepare is a cache hit anyway).
+                # in place while its worker is started.
                 self._write_state(
                     channel_id,
                     "STARTING",
@@ -2714,8 +2729,8 @@ class EgressDaemon:
                 # caption storage refused and demanded the fallback slate, so
                 # this start must air what it resolved, not the plan it was
                 # handed. Release the held plan (the caller dropped its own
-                # reference) and fall through to the ordinary preparation of
-                # the slate. ``resolved_plan`` above makes every OTHER
+                # reference) and fall through to the resolved fallback below.
+                # ``resolved_plan`` above makes every OTHER
                 # resolution failure mode unreachable here.
                 self._release_prepared_restart_plan(
                     channel_id,
@@ -2750,24 +2765,18 @@ class EgressDaemon:
                     prepared_plan_dir,
                     prepared_reload.target_state,
                 )
-            elif slate_first_handoff:
-                # The restart-recovery hand-off's fallback plan is ALREADY an airing
-                # artifact: a filler provider hands back a plan whose segments are
-                # MPEG-TS files its own generator rendered (`bulletin_filler.py` ->
-                # `SlateSourceGenerator._render_fill` / `_render_rotation`). Sending
-                # that plan through `_PreparationRequest` is what made this hand-off
-                # state-only: the request is the SLATE's OWN conform -- loudness probe
-                # included -- so no worker was launched until it returned, and the
-                # slate that exists to COVER the conform was waiting on it. On the
-                # station (C2, 2026-09-26) that read `FALLBACK_SLATE` with `pid=-` and
-                # three channels dark for 3 m 02 s.
-                #
-                # Skipping the yield lets this generator complete on its first
-                # `next()`: `_drive_preparation` turns that `StopIteration` into a
-                # normal return, so the slate worker is launched in the SAME
-                # `process_once`, and the `SLATE_FIRST` result below hands the program
-                # over to the async reload path -- which is where the program's conform
-                # belongs.
+            elif slate_first_handoff or (
+                using_fallback_slate and _is_ready_generated_slate(source_plan)
+            ):
+                # The restart-recovery hand-off already airs its generated filler
+                # directly. A cold start's built-in plain slate is equally ready:
+                # SlateSourceGenerator renders the canonical profile, then extends
+                # the horizon by stream copy. Re-conforming that hour-long silent
+                # fill kept the worker absent until the encode finished or timed out.
+                # Skip preparation only for this untrimmed generated slate; ordinary
+                # programs, custom fallback providers and bulletin audio retain their
+                # preparation/loudness handling. The slate-first program hand-off
+                # still belongs to the async reload path after this worker starts.
                 #
                 # `prepared_plan_dir` stays None, so the reload path has no directory of
                 # ours to release out from under the airing slate, and the loudness
@@ -2818,8 +2827,9 @@ class EgressDaemon:
             # Hostile-review follow-up (third pass), P0: captured right here,
             # BEFORE the encoder-unavailable retry below gets a chance to flip
             # using_fallback_slate again -- this records whether the preparer
-            # (just above) ran against a plan that was ALREADY the fallback
-            # slate (an early flip: force_fallback_slate, caption-readiness
+            # (just above, if required for this provider) ran against a plan
+            # that was ALREADY the fallback slate (an early flip:
+            # force_fallback_slate, caption-readiness
             # refusal, or source_plan is None, all above) versus the program
             # plan. The distinction matters because the tracking decision at
             # the end of this method used to release prepared_plan_dir on
@@ -3125,6 +3135,14 @@ class EgressDaemon:
             self._write_state(channel_id, "ERROR", last_error=str(exc))
             self._append_health(channel_id, "ERROR", sink_connected={})
             self._rollover_plan_end_at.pop(channel_id, None)
+        except Exception as exc:
+            # A failed encoder launch must not leave the provisional slate
+            # state looking like output. Keep the existing outer failure hook
+            # and consumed-command policy by propagating after recording it.
+            self._write_state(channel_id, "ERROR", last_error=f"Channel start failed: {exc}")
+            self._append_health(channel_id, "ERROR", sink_connected={})
+            self._rollover_plan_end_at.pop(channel_id, None)
+            raise
         return None
 
     def _write_state(
@@ -3496,6 +3514,9 @@ class EgressDaemon:
                 source_label=segment.label,
                 actual_start=proof_event.observed_at,
                 proof_event_id=proof_event.event_id,
+                schedule_item_id=(
+                    segment.schedule_occurrence_id if source_kind == "program" else None
+                ),
             )
         except AsRunCaptureSchemaError:
             # Schema drift on the engine→ledger seam (E-1). Loud, not silent:
@@ -5886,7 +5907,13 @@ class EgressDaemon:
         # PREVIOUS plan once this one lands.
         prepared_plan_dir: Path | None = None
         preparation_report: SourcePreparationReport | None = None
-        if self._source_preparer is not None:
+        if target_state == "FALLBACK_SLATE" and _is_ready_generated_slate(source_plan):
+            # As on startup, the generated plain slate is ready to air. Repeating
+            # its hour-long conform here leaves an ended short programme holding
+            # the engine's black safety leg until preparation finally completes.
+            # Mixed/trimmed plans, custom slates and bulletin audio still prepare.
+            self._last_loudness_lufs.pop(channel_id, None)
+        elif self._source_preparer is not None:
             # Retain per-channel elapsed preparation evidence while the
             # production automation loop runs this work in the background.
             prepare_started = time.monotonic()
@@ -6650,21 +6677,34 @@ class EgressDaemon:
             last_error=failure_reason,
             pid=_process_pid(process),
         )
-        if state is not None and state.state == "FALLBACK_SLATE" and process is not None:
+        expired_boundary = plan_end_at is not None and plan_end_at <= datetime.now(UTC)
+        if (
+            state is not None
+            and (state.state == "FALLBACK_SLATE" or expired_boundary)
+            and process is not None
+        ):
             # Issue #157 (CA-8 live finding): filler is interruptible by
             # design - a due program must not wait out the fill-target plan
-            # (after #154 that wait is up to an hour of slate). Programs
-            # keep the graceful drain above.
+            # (after #154 that wait is up to an hour of slate). An explicit
+            # boundary that has passed also cuts now, including End on an open
+            # live feed. Other programs retain their graceful drain.
             self._note_deliberate_kill(
                 channel_id,
-                "reload out of fallback slate: filler is interruptible by design "
+                "reload at an expired handoff boundary"
+                if expired_boundary
+                else "reload out of fallback slate: filler is interruptible by design "
                 "(issue #157), so the due program is not made to wait out the "
                 "fill-target plan; the restart carries the prepared plan",
             )
             _process_terminate(process)
 
     def _request_reload(
-        self, channel_id: str, *, command_id: str | None = None, slate_first: bool = False
+        self,
+        channel_id: str,
+        *,
+        command_id: str | None = None,
+        slate_first: bool = False,
+        handoff_at: datetime | None = None,
     ) -> None:
         """Bring the channel's next program on air.
 
@@ -6747,6 +6787,11 @@ class EgressDaemon:
                 force_fallback = recorded_force_fallback
                 rollover_plan_min_seconds = recorded_min_plan_seconds
                 self._rollover_plan_end_at.pop(channel_id, None)
+        # An explicit live End supplies its own boundary, rather than waiting
+        # for EOS from an open feed. The same horizon reaches asynchronous
+        # preparation and restart fallback, so those paths cannot lose it.
+        if handoff_at is not None:
+            rollover_plan_end_at = handoff_at
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         if process is None or _process_poll(process) is not None:

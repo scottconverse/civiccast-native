@@ -21,6 +21,7 @@ Live ingest is Sprint 0.4; this module is VOD-only until then.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -229,6 +230,18 @@ def pack_vod_asset(
     manifest_path = write_multivariant_manifest(
         manifest_renditions,
         output_dir / "playlist.m3u8",
+    )
+
+    # Record the range actually encoded, independent of later asset edits.
+    (output_dir / "playback-timeline.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_start_seconds": trim_in_seconds or 0.0,
+                "source_end_seconds": trim_out_seconds,
+            }
+        ),
+        encoding="utf-8",
     )
 
     return VodPackageResult(

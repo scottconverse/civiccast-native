@@ -46,6 +46,7 @@ export type RouteId =
   | 'station-profile'
   | 'backups'
   | 'stationimport'
+  | 'stations'
   | 'network'
   | 'commissioning'
   | 'custom-fields'
@@ -131,6 +132,7 @@ const NAV_SECTIONS: NavSection[] = [
       { id: 'controlroom', label: 'Control Room' },
       { id: 'remotecontribution', label: 'Remote Contribution', requiredRoles: ['setup_admin', 'support_admin', 'meeting_operator'] },
       { id: 'channels', label: 'Channels' },
+      { id: 'stations', label: 'Other stations', requiredRoles: ['setup_admin', 'meeting_operator', 'support_admin', 'publish_operator'] },
       { id: 'cg', label: 'CG Board' },
       { id: 'cgdesigner', label: 'CG Designer', requiredRoles: ['publish_operator', 'setup_admin', 'support_admin'] },
       { id: 'schedule', label: 'Schedule' },

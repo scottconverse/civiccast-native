@@ -11,6 +11,8 @@ matching the existing filler plan mechanics).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -198,6 +200,19 @@ class TestSegmentArgs:
         assert "Food drive Saturday" in joined
         assert "Longmont Rotary" in joined
 
+    @pytest.mark.parametrize("bulletin", [None, _bulletin()])
+    def test_primary_zone_renders_saved_manual_text(self, bulletin) -> None:
+        zones = _zones()
+        zones[0] = zones[0].model_copy(
+            update={"content": {"text": "Council update, meeting at 6 PM"}}
+        )
+        board = _board(zones=zones)
+
+        for render in (_args, _preview_args):
+            joined = _joined(render(board=board, bulletin=bulletin))
+            assert "Council update, meeting at 6 PM" in joined
+            assert "Food drive Saturday" not in joined
+
     def test_ticker_zone_scrolls_feed_items(self) -> None:
         joined = _joined(_args())
         assert "Council meeting tonight 7pm" in joined
@@ -274,6 +289,19 @@ class TestDrawtextEscapingIsShared:
 
 
 class TestPreviewArgs:
+    @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="requires real FFmpeg")
+    def test_ticker_preview_renders_with_real_ffmpeg(self, tmp_path: Path) -> None:
+        output = tmp_path / "ticker.png"
+        args = _preview_args(out_path=output)
+        result = subprocess.run(
+            [shutil.which("ffmpeg"), *args],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        assert output.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
     def test_preview_emits_png_output_format(self) -> None:
         joined = _joined(_preview_args())
         assert "-f" in joined

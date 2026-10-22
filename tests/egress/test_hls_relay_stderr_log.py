@@ -938,3 +938,17 @@ def test_terminating_a_relay_is_not_slowed_by_its_drain_thread(
         f"terminate timing: stop_all {t_threaded:.4f}s vs plain terminate {t_plain:.4f}s; "
         f"delta {t_threaded - t_plain:+.4f}s"
     )
+
+
+def test_rewrite_to_tail_keeps_newest_diagnostic(tmp_path: Path) -> None:
+    from civiccast.egress.hls_relay import _RelayLogWriter
+
+    path = tmp_path / "relay.log"
+    header = b"[hls-relay] header\n"
+    path.write_bytes(header + b"older line\n" * 100 + b"NEWEST DIAGNOSTIC\n")
+    writer = _RelayLogWriter(path, cap_bytes=300, tail_bytes=150)
+    assert writer._rewrite_to_tail(path.stat().st_size) is True
+    data = path.read_bytes()
+    assert data.startswith(header)
+    assert b"NEWEST DIAGNOSTIC\n" in data
+    assert len(data) <= 300

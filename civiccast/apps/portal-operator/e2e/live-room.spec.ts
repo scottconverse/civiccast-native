@@ -360,7 +360,9 @@ async function mockLiveBackend(
       ]),
     })
   })
+  let currentSession: ReturnType<typeof session> | null = null
   await page.route('**/api/staff/live/sessions', async (route) => {
+    currentSession = session('idle')
     await route.fulfill({
       status: 201,
       contentType: 'application/json',
@@ -368,6 +370,7 @@ async function mockLiveBackend(
     })
   })
   await page.route('**/api/staff/live/sessions/*/start-preflight', async (route) => {
+    currentSession = session('preflight')
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -443,6 +446,7 @@ async function mockLiveBackend(
     })
   })
   await page.route('**/api/staff/live/sessions/*/go-on-air', async (route) => {
+    currentSession = session('on_air')
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -450,6 +454,7 @@ async function mockLiveBackend(
     })
   })
   await page.route('**/api/staff/live/sessions/*/end-broadcast', async (route) => {
+    currentSession = session('ending')
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -466,9 +471,9 @@ async function mockLiveBackend(
   })
   await page.route('**/api/staff/live/sessions/council-live-room', async (route) => {
     await route.fulfill({
-      status: 200,
+      status: currentSession ? 200 : 404,
       contentType: 'application/json',
-      body: JSON.stringify(session('ending')),
+      body: JSON.stringify(currentSession ?? { detail: 'Session not found' }),
     })
   })
 }
@@ -519,12 +524,14 @@ test.describe('operator live room', () => {
     await expect(page.getByText('Ending')).toBeVisible()
   })
 
-  test('unverified source preview is honest and actionable', async ({ page }) => {
+  test('disabled channel preview keeps incoming-source readiness separate', async ({ page }) => {
     await openLive(page)
     await expect(page.getByLabel('Source dropped')).toHaveCount(0)
-    await expect(page.getByText('Source preview unavailable')).toBeVisible()
-    await expect(page.getByText(/No simulated preview or audio meter is shown/)).toBeVisible()
-    await expect(page.getByText(/Connect a real encoder or meeting source/)).toBeVisible()
+    await expect(page.getByText('Channel preview unavailable')).toBeVisible()
+    await expect(page.getByText(/Enable this channel's HLS web output/)).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Open Channels', exact: true })).toBeVisible()
+    await expect(page.getByText(sourceA.next_action, { exact: true }).first()).toBeVisible()
+    await expect(page.locator('iframe[title^="On-air preview"]')).toHaveCount(0)
   })
 
   test('shows remote ingest health and an honest no-source state', async ({ page }) => {

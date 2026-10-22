@@ -296,7 +296,13 @@ def encode_chain_from_profile(
         encoder=encoder,
         cbr=cbr,
     )
-    return _apply_encoder_fixups(specs, encoder, profile.video_bitrate_kbps)
+    fixed = _apply_encoder_fixups(specs, encoder, profile.video_bitrate_kbps)
+    if encoder == "openh264enc":
+        # Concat emits a new segment with local PTS for each clip. OpenH264's
+        # framerate estimator reads raw PTS deltas, so normalize those segments
+        # onto one running timeline before they reach the persistent encoder.
+        return (ElementSpec("identity", props={"single-segment": True}), *fixed)
+    return fixed
 
 
 # Live ingest source elements by URI scheme. The v2 `live/` module ingests/records a
@@ -397,11 +403,10 @@ def sink_element_spec(
             uri = _append_query_param(uri, "passphrase", passphrase)
         return ElementSpec("srtsink", props={"uri": uri})
     if spec.kind == "hls":
-        # DEFECT A: no native GStreamer element in the shipped runtime can
-        # actually write HLS segments + a manifest (verified empirically —
-        # see civiccast.egress.hls_relay's module docstring: no hlssink/
-        # hlssink2/hlssink3/splitmuxsink ships, and gst-libav's avmux_hls
-        # writes zero files through a filesink). ``HlsRelaySupervisor.apply``
+        # The current runtime stages hlssink3, but this graph deliberately
+        # retains the supervised relay and its caption/retention/restart
+        # behavior. See docs/ops/sprint6-gstreamer-alternatives.md.
+        # ``HlsRelaySupervisor.apply``
         # runs before graph assembly (civiccast.egress.daemon._start /
         # _try_content_reload, mirroring civiccast.egress.ts_relay) and
         # rewrites a configured ``hls`` sink to an ordinary ``local-ts`` udp
@@ -777,8 +782,11 @@ def graph_from_config(
     common_caps = (
         f"video/x-raw,width={profile.width},height={profile.height},framerate={profile.fps}/1"
     )
+    # EOS tail padding pushes PCM silence without GstAudioMeta. Keep selector
+    # inputs interleaved: planar PCM requires metadata even for silent buffers.
     common_audio_caps = (
-        f"audio/x-raw,rate={profile.audio_sample_rate},channels={profile.audio_channels}"
+        f"audio/x-raw,rate={profile.audio_sample_rate},channels={profile.audio_channels},"
+        "layout=interleaved"
     )
     program_segments = source_plan.segments
     if len(program_segments) > MAX_PLAYLIST_SUBCHAINS:

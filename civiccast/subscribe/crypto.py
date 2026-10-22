@@ -70,6 +70,13 @@ def signed_token(payload: dict[str, object], secret: str) -> str:
     return base64.urlsafe_b64encode(body).decode().rstrip("=") + "." + sig
 
 
+def require_random_webhook_secret(subscription_id: str, secret: str) -> None:
+    """Older identifier-derived keys were public; require endpoint re-registration."""
+    legacy = hashlib.sha256(f"{subscription_id}:webhook".encode()).hexdigest()
+    if hmac.compare_digest(secret, legacy):
+        raise ValueError("Webhook needs re-registration and endpoint confirmation before delivery.")
+
+
 def verify_token(token: str, secret: str) -> dict[str, object]:
     try:
         body_b64, sig = token.split(".", 1)

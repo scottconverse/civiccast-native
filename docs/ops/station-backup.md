@@ -15,10 +15,10 @@ Backup creation reports database snapshot, media copy, encryption, and completio
 ## Operator workflow
 
 1. Open **Station backup and restore** and choose an absolute destination folder. A removable or network-mounted destination can be selected if it is available to the CivicCast service account.
-2. Create an encrypted backup and store the recovery passphrase separately. Download or copy the `.ccbackup` file to a second device or off-site location.
-3. Verify the archive with the same recovery passphrase. A successful verification authenticates the encrypted archive and checks every bundled file's SHA-256 digest.
-4. Save an unattended recovery passphrase in protected station storage, then set the daily UTC schedule and retention count. The station integration protects this scheduler-only secret with its OS secret vault; the backup service never writes the passphrase into its schedule or status state. Keep the passphrase available to the operator who would rebuild the station.
-5. Add each selected media folder as an absolute path in the schedule. The list persists with the schedule and every file beneath those roots is included in later archives. Review the selected roots when media storage changes.
+2. Enter each selected media folder as an absolute path and choose **Save schedule** before creating the first archive. Leave daily scheduling disabled until the unattended passphrase is saved. The list persists with the schedule and every file beneath those roots is included. Review the selected roots when media storage changes.
+3. Create an encrypted backup and store the recovery passphrase separately. Download or copy the `.ccbackup` file to a second device or off-site location.
+4. Verify the archive with the same recovery passphrase. A successful verification authenticates the encrypted archive and checks every bundled file's SHA-256 digest.
+5. Save an unattended recovery passphrase in protected station storage, then set the daily UTC schedule and retention count. The station integration protects this scheduler-only secret with its OS secret vault; the backup service never writes the passphrase into its schedule or status state. Keep the passphrase available to the operator who would rebuild the station.
 6. Periodically verify an off-station copy.
 
 The backup destination and selected media roots must be separate, non-overlapping paths. The scheduler retries a failed daily run after 15 minutes, then after one hour, with at most three attempts per UTC day. A successful run suppresses further attempts until the next UTC day; the latest failure remains visible in backup status until a later success. If the persisted schedule state cannot be read or validated, status reports the error and backups remain blocked until a valid schedule is saved.

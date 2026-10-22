@@ -1620,7 +1620,7 @@ export function createAppBuild(payload: BuildRequest): Promise<AppBuildRecord> {
   return request<AppBuildRecord>('/api/staff/app/builds', { method: 'POST', body: payload })
 }
 
-async function downloadStaffBlob(path: string): Promise<Blob> {
+async function fetchStaffDownload(path: string): Promise<Response> {
   const token = runtimeStaffToken()
 
   const res = await fetch(`${runtimeApiBase()}${path}`, {
@@ -1645,7 +1645,45 @@ async function downloadStaffBlob(path: string): Promise<Blob> {
       responseRetryAfterSeconds(res),
     )
   }
-  return res.blob()
+  return res
+}
+
+function responseDownloadFilename(contentDisposition: string | null, fallback: string): string {
+  const encoded = contentDisposition?.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1]
+  let filename: string | undefined
+  if (encoded) {
+    try {
+      filename = decodeURIComponent(encoded.trim().replace(/^"|"$/g, ''))
+    } catch {
+      // Fall back to the ASCII filename when the optional UTF-8 name is malformed.
+    }
+  }
+  if (!filename) {
+    const match = contentDisposition?.match(/filename\s*=\s*(?:"((?:\\.|[^"])*)"|([^;]+))/i)
+    filename = match?.[1]?.replace(/\\(.)/g, '$1') ?? match?.[2]?.trim()
+  }
+  const safeFilename = filename
+    ?.replace(/[<>:"/\\|?*]/g, '-')
+    .split('')
+    .filter((character) => character.charCodeAt(0) >= 0x20 && character.charCodeAt(0) !== 0x7f)
+    .join('')
+    .trim()
+  return safeFilename || fallback
+}
+
+async function downloadStaffFile(
+  path: string,
+  fallbackFilename: string,
+): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetchStaffDownload(path)
+  return {
+    blob: await res.blob(),
+    filename: responseDownloadFilename(res.headers.get('Content-Disposition'), fallbackFilename),
+  }
+}
+
+async function downloadStaffBlob(path: string): Promise<Blob> {
+  return (await fetchStaffDownload(path)).blob()
 }
 
 /** POST a JSON body and return the response as a Blob (carries the staff bearer token). */
@@ -1779,6 +1817,10 @@ export function updateProductionDevice(
 
 export function deleteProductionDevice(deviceId: string): Promise<void> {
   return request<void>(`${CR}/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' })
+}
+
+export function getDeviceProfile(deviceId: string): Promise<DeviceProfile | null> {
+  return request<DeviceProfile | null>(`${CR}/devices/${encodeURIComponent(deviceId)}/profile`)
 }
 
 export function upsertDeviceProfile(
@@ -3307,8 +3349,8 @@ export function generateEpgExport(configId: string): Promise<EpgGenerateResult> 
 //
 // As with reports, the screen surfaces an access banner without firing the
 // request when the operator lacks the role, so we don't need to special-case
-// 403 here. The affidavit export URL builder is used as an `<a download>`
-// target so the browser handles the file save (binary PDF included).
+// 403 here. Exports use the authenticated staff-download path and preserve the
+// response filename and media type for CSV, XML, and PDF.
 
 const UNDERWRITING = '/api/staff/underwriting'
 
@@ -3439,24 +3481,22 @@ export function getUnderwriterAffidavit(params: {
   return request<UnderwriterAffidavit>(`${UNDERWRITING}/affidavits?${qs.toString()}`)
 }
 
-/**
- * Build the absolute URL for /api/staff/underwriting/affidavits/export, used
- * as an `<a download href=...>` target so the browser handles the file save
- * (binary PDF too). Includes the runtime API base for cross-origin staff
- * hosts. Mirrors the shape of `reportsExportUrl`.
- */
-export function affidavitExportUrl(params: {
+/** Download an affidavit using the staff bearer token. */
+export function downloadUnderwriterAffidavitExport(params: {
   underwriter: string
   from: string
   to: string
   format: 'csv' | 'xml' | 'pdf'
-}): string {
+}): Promise<{ blob: Blob; filename: string }> {
   const qs = new URLSearchParams()
   qs.set('underwriter', params.underwriter)
   qs.set('from', params.from)
   qs.set('to', params.to)
   qs.set('format', params.format)
-  return `${runtimeApiBase()}${UNDERWRITING}/affidavits/export?${qs.toString()}`
+  return downloadStaffFile(
+    `${UNDERWRITING}/affidavits/export?${qs.toString()}`,
+    `affidavit-${params.from}-${params.to}.${params.format}`,
+  )
 }
 
 // --- S25 Meeting agendas (CRUD + items + sync + import) ---------------------

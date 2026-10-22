@@ -1197,7 +1197,16 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # independent test: 2025 platform-independent and 2260 total; Windows
     # non-integration collection is 2257. Floors 1975 and 2207 leave the
     # standard 50-test margin in both executed lanes.
-    assert (collect("not windows_only"), collect()) == (2025, 2260)
+    # 2026-10-19 private-file storage adds eight tests; four Windows ACL/DPAPI
+    # cases carry windows_only: 2029 pure, 2268 total, 2265 non-integration.
+    # Floors 1983 and 2215 retain margins of 46 pure and 50 Windows tests.
+    # Two real Windows junction cases add no portable cases: 2029 pure,
+    # 2270 total, 2267 non-integration; Windows floor 2217 keeps the margin.
+    # The running-image ACL regression adds one Windows case: 2271 total,
+    # 2268 non-integration; Windows floor 2218 retains the margin.
+    # Exact native closure-baseline regression adds one portable case.
+    # Current randomized CI collection: 2061 pure tests, 2303 total.
+    assert (collect("not windows_only"), collect()) == (2061, 2303)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

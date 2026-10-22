@@ -302,7 +302,9 @@ def _current_process_sid() -> str:
     return str(win32security.ConvertSidToStringSid(sid))
 
 
-def _windows_private_key_acl_command(path: Path, *, principal_sid: str) -> list[str]:
+def _windows_private_key_acl_command(
+    path: Path, *, principal_sid: str, service_can_replace: bool = False
+) -> list[str]:
     """Return the ``icacls`` command that strips inherited access from a local
     key/secret file and re-grants Full control to the writer, SYSTEM and admins,
     each named by a raw SID (``*S-1-...``) so every grant resolves on a
@@ -338,12 +340,16 @@ def _windows_private_key_acl_command(path: Path, *, principal_sid: str) -> list[
     # The restricted runtime needs the same secrets after an administrator
     # creates or resets them, without permission to rewrite their ACLs.
     if principal_sid != SERVICE_SID:
-        command.append(f"*{SERVICE_SID}:(R,W)")
+        rights = "R,W,D" if service_can_replace else "R,W"
+        command.append(f"*{SERVICE_SID}:({rights})")
     return command
 
 
 def _restrict_windows_private_key_acl(
-    path: Path, *, sid_reader: Callable[[], str] | None = None
+    path: Path,
+    *,
+    sid_reader: Callable[[], str] | None = None,
+    service_can_replace: bool = False,
 ) -> None:
     """Restrict local private-key ACLs on Windows after writing key material.
 
@@ -355,6 +361,9 @@ def _restrict_windows_private_key_acl(
     previous implementation granted ``%USERNAME%``, which under the LocalSystem
     service is the unresolvable machine account ``COMPUTERNAME$`` -- the
     root cause of the first-admin 500 on a workgroup station (blocker N-01).
+
+    ``service_can_replace`` additionally grants DELETE for atomically saved
+    station state. Private keys retain the default service read/write grant.
 
     ``sid_reader`` is an injectable seam (production default
     :func:`_current_process_sid`) so the decision logic is unit-testable
@@ -370,7 +379,9 @@ def _restrict_windows_private_key_acl(
             f"process's own user SID could not be read: {exc}"
         ) from exc
 
-    command = _windows_private_key_acl_command(path, principal_sid=principal_sid)
+    command = _windows_private_key_acl_command(
+        path, principal_sid=principal_sid, service_can_replace=service_can_replace
+    )
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     result = subprocess.run(  # noqa: S603 - fixed icacls argv; no shell or user-built command line.
         command,
@@ -390,7 +401,7 @@ def _restrict_windows_private_key_acl(
             _SYSTEM_SID: "FA",
             _ADMINISTRATORS_SID: "FA",
         }
-        grants.setdefault(SERVICE_SID, "FRFW")
+        grants.setdefault(SERVICE_SID, "FRFWSD" if service_can_replace else "FRFW")
         sddl = "D:P" + "".join(f"(A;;{rights};;;{sid})" for sid, rights in grants.items())
         descriptor = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1)
         try:

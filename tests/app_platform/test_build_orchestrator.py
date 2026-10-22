@@ -11,6 +11,9 @@ platform-coupled seam (device/emulator proof = OTT lab lane), not exercised here
 from __future__ import annotations
 
 import hashlib
+import posixpath
+import shutil
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -148,3 +151,57 @@ def test_default_shell_build_runner_wraps_missing_node(
 
     with pytest.raises(BuildOrchestrationError, match="node"):
         runner("roku", tmp_path / "work")
+
+
+def test_default_shell_build_runner_builds_isolated_runnable_web_archive(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    source_shells = repo_root / "civiccast" / "apps" / "app-platform-shells"
+    shells_dir = tmp_path / "app-platform-shells"
+    shutil.copytree(
+        source_shells,
+        shells_dir,
+        ignore=shutil.ignore_patterns("dist", "node_modules"),
+    )
+    work_dir = tmp_path / "build-job"
+    work_dir.mkdir()
+
+    artifact = default_shell_build_runner(shells_dir)("web_pwa", work_dir)
+
+    failures: list[str] = []
+    if (shells_dir / "dist").exists():
+        failures.append("builder wrote into the shell package dist directory")
+
+    with zipfile.ZipFile(artifact.artifact_path) as archive:
+        names = set(archive.namelist())
+        required = {
+            "fixtures/station-app-config.sample.json",
+            "src/shell.css",
+            "src/shell.mjs",
+            "targets/web-pwa/index.html",
+            "targets/web-pwa/manifest.json",
+        }
+        missing = sorted(required - names)
+        if missing:
+            failures.append(f"archive is missing required files: {missing}")
+        if artifact.entry_point != "targets/web-pwa/index.html":
+            failures.append(f"unexpected entry point: {artifact.entry_point!r}")
+        if artifact.entry_point not in names:
+            failures.append(f"entry point is absent from archive: {artifact.entry_point!r}")
+        else:
+            entry_html = archive.read(artifact.entry_point).decode("utf-8")
+            for local_path in ("../../src/shell.css", "../../src/shell.mjs"):
+                resolved_path = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(artifact.entry_point), local_path)
+                )
+                if local_path not in entry_html or resolved_path not in names:
+                    failures.append(f"entry point import {local_path!r} does not resolve")
+
+        target_entries = {name for name in names if name.startswith("targets/")}
+        if not target_entries or any(
+            not name.startswith("targets/web-pwa/") for name in target_entries
+        ):
+            failures.append("archive must contain only the selected target under targets/")
+
+    assert not failures, "\n".join(failures)

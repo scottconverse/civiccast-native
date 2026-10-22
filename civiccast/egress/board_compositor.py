@@ -172,6 +172,7 @@ def board_segment_cache_key(
     """Return the stable content-addressed cache key for one board segment."""
 
     material: dict[str, object] = {
+        "text_renderer": "text-fit-v1",
         "board": {
             "board_id": board.board_id,
             "snapshot": board.snapshot.model_dump(mode="json"),
@@ -252,12 +253,14 @@ def _build_board_render_args(
             continue
         if not include_text:
             continue
-        for text, line_index, scroll in _zone_text(
+        texts = _zone_text(
             zone,
             bulletin=bulletin,
             station_short_name=station_short_name,
             now=now,
-        ):
+        )
+        line_count = len(texts)
+        for text, line_index, scroll in texts:
             output = f"text_{len(filters)}"
             filters.append(
                 _drawtext_filter(
@@ -267,6 +270,7 @@ def _build_board_render_args(
                     box=box,
                     line_index=line_index,
                     scroll=scroll,
+                    line_count=line_count,
                 )
             )
             current = output
@@ -328,6 +332,9 @@ def _zone_text(
     now: datetime,
 ) -> list[tuple[str, int, bool]]:
     if zone.kind == "primary":
+        manual_text = zone.content.get("text")
+        if zone.source == "manual" and isinstance(manual_text, str) and manual_text.strip():
+            return [(manual_text.strip(), 0, False)]
         if bulletin is None:
             return []
         return [
@@ -379,6 +386,51 @@ def _cap_ticker_item(title: str) -> str:
     return title[: _TICKER_ITEM_MAX_CHARS - 1].rstrip() + "…"
 
 
+def _fit_text_to_slot(
+    text: str, slot_width: int, slot_height: int, max_font_size: int
+) -> tuple[int, list[str], int]:
+    import textwrap
+
+    def wrap(text: str, width: int) -> list[str]:
+        lines = []
+        for paragraph in text.split("\n"):
+            if paragraph == "":
+                lines.append("")
+            else:
+                wrapped = textwrap.wrap(
+                    paragraph,
+                    width=width,
+                    break_long_words=True,
+                    break_on_hyphens=False,
+                    replace_whitespace=False,
+                    drop_whitespace=False,
+                )
+                if not wrapped:
+                    lines.append("")
+                else:
+                    lines.extend(wrapped)
+        return lines or [""]
+
+    if "\n" not in text:
+        single_size = min(max_font_size, slot_width // max(1, len(text)), slot_height)
+        if single_size >= 12:
+            line_spacing = max(0, min(8, single_size // 2))
+            line_height = single_size + line_spacing
+            if line_height <= slot_height:
+                return single_size, [text], line_height
+
+    for font_size in range(max_font_size, 0, -1):
+        chars_per_line = max(1, slot_width // font_size)
+        lines = wrap(text, chars_per_line)
+        line_spacing = max(0, min(8, font_size // 2))
+        line_height = font_size + line_spacing
+        if len(lines) * line_height <= slot_height:
+            return font_size, lines, line_height
+    chars_per_line = max(1, slot_width)
+    lines = wrap(text, chars_per_line)
+    return 1, lines, 1
+
+
 def _drawtext_filter(
     input_label: str,
     output_label: str,
@@ -387,17 +439,37 @@ def _drawtext_filter(
     box: tuple[int, int, int, int],
     line_index: int,
     scroll: bool,
+    line_count: int = 1,
 ) -> str:
+    if scroll:
+        x, y, box_width, box_height = box
+        escaped_text = _escape_drawtext(text)
+        font_size = max(18, min(box_height // 7, box_width // 20))
+        y_position = y + min(box_height - font_size, line_index * (font_size + 8))
+        x_expression = f"{x}+{box_width}-mod(t*100,{box_width}+text_w)"
+        return (
+            f"[{input_label}]drawtext=expansion=none:text='{escaped_text}':"
+            f"x='{x_expression}':y={y_position}:"
+            f"fontsize={font_size}:fontcolor=white:box=1:boxcolor=black@0.45[{output_label}]"
+        )
     x, y, box_width, box_height = box
-    escaped_text = _escape_drawtext(text)
-    font_size = max(18, min(box_height // 7, box_width // 20))
-    y_position = y + min(box_height - font_size, line_index * (font_size + 8))
-    x_expression = f"{x}+{box_width}-mod(t*100,{box_width}+text_w)" if scroll else str(x)
-    return (
-        f"[{input_label}]drawtext=expansion=none:text='{escaped_text}':"
-        f"x={x_expression}:y={y_position}:"
-        f"fontsize={font_size}:fontcolor=white:box=1:boxcolor=black@0.45[{output_label}]"
-    )
+    slot_y_start = y + (line_index * box_height) // max(1, line_count)
+    slot_y_end = y + ((line_index + 1) * box_height) // max(1, line_count)
+    slot_height = slot_y_end - slot_y_start
+    max_font_size = max(18, min(box_height // 7, box_width // 20))
+    font_size, lines, line_height = _fit_text_to_slot(text, box_width, slot_height, max_font_size)
+    filters = []
+    for i, line in enumerate(lines):
+        escaped_line = _escape_drawtext(line)
+        y_pos = slot_y_start + i * line_height
+        input_lbl = input_label if i == 0 else f"{output_label}_line{i - 1}"
+        output_lbl = output_label if i == len(lines) - 1 else f"{output_label}_line{i}"
+        filters.append(
+            f"[{input_lbl}]drawtext=expansion=none:text='{escaped_line}':"
+            f"x='{x}':y={y_pos}:"
+            f"fontsize={font_size}:fontcolor=white:box=1:boxcolor=black@0.45[{output_lbl}]"
+        )
+    return ";".join(filters)
 
 
 def _has_clock_zone(board: ResolvedBoard) -> bool:

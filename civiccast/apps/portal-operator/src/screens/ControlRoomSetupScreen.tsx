@@ -20,6 +20,7 @@ import {
   deleteTimelineCue,
   getControlRoomReadiness,
   getControlSurface,
+  getDeviceProfile,
   getStaffIdentity,
   listControlSurfaces,
   listProductionDevices,
@@ -180,9 +181,16 @@ export function DeviceProfileForm({
     capability_map: Record<string, unknown>; take_delay_ms: number; post_roll_ms: number
   }) => void
 }) {
-  const [tsrType, setTsrType] = useState(device.kind.toUpperCase())
-  const [takeDelay, setTakeDelay] = useState('0')
-  const [postRoll, setPostRoll] = useState('0')
+  const profile = useQuery({
+    queryKey: ['cr-device-profile', device.device_id],
+    queryFn: () => getDeviceProfile(device.device_id),
+  })
+  const [editedType, setTsrType] = useState<string>()
+  const [editedDelay, setTakeDelay] = useState<string>()
+  const [editedPostRoll, setPostRoll] = useState<string>()
+  const tsrType = editedType ?? profile.data?.tsr_device_type ?? device.kind.toUpperCase()
+  const takeDelay = editedDelay ?? String(profile.data?.take_delay_ms ?? 0)
+  const postRoll = editedPostRoll ?? String(profile.data?.post_roll_ms ?? 0)
   return (
     <div className="flex flex-wrap items-end gap-2">
       <label className="flex flex-col text-[10px] uppercase" style={{ color: 'var(--cc-ink-3)' }}>
@@ -200,11 +208,12 @@ export function DeviceProfileForm({
         <input aria-label={`${device.device_id} post roll`} type="number" className={field} style={fieldStyle}
           value={postRoll} onChange={(e) => setPostRoll(e.target.value)} />
       </label>
-      <button type="button" className={btn} disabled={submitting}
+      {profile.isError && <Banner tone="err">{apiMessage(profile.error, 'Could not load the device profile.')}</Banner>}
+      <button type="button" className={btn} disabled={submitting || !profile.isSuccess}
         style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
         onClick={() => onSubmit(device.device_id, {
           tsr_device_type: tsrType.trim() || device.kind.toUpperCase(),
-          options: {}, capability_map: {},
+          options: profile.data?.options ?? {}, capability_map: profile.data?.capability_map ?? {},
           take_delay_ms: Number(takeDelay) || 0, post_roll_ms: Number(postRoll) || 0,
         })}>
         {submitting ? 'Saving…' : 'Save profile'}
@@ -375,7 +384,10 @@ export function ControlRoomSetupScreen() {
   })
   const saveProfile = useMutation({
     mutationFn: ({ id, p }: { id: string; p: Parameters<typeof upsertDeviceProfile>[1] }) => upsertDeviceProfile(id, p),
-    onSuccess: invReadiness,
+    onSuccess: (profile) => {
+      qc.setQueryData(['cr-device-profile', profile.device_id], profile)
+      invReadiness()
+    },
   })
   const createSurface = useMutation({
     mutationFn: (label: string) => createControlSurface({ label, assigned_role: 'meeting_operator' }),

@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import stat
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -88,40 +88,66 @@ def _grant_secret_registry_read(key_path: str) -> None:
 
 
 def _grant_tree(path: Path, rights: str, *, recursive: bool = True) -> None:
+    if any(_is_reparse_point(part) for part in (path, *path.parents)):
+        raise RuntimeError("Service permission migration refuses redirected paths.")
     if not path.exists():
         return
-    if any(part.is_symlink() or part.is_junction() for part in (path, *path.parents)):
-        raise RuntimeError("Service permission migration refuses redirected paths.")
-    # Do not traverse a junction inside a product tree and grant access elsewhere.
-    for member in path.rglob("*") if recursive else ():
-        if member.is_symlink() or member.is_junction():
-            raise RuntimeError("Service permission migration refuses redirected content.")
-    grant = f"*{SERVICE_SID}:(OI)(CI){rights}" if path.is_dir() else f"*{SERVICE_SID}:{rights}"
-    import win32api
-
-    executable = str(Path(win32api.GetSystemDirectory()) / "icacls.exe")
-    result = subprocess.run(  # noqa: S603 - fixed Windows executable and separate validated argv.
-        [executable, str(path), "/grant:r", grant, *(["/T"] if recursive else []), "/Q"],
-        capture_output=True,
-        text=True,
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    _grant_tree_native_sid(
+        _grantable_members(path, recursive=recursive),
+        rights,
+        propagate_to_children=not recursive and path.is_dir(),
     )
-    if result.returncode:
-        if result.returncode == 1332 and SERVICE_SID in f"{result.stdout}\n{result.stderr}":
-            _grant_tree_native_sid(path, rights, recursive=recursive)
-            return
-        raise RuntimeError(f"Could not grant restricted service access to {path}.")
 
 
-def _grant_tree_native_sid(path: Path, rights: str, *, recursive: bool) -> None:
-    """Grant the service's raw SID when icacls cannot map its virtual account.
+def _is_reparse_point(path: Path) -> bool:
+    """Return whether a path is a link or another Windows reparse point."""
 
-    Other ACL entries are retained, explicit grants for this service SID are
-    replaced, and recursive calls remain within the tree checked by
-    :func:`_grant_tree`.
+    try:
+        attributes = path.lstat().st_file_attributes
+    except FileNotFoundError:
+        return False
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _grantable_members(path: Path, *, recursive: bool) -> list[Path]:
+    """Collect ordinary descendants without following or granting reparse points."""
+
+    members = [path]
+    if not recursive or not path.is_dir():
+        return members
+
+    pending = [path]
+    reparse_attribute = stat.FILE_ATTRIBUTE_REPARSE_POINT
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in sorted(entries, key=lambda item: item.name.casefold()):
+                child_info = entry.stat(follow_symlinks=False)
+                if child_info.st_file_attributes & reparse_attribute:
+                    continue
+                child = Path(entry.path)
+                members.append(child)
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(child)
+    return members
+
+
+def _grant_tree_native_sid(
+    members: list[Path], rights: str, *, propagate_to_children: bool = False
+) -> None:
+    """Apply the service SID to prevalidated handles with scoped propagation.
+
+    Existing explicit grants for this SID are replaced; all other ACL entries
+    and each object's protected-DACL state are retained. Handles are opened
+    without following a final reparse point. Recursive directory handles use
+    MAXIMUM_ALLOWED to prevent automatic propagation; file handles request
+    only the ACL rights needed to avoid sharing conflicts with running images.
+    Nonrecursive directory grants retain normal Windows inheritance to existing
+    unprotected children.
     """
 
+    import win32con
+    import win32file
     import win32security
 
     masks = {"M": 0x001301BF, "RX": 0x001200A9}
@@ -131,57 +157,82 @@ def _grant_tree_native_sid(path: Path, rights: str, *, recursive: bool) -> None:
         raise RuntimeError(f"Unsupported restricted service access right: {rights}") from exc
 
     service_sid = win32security.ConvertStringSidToSid(SERVICE_SID)
-    members = [path]
-    if recursive and path.is_dir():
-        members.extend(path.rglob("*"))
     for member in members:
-        descriptor = win32security.GetFileSecurity(
-            str(member), win32security.DACL_SECURITY_INFORMATION
+        if any(_is_reparse_point(part) for part in (member, *member.parents)):
+            # Recheck the path and ancestors before opening the final component.
+            continue
+        attributes = member.lstat().st_file_attributes
+        if attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            continue
+        is_directory = bool(attributes & stat.FILE_ATTRIBUTE_DIRECTORY)
+        desired_access = (
+            win32con.MAXIMUM_ALLOWED
+            if is_directory and not propagate_to_children
+            else win32con.READ_CONTROL | win32con.WRITE_DAC
         )
-        acl = descriptor.GetSecurityDescriptorDacl()
-        if acl is None:
-            raise RuntimeError(f"Cannot add restricted service access to a NULL DACL: {member}")
-        for index in range(acl.GetAceCount() - 1, -1, -1):
-            ace = acl.GetAce(index)
-            header = ace[0]
-            if not isinstance(header, tuple) or len(header) < 2:
-                continue
-            ace_type, ace_flags = header[:2]
+        handle = win32file.CreateFile(
+            str(member),
+            desired_access,
+            win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+            None,
+            win32con.OPEN_EXISTING,
+            win32file.FILE_FLAG_BACKUP_SEMANTICS | win32file.FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        try:
+            info = win32file.GetFileInformationByHandle(handle)
             if (
-                ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE
-                and not ace_flags & win32security.INHERITED_ACE
-                and len(ace) == 3
-                and win32security.ConvertSidToStringSid(ace[2]) == SERVICE_SID
+                info[0] & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                or bool(info[0] & stat.FILE_ATTRIBUTE_DIRECTORY) != is_directory
             ):
-                acl.DeleteAce(index)
-
-        inheritance_flags = (
-            win32security.OBJECT_INHERIT_ACE | win32security.CONTAINER_INHERIT_ACE
-            if member.is_dir()
-            else 0
-        )
-        acl.AddAccessAllowedAceEx(
-            win32security.ACL_REVISION_DS, inheritance_flags, access_mask, service_sid
-        )
-        if not recursive and member.is_dir():
-            # A protected child (for example the upgrade journal) will not
-            # inherit this grant from its parent.
-            win32security.SetNamedSecurityInfo(
-                str(member),
+                continue
+            descriptor = win32security.GetSecurityInfo(
+                handle,
                 win32security.SE_FILE_OBJECT,
                 win32security.DACL_SECURITY_INFORMATION,
+            )
+            acl = descriptor.GetSecurityDescriptorDacl()
+            if acl is None:
+                raise RuntimeError(f"Cannot add restricted service access to a NULL DACL: {member}")
+            for index in range(acl.GetAceCount() - 1, -1, -1):
+                ace = acl.GetAce(index)
+                header = ace[0]
+                if not isinstance(header, tuple) or len(header) < 2:
+                    continue
+                ace_type, ace_flags = header[:2]
+                if (
+                    ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE
+                    and not ace_flags & win32security.INHERITED_ACE
+                    and len(ace) == 3
+                    and win32security.ConvertSidToStringSid(ace[2]) == SERVICE_SID
+                ):
+                    acl.DeleteAce(index)
+
+            inheritance_flags = (
+                win32security.OBJECT_INHERIT_ACE | win32security.CONTAINER_INHERIT_ACE
+                if info[0] & stat.FILE_ATTRIBUTE_DIRECTORY
+                else 0
+            )
+            acl.AddAccessAllowedAceEx(
+                win32security.ACL_REVISION_DS, inheritance_flags, access_mask, service_sid
+            )
+            control, _ = descriptor.GetSecurityDescriptorControl()
+            protection = (
+                win32security.PROTECTED_DACL_SECURITY_INFORMATION
+                if control & win32security.SE_DACL_PROTECTED
+                else win32security.UNPROTECTED_DACL_SECURITY_INFORMATION
+            )
+            win32security.SetSecurityInfo(
+                handle,
+                win32security.SE_FILE_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION | protection,
                 None,
                 None,
                 acl,
                 None,
             )
-        else:
-            # GetSecurityDescriptorDacl returns the ACL object, but mutating
-            # that object does not update the descriptor's DACL field.
-            descriptor.SetSecurityDescriptorDacl(1, acl, 0)
-            win32security.SetFileSecurity(
-                str(member), win32security.DACL_SECURITY_INFORMATION, descriptor
-            )
+        finally:
+            handle.Close()
 
 
 def configure_service_identity(install_root: Path) -> None:

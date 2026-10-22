@@ -249,6 +249,7 @@ class WebhookRetryWorker:
         # that dropped the unsubscribe link would deliver a notice a resident
         # cannot opt out of.
         from civiccast.publish.targets import resolve_public_base_url
+        from civiccast.subscribe.crypto import require_random_webhook_secret
         from civiccast.subscribe.service import unsubscribe_url_for
 
         payload = NotificationPayload.model_validate(row.payload).model_copy(
@@ -259,6 +260,7 @@ class WebhookRetryWorker:
             }
         )
         try:
+            require_random_webhook_secret(subscription.subscription_id, secret)
             self._client.post(url=url, payload=payload, secret=secret)
             status_code = 200
             error = ""

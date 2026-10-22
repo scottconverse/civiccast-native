@@ -74,10 +74,10 @@ export const FCC_73_503_REMINDER =
 /**
  * Build the query-string for an affidavit request — exact match for the
  * server's `from`/`to`/`underwriter` (and optionally `format`) params so the
- * fetch helper and the `<a download>` URL stay in lock-step.
+ * JSON preview and authenticated download requests stay in lock-step.
  *
  * Underscore-prefixed because the format module owns the QS shape but the
- * screen exclusively reaches it via `affidavitExportUrl()` in the client.
+ * screen reaches it through the affidavit helpers in the API client.
  */
 export function _affidavitQueryString(params: {
   underwriter: string

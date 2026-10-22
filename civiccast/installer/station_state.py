@@ -1883,13 +1883,16 @@ def _issue_operator_token(
     return operator_token, entry
 
 
-def _restrict_state_file(path: Path) -> None:
+def _restrict_state_file(path: Path, *, service_can_replace: bool = True) -> None:
     """Restrict local station bootstrap state after writing secret hashes."""
 
     if os.name == "nt":
         from civiccast.certs.authority import _restrict_windows_private_key_acl
 
-        _restrict_windows_private_key_acl(path)
+        # Login saves sessions by atomically replacing this file. Recovery runs
+        # as an administrator, so the service needs DELETE in addition to R/W
+        # on the replacement state; private keys and recovery backups do not.
+        _restrict_windows_private_key_acl(path, service_can_replace=service_can_replace)
         return
     path.chmod(stat.S_IRUSR | stat.S_IWUSR)
 

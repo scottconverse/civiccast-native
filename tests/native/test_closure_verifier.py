@@ -995,6 +995,20 @@ def _appinstaller_resource_path(
     return path
 
 
+def _observed_package_manifest_path(
+    package_root: Path,
+    *,
+    package: str = "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+    relative: tuple[str, ...] = ("AppxManifest.xml",),
+) -> Path:
+    path = package_root / package
+    for part in relative:
+        path /= part
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"package manifest")
+    return path
+
+
 @pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
 def test_desktop_app_installer_resource_access_is_reported_without_failing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trace_field: str
@@ -1014,6 +1028,35 @@ def test_desktop_app_installer_resource_access_is_reported_without_failing(
 
     assert trace.status == "PASS"
     assert "DesktopAppInstaller package resource" in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+@pytest.mark.parametrize(
+    "package",
+    (
+        "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+        "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+    ),
+)
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
+def test_observed_package_manifest_access_is_reported_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, package: str, trace_field: str
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _observed_package_manifest_path(package_root, package=package)
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload.setdefault(trace_field, []).append(str(resource))
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "PASS"
+    assert "AppxManifest.xml" in trace.detail
     assert str(resource.resolve()) in trace.detail
 
 
@@ -1058,6 +1101,36 @@ def test_memory_maps_separate_data_from_executable_or_unknown_regions(
     assert (str(resource) in modules) is expected_module
     assert (str(resource) in data) is expected_data
     assert (str(resource) in unknown) is expected_unknown
+
+
+def test_native_bootstrap_baseline_excludes_only_preexisting_file_identities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    initial = tmp_path / "bootstrap-resource.pri"
+    later = tmp_path / "product-resource.pri"
+    initial.write_bytes(b"existing native bootstrap mapping")
+    later.write_bytes(b"new product mapping")
+    monkeypatch.setattr(verifier, "_mapped_file_paths", lambda: ([], [str(initial)], []))
+    baseline = verifier._harness_baseline_modules()
+    assert verifier._drop_baseline([str(initial), str(later)], baseline) == [str(later)]
+
+    tree = tmp_path / "tree"
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["mapped_data"] = verifier._drop_baseline([str(initial), str(later)], baseline)
+    payload["trace_pid"] = 1234
+    payload["trace_stages"] = {
+        "before_gi_gst": [str(initial)],
+        "after_factory_sweep": [str(initial), str(later)],
+    }
+    results = _interpret_child_output(
+        _fake_child(json.dumps(payload)), present_gpl_files=(), tree=tree
+    )
+    trace = next(result for result in results if result.name == "dynamic_trace")
+    assert trace.status == "FAIL"
+    assert str(later) in trace.detail
+    assert "first mapped at after_factory_sweep; child pid=1234" in trace.detail
 
 
 def test_executable_mapping_classification_keeps_every_file_alias(
@@ -1183,6 +1256,94 @@ def test_desktop_app_installer_resource_exception_rejects_near_misses(
         resource = canonical_metadata / Path(os.path.relpath(outside, start=canonical_metadata))
         assert resource.exists()
 
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload.setdefault(trace_field, []).append(str(resource))
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail
+
+
+@pytest.mark.parametrize(
+    "package",
+    (
+        "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+        "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+    ),
+)
+@pytest.mark.parametrize(
+    ("strict_field", "expected_leg"),
+    (
+        ("loaded_modules", "executable mapping"),
+        ("unclassified_mappings", "unknown-protection mapping"),
+    ),
+)
+def test_observed_package_manifest_listed_as_strict_mapping_still_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    package: str,
+    strict_field: str,
+    expected_leg: str,
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _observed_package_manifest_path(package_root, package=package)
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
+    payload[strict_field] = [*payload.get(strict_field, []), str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail
+    assert expected_leg in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+@pytest.mark.parametrize(
+    ("package", "relative"),
+    (
+        (
+            "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbbf",
+            ("AppxManifest.xml",),
+        ),
+        (
+            "Microsoft.OtherPackage_1.0.0.0_x64__8wekyb3d8bbwe",
+            ("AppxManifest.xml",),
+        ),
+        (
+            "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+            ("nested", "AppxManifest.xml"),
+        ),
+        (
+            "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+            ("AppxManifest.xml.other",),
+        ),
+    ),
+    ids=("foreign-publisher", "other-package", "nested", "wrong-filename"),
+)
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "mapped_data"))
+def test_observed_package_manifest_exception_rejects_near_misses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    package: str,
+    relative: tuple[str, ...],
+    trace_field: str,
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _observed_package_manifest_path(package_root, package=package, relative=relative)
     payload = _with_traced_file(_clean_child_payload(), tree)
     payload.setdefault(trace_field, []).append(str(resource))
     child = _fake_child(json.dumps(payload))
@@ -1591,3 +1752,106 @@ class TestD3d12DecoderHardwareGate:
             "hardware-gated factories with no FACTORY_PLUGIN entry can never be "
             f"reported as a missing DLL, making the excuse unfalsifiable: {unmapped}"
         )
+
+
+# ---------------------------------------------------------------------------
+# WSL resources.pri -- observed data-only package resource exception
+# ---------------------------------------------------------------------------
+
+_WSL_PACKAGE = "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.1.0_x64__8wekyb3d8bbwe"
+
+
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
+def test_wsl_resources_pri_access_is_reported_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trace_field: str
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(
+        package_root, package=_WSL_PACKAGE, relative=("resources.pri",)
+    )
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload.setdefault(trace_field, []).append(str(resource))
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "PASS"
+    assert "WSL resources.pri" in trace.detail
+    assert "DesktopAppInstaller package resource" in trace.detail
+    assert "AppxManifest.xml" in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+@pytest.mark.parametrize(
+    ("strict_field", "expected_leg"),
+    (
+        ("loaded_modules", "executable mapping"),
+        ("unclassified_mappings", "unknown-protection mapping"),
+    ),
+)
+def test_wsl_resources_pri_listed_as_strict_mapping_still_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    strict_field: str,
+    expected_leg: str,
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(
+        package_root, package=_WSL_PACKAGE, relative=("resources.pri",)
+    )
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
+    payload[strict_field] = [*payload.get(strict_field, []), str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail
+    assert expected_leg in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+@pytest.mark.parametrize(
+    ("package", "relative"),
+    (
+        (_WSL_PACKAGE[:-1] + "f", ("resources.pri",)),
+        (_WSL_PACKAGE, ("resources.pri.other",)),
+        (_WSL_PACKAGE, ("nested", "resources.pri")),
+        ("Microsoft.OtherPackage_1.0.0.0_x64__8wekyb3d8bbwe", ("resources.pri",)),
+    ),
+    ids=("wrong-publisher", "wrong-filename", "subdirectory", "foreign-package"),
+)
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "mapped_data"))
+def test_wsl_resources_pri_exception_rejects_near_misses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    package: str,
+    relative: tuple[str, ...],
+    trace_field: str,
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(package_root, package=package, relative=relative)
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload.setdefault(trace_field, []).append(str(resource))
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail

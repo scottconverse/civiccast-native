@@ -183,6 +183,187 @@ def test_unregistered_service_sid_grant_uses_native_acl_and_keeps_protected_chil
     assert set(file_grants) == {writer_sid, "S-1-5-18", "S-1-5-32-544", fake_service_sid}
 
 
+def test_grant_tree_prunes_real_junction_and_preserves_external_acl(tmp_path):
+    import win32con
+    import win32file
+    import win32security
+
+    from civiccast.certs.authority import _current_process_sid
+    from civiccast.native.service_identity import SERVICE_SID
+    from civiccast.native.upgrade.junction import _mklink_junction
+
+    root = tmp_path / "CivicCast"
+    ordinary = root / "profile" / "ordinary"
+    ordinary.mkdir(parents=True)
+    ordinary_file = ordinary / "state.json"
+    ordinary_file.write_text("{}", encoding="utf-8")
+    inherited = root / "profile" / "maintenance"
+    inherited.mkdir()
+    inherited_file = inherited / "status.txt"
+    inherited_file.write_text("existing", encoding="utf-8")
+
+    outside = tmp_path / "outside"
+    outside_child = outside / "nested"
+    outside_child.mkdir(parents=True)
+    outside_file = outside_child / "external.txt"
+    outside_file.write_text("untouched", encoding="utf-8")
+    redirect = root / "profile" / "redirect"
+    _mklink_junction(redirect, outside)
+    assert redirect.is_junction()
+
+    writer_sid = _current_process_sid()
+    protected = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+        f"D:P(A;OICI;FA;;;{writer_sid})(A;OICI;FA;;;S-1-5-18)(A;OICI;FA;;;S-1-5-32-544)",
+        1,
+    )
+    for path in (ordinary, ordinary_file):
+        win32security.SetFileSecurity(
+            str(path),
+            win32security.DACL_SECURITY_INFORMATION
+            | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+            protected,
+        )
+
+    def dacl_signature(path):
+        security = win32security.GetFileSecurity(str(path), win32security.DACL_SECURITY_INFORMATION)
+        acl = security.GetSecurityDescriptorDacl()
+        return tuple(
+            (
+                acl.GetAce(index)[0],
+                acl.GetAce(index)[1],
+                win32security.ConvertSidToStringSid(acl.GetAce(index)[2]),
+            )
+            for index in range(acl.GetAceCount())
+        )
+
+    outside_before = {path: dacl_signature(path) for path in (outside, outside_child, outside_file)}
+
+    def junction_dacl_signature(path):
+        handle = win32file.CreateFile(
+            str(path),
+            win32con.MAXIMUM_ALLOWED,
+            win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+            None,
+            win32con.OPEN_EXISTING,
+            win32file.FILE_FLAG_BACKUP_SEMANTICS | win32file.FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        try:
+            security = win32security.GetSecurityInfo(
+                handle,
+                win32security.SE_FILE_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION,
+            )
+            acl = security.GetSecurityDescriptorDacl()
+            return tuple(
+                (
+                    acl.GetAce(index)[0],
+                    acl.GetAce(index)[1],
+                    win32security.ConvertSidToStringSid(acl.GetAce(index)[2]),
+                )
+                for index in range(acl.GetAceCount())
+            )
+        finally:
+            handle.Close()
+
+    migration._grant_tree(root / "profile", "M", recursive=False)
+    for path in (inherited, inherited_file):
+        assert any(sid == SERVICE_SID for _, _, sid in dacl_signature(path))
+    redirect_before_recursive = junction_dacl_signature(redirect)
+    migration._grant_tree(root, "M")
+
+    assert {path: dacl_signature(path) for path in outside_before} == outside_before
+    assert junction_dacl_signature(redirect) == redirect_before_recursive
+    for path in (ordinary, ordinary_file):
+        security = win32security.GetFileSecurity(str(path), win32security.DACL_SECURITY_INFORMATION)
+        control, _ = security.GetSecurityDescriptorControl()
+        assert control & win32security.SE_DACL_PROTECTED
+        entries = dacl_signature(path)
+        grants = {sid: mask for _, mask, sid in entries}
+        assert grants[SERVICE_SID] == 0x001301BF
+        assert set(grants) == {writer_sid, "S-1-5-18", "S-1-5-32-544", SERVICE_SID}
+
+
+def test_grant_tree_rejects_junction_root_without_touching_target_acl(tmp_path):
+    import win32security
+
+    from civiccast.native.upgrade.junction import _mklink_junction
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "state.json").write_text("{}", encoding="utf-8")
+    link = tmp_path / "root-junction"
+    _mklink_junction(link, target)
+    before = win32security.GetFileSecurity(
+        str(target), win32security.DACL_SECURITY_INFORMATION
+    ).GetSecurityDescriptorDacl()
+    before_entries = tuple(
+        (before.GetAce(index)[0], before.GetAce(index)[1], before.GetAce(index)[2])
+        for index in range(before.GetAceCount())
+    )
+
+    with pytest.raises(RuntimeError, match="refuses redirected paths"):
+        migration._grant_tree(link, "M")
+    migration._grant_tree(tmp_path / "missing", "M")
+
+    after = win32security.GetFileSecurity(
+        str(target), win32security.DACL_SECURITY_INFORMATION
+    ).GetSecurityDescriptorDacl()
+    after_entries = tuple(
+        (after.GetAce(index)[0], after.GetAce(index)[1], after.GetAce(index)[2])
+        for index in range(after.GetAceCount())
+    )
+    assert after_entries == before_entries
+
+
+def test_grant_tree_opens_running_python_image_with_acl_only_access(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = tmp_path / "runtime"
+    root.mkdir()
+    executable = root / "python.exe"
+    base_executable = Path(sys._base_executable)
+    assert base_executable.is_file(), f"Base Python executable not found: {base_executable}"
+    shutil.copy2(base_executable, executable)
+    runtime_dlls = list(Path(sys.base_prefix).glob("python*.dll"))
+    assert runtime_dlls, "The running Python installation has no adjacent runtime DLLs."
+    for runtime_dll in runtime_dlls:
+        shutil.copy2(runtime_dll, root / runtime_dll.name)
+
+    repo_root = Path(__file__).resolve().parents[2]
+    environment = os.environ.copy()
+    environment["PYTHONHOME"] = sys.base_prefix
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(repo_root), *(entry for entry in sys.path if entry)]
+    )
+    pywin32_system32 = next(
+        entry / "pywin32_system32"
+        for entry in map(Path, sys.path)
+        if (entry / "pywin32_system32").is_dir()
+    )
+    script = (
+        "import os, sys; from pathlib import Path; "
+        f"pywin32_dlls = os.add_dll_directory({str(pywin32_system32)!r}); "
+        "assert Path(sys.executable).resolve() == Path(sys.argv[1], 'python.exe').resolve(); "
+        "from civiccast.native.install_service_identity import _grant_tree; "
+        "_grant_tree(Path(sys.argv[1]), 'RX'); print('GRANT_SUCCEEDED')"
+    )
+    result = subprocess.run(
+        [str(executable), "-c", script, str(root)],
+        cwd=repo_root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert "GRANT_SUCCEEDED" in result.stdout
+
+
 @pytest.mark.parametrize("stop_finishes", [True, False])
 def test_timed_out_migration_waits_for_stopped_before_restoring_environment(
     installed, monkeypatch, stop_finishes

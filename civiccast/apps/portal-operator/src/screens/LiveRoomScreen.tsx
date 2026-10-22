@@ -52,6 +52,7 @@ import {
 } from '../types/live'
 import type {
   LiveFinalizationStatusResponse,
+  ChannelProfile,
   SourceSetupReport,
   SystemHealthReport,
 } from '../types/api.generated'
@@ -62,6 +63,7 @@ import type {
 const DEFAULT_CHANNEL_ID = 'government'
 const CHANNEL_STORAGE_KEY = 'civiccast.liveRoom.channelId'
 const SESSION_ID = 'council-live-room'
+const SESSION_STORAGE_KEY = 'civiccast.liveRoom.sessionId'
 const SESSION_TITLE = 'Council live room'
 const EMPTY_SOURCES: LiveSourceResponse[] = []
 
@@ -110,7 +112,7 @@ function ErrorPanel({ title, message }: { title: string; message: string }) {
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         <strong>Next step.</strong> Ask your station administrator to check the
         CivicCast service and database. Keep this screen open during an active
-        session; refreshing can lose the in-page session.
+        session. Reopen Live to recover the saved session.
       </div>
     </div>
   )
@@ -900,20 +902,32 @@ function SourceSetupGuidance({
 
 export function PreviewPanel({
   source,
+  channel,
 }: {
   source: LiveSourceResponse | undefined
+  channel?: ChannelProfile
 }) {
+  const output = channel?.outputs?.find((item) => item.kind === 'hls' && item.enabled !== false)
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="m-0 text-sm font-semibold">On-air preview</h2>
           <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            CivicCast only shows source media here after server-side verification.
+            This is the channel's outgoing broadcast. Before a live takeover it shows scheduled output.
           </p>
         </div>
       </div>
-      <div
+      {output ? (
+        <iframe
+          key={`${channel?.channel_id}-${output.target}`}
+          title={`On-air preview for ${channel?.channel_id}`}
+          src={`/?manifest=${encodeURIComponent(output.target)}`}
+          className="h-96 w-full rounded-md border-0"
+          allow="autoplay; fullscreen; picture-in-picture"
+          allowFullScreen
+        />
+      ) : <div
         className="grid min-h-56 place-items-center rounded-md p-4"
         style={{
           background: 'var(--cc-warn-soft)',
@@ -922,19 +936,18 @@ export function PreviewPanel({
         }}
       >
         <div className="max-w-md text-center">
-          <div className="text-lg font-semibold">Source preview unavailable</div>
+          <div className="text-lg font-semibold">Channel preview unavailable</div>
           <div className="mt-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            CivicCast has not verified incoming video or audio from{' '}
-            <strong>{source?.name ?? 'the selected source'}</strong>. No simulated
-            preview or audio meter is shown.
+            Enable this channel's HLS web output on Channels to view the outgoing broadcast.
           </div>
           <div className="mt-3 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-            <strong>Next step.</strong> Connect a real encoder or meeting source and
-            run pre-flight. Start Live Stream remains blocked until a server-side
-            media probe passes.
+            <a href="/operator/#/channels">Open Channels</a>
           </div>
         </div>
-      </div>
+      </div>}
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+        {source?.next_action ?? 'Choose and check a source before taking it live.'}
+      </p>
     </section>
   )
 }
@@ -1025,7 +1038,33 @@ export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation 
 }
 
 export function LiveRoomScreen() {
-  const [session, setSession] = useState<LiveSessionResponse | null>(null)
+  const [sessionOverride, setSession] = useState<LiveSessionResponse | null>(null)
+  const [sessionId, setSessionId] = useState(() => {
+    try { return localStorage.getItem(SESSION_STORAGE_KEY) ?? SESSION_ID }
+    catch { return SESSION_ID }
+  })
+  const sessionQuery = useQuery({
+    queryKey: ['live-room-session', sessionId],
+    queryFn: async () => {
+      try { return await getLiveSession(sessionId) }
+      catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null
+        throw error
+      }
+    },
+    enabled: sessionOverride == null,
+    retry: false,
+  })
+  const session = sessionOverride ?? sessionQuery.data ?? null
+  const newMeeting = () => {
+    const nextId = `council-live-room-${Array.from(crypto.getRandomValues(new Uint32Array(4)), value => value.toString(16)).join('-')}`
+    setSessionId(nextId)
+    try { localStorage.setItem(SESSION_STORAGE_KEY, nextId) } catch { /* optional persistence */ }
+    setSession(null)
+    setPreflight(null)
+    setOperatorConfirmed(false)
+    setActionError(null)
+  }
   const [preflight, setPreflight] = useState<PreflightEvaluation | null>(null)
   const [selectedSourceId, setSelectedSourceId] = useState('')
   const [operatorConfirmed, setOperatorConfirmed] = useState(false)
@@ -1036,13 +1075,14 @@ export function LiveRoomScreen() {
     pendingConfirm?.run()
     setPendingConfirm(null)
   }
-  const [channelId, setChannelId] = useState<string>(() => {
+  const [selectedChannelId, setChannelId] = useState<string>(() => {
     try {
       return window.localStorage.getItem(CHANNEL_STORAGE_KEY) ?? DEFAULT_CHANNEL_ID
     } catch {
       return DEFAULT_CHANNEL_ID
     }
   })
+  const channelId = session?.channel_id ?? selectedChannelId
   const selectChannel = (next: string) => {
     setChannelId(next)
     try {
@@ -1136,12 +1176,15 @@ export function LiveRoomScreen() {
   const createMutation = useMutation({
     mutationFn: () =>
       createLiveSession({
-        live_session_id: SESSION_ID,
+        live_session_id: sessionId,
         channel_id: channelId,
         title: SESSION_TITLE,
         notes: 'Created from the operator live room.',
       }),
-    onSuccess: setSession,
+    onSuccess: (next) => {
+      setSession(next)
+      try { localStorage.setItem(SESSION_STORAGE_KEY, next.live_session_id) } catch { /* optional persistence */ }
+    },
     onError: (err) => setActionError(apiMessage(err, 'Could not create session.')),
   })
 
@@ -1291,7 +1334,10 @@ export function LiveRoomScreen() {
       ) : (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="flex flex-col gap-5">
-            <PreviewPanel source={selectedSource} />
+            <PreviewPanel
+              source={selectedSource}
+              channel={channelsQuery.data?.find((channel) => channel.channel_id === channelId)}
+            />
             <SourceSwitcher
               sources={sources}
               selectedId={selectedSource?.live_source_id ?? ''}
@@ -1369,10 +1415,21 @@ export function LiveRoomScreen() {
                 </span>
               </div>
               <div className="mt-3 flex flex-col gap-2">
+                {session && (session.state === 'ending' || session.state === 'recorded') && (
+                  <button type="button" onClick={newMeeting} disabled={!canOperateMeeting}>
+                    New live session
+                  </button>
+                )}
+                {sessionQuery.isError && !session && (
+                  <div role="alert">
+                    <p>{apiMessage(sessionQuery.error, 'Could not restore the live session.')}</p>
+                    <button type="button" onClick={() => void sessionQuery.refetch()}>Retry session recovery</button>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => createMutation.mutate()}
-                  disabled={!canOperateMeeting || createMutation.isPending || session != null}
+                  disabled={!canOperateMeeting || createMutation.isPending || sessionQuery.isPending || sessionQuery.isError || session != null}
                   className="rounded-md px-3 py-2 text-sm font-semibold"
                   style={{ background: canOperateMeeting && !session ? 'var(--cc-brand)' : 'var(--cc-surface-3)', color: canOperateMeeting && !session ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}
                 >

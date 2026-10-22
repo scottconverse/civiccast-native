@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import replace
@@ -19,6 +20,44 @@ pytestmark = pytest.mark.skipif(
     not (native._wsl_gi_available() and native._cc_embed_elements_available()),
     reason="caption flow proof requires the real bundled GStreamer caption runtime",
 )
+
+
+def _packet_span_diagnostic(path: Path) -> dict:
+    """Inspect retained real packets after a worker failure, off the media path."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_packets",
+                "-show_entries",
+                "packet=codec_type,pts_time,duration_time",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        packets = json.loads(result.stdout)["packets"]
+        spans = {}
+        for kind in ("video", "audio"):
+            selected = [p for p in packets if p.get("codec_type") == kind and "pts_time" in p]
+            if selected:
+                start = min(float(p["pts_time"]) for p in selected)
+                end = max(float(p["pts_time"]) + float(p.get("duration_time", 0)) for p in selected)
+                spans[kind] = {
+                    "packets": len(selected),
+                    "start": start,
+                    "end": end,
+                    "span": end - start,
+                }
+        return {"bytes": path.stat().st_size, "streams": spans}
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+        return {"diagnostic_error": str(exc)}
 
 
 def test_live_caption_queue_probe_releases_real_event_reservations(tmp_path: Path) -> None:
@@ -90,6 +129,38 @@ def test_three_captioned_workers_finish_complex_playlist_without_reload(tmp_path
             for process, _control, log, capture, tap in workers:
                 code = process.wait(timeout=40)
                 output = log.read_text(encoding="utf-8", errors="replace")
+                if code != 0:
+                    diagnostic = {
+                        "cpu_count": os.cpu_count(),
+                        "failed_channel": capture.parent.name,
+                        "exit_code": code,
+                        "media": {
+                            str(p.relative_to(tmp_path)): _packet_span_diagnostic(p)
+                            for p in [*clips, capture]
+                        },
+                    }
+                    (tmp_path / "failure-diagnostic.json").write_text(
+                        json.dumps(diagnostic, indent=2), encoding="utf-8"
+                    )
+                    # Preserve actual source clips, worker logs and TS captures;
+                    # a later local pass cannot explain this runner's failure.
+                    workspace = os.environ.get("GITHUB_WORKSPACE")
+                    if workspace:
+                        try:
+                            retained = Path(workspace) / "caption-worker-failure"
+                            retained.mkdir(exist_ok=True)
+                            for source in [*clips, tmp_path / "failure-diagnostic.json"]:
+                                shutil.copy2(source, retained / source.name)
+                            shutil.copytree(
+                                capture.parent, retained / capture.parent.name, dirs_exist_ok=True
+                            )
+                            for _process, _control, worker_log, _capture, _tap in workers:
+                                shutil.copy2(
+                                    worker_log, retained / (worker_log.parent.name + ".log")
+                                )
+                        except OSError as exc:
+                            diagnostic["artifact_copy_error"] = str(exc)
+                    output += "\nPacket timing at failure: " + json.dumps(diagnostic)
                 assert code == 0, output
                 assert "CTRL stall:" not in output, output
                 assert "'teardown_clean': True" in output, output

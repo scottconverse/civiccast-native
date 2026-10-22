@@ -2232,9 +2232,17 @@ def _make_agenda_chapter_provider(asset_store: Any) -> Callable[[str], list[Any]
         # markers, but ``StaffAssetRow.chapters`` already contains Chapter
         # instances. model_validate accepts both those and legacy dictionaries.
         chapters: list[Any] = []
+        trim_start = getattr(row, "trim_in_seconds", None) or 0.0
+        trim_end = getattr(row, "trim_out_seconds", None)
         for raw in chapters_attr:
             try:
-                chapters.append(Chapter.model_validate(raw))
+                chapter = Chapter.model_validate(raw)
+                # Editor markers use source time; agenda links seek in the
+                # packaged playback range. Exclude markers outside that range
+                # and rebase a copy, preserving the operator's source markers.
+                if chapter.t < trim_start or (trim_end is not None and chapter.t >= trim_end):
+                    continue
+                chapters.append(chapter.model_copy(update={"t": chapter.t - trim_start}))
             except (ValidationError, TypeError) as exc:
                 _LOG.error(
                     "Skipping malformed chapter in meeting asset %r: %r (payload=%r)",
@@ -2651,6 +2659,7 @@ def create_app() -> FastAPI:
     app.include_router(manual_router)
     app.include_router(auth_staff_router)
     from civiccast.dr.station_backup_router import staff_router as station_backup_router
+    from civiccast.federation.router import router as federation_router
     from civiccast.native.network import (
         NetworkSettings,
         NetworkSettingsStore,
@@ -2664,6 +2673,7 @@ def create_app() -> FastAPI:
         NetworkSettings.model_validate_json(active_network) if active_network else NetworkSettings()
     )
     app.include_router(station_network_router)
+    app.include_router(federation_router)
     app.include_router(station_backup_router)
     app.include_router(schedule_public_router)
     # S7 media lifecycle: MUST be registered before schedule_staff_router --

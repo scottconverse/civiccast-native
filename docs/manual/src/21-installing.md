@@ -74,7 +74,7 @@ flowchart TB
 
 *Figure 10.1. The order of the Windows setup steps and the first-run window.*
 
-Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. After files are replaced, any failure also **stops the CivicCast service and sets it to manual start**, so that it cannot start on a half-updated install. Re-running setup is the supported recovery after correcting a recoverable cause. An incomplete kit cannot supply missing signed station packs; obtain the complete matching bundle first.
+Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. On a failure after mutation, setup stops the service while attempting restoration of the saved application and station state. Successful restoration also restores the prior service configuration; incomplete restoration preserves the recovery journal and reports exit 136. Correct the reported cause before retrying setup. An incomplete kit cannot supply missing signed station packs; obtain the complete matching bundle first.
 
 ## Install from the kit
 
@@ -94,7 +94,7 @@ If WebView2 is missing, setup installs the full offline copy it carries (the bui
 
 Before the normal setup pages or prerequisite installers, setup checks the installed CivicCast version. If the installed version is newer, setup exits with code 129 before installing prerequisites, stopping the service, replacing application files, or changing station data. Keep using the installed version, or use its complete matching signed setup kit if it needs repair. If setup cannot safely read or compare the installed version, it exits with code 130 before changing the installation; follow the message and contact support if it persists.
 
-If that check passes, NSIS may show its **Already Installed** page with the installed version and choices such as **Add/Reinstall components** and **Uninstall CivicCast (Native)**. For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. The older silent-installer downgrade message is historical; the current setup refuses a downgrade in the early version check for both graphical and silent setup.
+The corrected installer suppresses the generic **Already Installed** maintenance page so an upgrade cannot invoke the old uninstaller before recovery state is saved. Run the new matching setup directly over the existing installation; do not uninstall first. See "Upgrade" below. The older silent-installer downgrade message is historical; the current setup refuses a downgrade in the early version check for both graphical and silent setup.
 
 ### Step 3: Choose the install folder
 
@@ -263,7 +263,7 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 112 | Re-check | The extracted CivicCast program does not match its signed pack | Same |
 | 121 | Re-check | The extracted ffmpeg tools do not match | Same |
 | 122 | Re-check | The extracted AI engine does not match | Same |
-| 113 | Upgrade engine | The upgrade failed **and** its own rollback failed | Setup then restores the pre-setup application and station state when automatic recovery succeeds. Read `upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`; if setup reports exit 136, follow the recovery instructions above |
+| 113 | Upgrade engine | The upgrade failed **and** its own rollback failed | Setup then restores the pre-setup application and station state when automatic recovery succeeds. Read `upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`; if setup reports exit 136, follow the recovery instructions below |
 | 114 | Upgrade engine | This release has a database change that cannot be rolled back, so automatic upgrade was refused | The dialog says "Use the manual upgrade path with operator acknowledgement". No such path is described anywhere in setup. Do not retry blindly; open an issue |
 | 115 | Upgrade engine | Unexpected fault | Read the log and `upgrade\upgrade-engine.log` |
 | 116 | Database | PostgreSQL could not be provisioned | Read the log and `provision\PROVISION-RECOVERY.md` |
@@ -334,7 +334,7 @@ Get-Service CivicCastSupervisor | Format-List Name, DisplayName, Status, StartTy
 Invoke-RestMethod http://127.0.0.1:8000/health
 Get-NetFirewallRule -DisplayName "CivicCast (Native) Portal/API (TCP 8000)"
 Test-Path "C:\Program Files\CivicCast (Native)\station-set.json","C:\Program Files\CivicCast (Native)\activation-self-test.json"
-Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
+Get-Content -LiteralPath 'C:\ProgramData\CivicCast\install-progress.log' -Tail 5
 ```
 
 - The service is **CivicCast Native Supervisor**, `Status` **Running**, `StartType` **Automatic**.
@@ -428,12 +428,12 @@ Because the database password is deleted from the registry, the surviving databa
 | "First setup can only be done from the station computer itself" | The browser opened `/setup` away from the station | Use `/setup` on the station computer for first-admin actions. Ordinary staff use `/login`; remote staff sign-in requires the configured staff hostname and an approved network. |
 | "The station is cooling down after too many requests." | Too many sign-in attempts | Wait, then **Try again** |
 | "Could not read setup state." | The console reached the station but the station could not answer | Wait and reload. Check the service is running. Collect `install-progress.log` and do not run setup again until someone has read it |
-| A required station pack is missing | Model acquisition in the first-run window cannot provide signed station packs | Check the error detail; confirm `station-models.json` and every archive part are available | Run `scripts\download_windows_release_artifacts.ps1 -Install` to verify and assemble the kit, then retry setup |
+| A required station pack is missing | Model acquisition in the first-run window cannot provide signed station packs | Check the error detail; confirm `station-models.json` and every archive part are available. Run `scripts\download_windows_release_artifacts.ps1 -Install` to verify and assemble the kit, then retry setup |
 | The station will not stay up after a failed upgrade | Containment left the service on manual start | Fix the cause, run setup again |
 
 ## Package status and verification
 
-This chapter describes the Beta 19 edition. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package's checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
+This chapter identifies the Beta 20 software edition. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
 
 ## Related
 

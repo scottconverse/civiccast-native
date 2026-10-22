@@ -288,7 +288,11 @@ class _UrlCallAuditor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-@pytest.mark.parametrize("module_path", _shipped_python_modules(), ids=_relative)
+@pytest.mark.parametrize(
+    "module_path",
+    [path for path in _shipped_python_modules() if _relative(path) != _NORMALIZER_MODULE],
+    ids=_relative,
+)
 def test_shipped_module_never_builds_an_engine_on_an_unnormalized_url(
     module_path: Path,
 ) -> None:
@@ -298,13 +302,6 @@ def test_shipped_module_never_builds_an_engine_on_an_unnormalized_url(
     verify_source_url)`` in ``civiccast/dr/restore_drill.py``, reached from D3
     step 3's pre-upgrade restore-drill spot check.
     """
-
-    if _relative(module_path) == _NORMALIZER_MODULE:
-        pytest.skip(
-            f"{_NORMALIZER_MODULE} IS the normalizer -- its own make_url() call is "
-            "how normalization is implemented, so it cannot be required to call "
-            "itself first"
-        )
 
     tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
     auditor = _UrlCallAuditor()

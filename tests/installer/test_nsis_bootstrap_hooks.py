@@ -1147,6 +1147,115 @@ def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
     assert "ActiveRuntime" in arm, "the message must name the value an administrator has to set"
 
 
+@pytest.mark.skipif(
+    os.name != "nt", reason="executes the real NSIS service-registration cwd handoff"
+)
+@pytest.mark.parametrize("exit_code", [0, 70], ids=["success", "registration-failure"])
+def test_service_registration_child_does_not_inherit_install_root_as_its_cwd(
+    tmp_path: Path, exit_code: int
+) -> None:
+    """The registration child applies ACLs to $INSTDIR and can fail when its
+    inherited current directory is that same tree. Execute the production
+    OUTDIR handoff in a small installer and prove both child isolation and
+    restoration of NSIS's output directory.
+    """
+    makensis = Path.home() / "AppData/Local/tauri/NSIS/Bin/makensis.exe"
+    if not makensis.is_file():
+        pytest.skip("Tauri NSIS compiler is unavailable")
+
+    source = _hooks_source()
+    service_step = _slice(
+        source,
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration: begin"',
+        '!insertmacro CIVICCAST_STEP "step d4-firewall-rule: begin"',
+    )
+    executable_step = "\n".join(
+        line
+        for line in service_step.splitlines()
+        if line.strip() and not line.lstrip().startswith(";")
+    )
+    wrapper = re.search(
+        r"(?:InitPluginsDir\s*\n\s*)?"
+        r"StrCpy \$R9 \"\$OUTDIR\"\s*\n\s*"
+        r"SetOutPath \"\$PLUGINSDIR\"\s*\n\s*"
+        r"(?P<execute>nsExec::ExecToStack [^\n]+)\s*\n\s*"
+        r"Pop \$0\s*\n\s*Pop \$1\s*\n\s*"
+        r"SetOutPath \"\$R9\"",
+        executable_step,
+    )
+
+    child_cwd_file = tmp_path / "registration-child-cwd.txt"
+    child_command = f'cmd.exe /d /c cd > "$EXEDIR/{child_cwd_file.name}"'
+    if exit_code:
+        child_command += f" & exit /b {exit_code}"
+    diagnostic_exec = f"nsExec::ExecToStack '{child_command}'"
+    if wrapper is None:
+        # Baseline behavior: run the same child from the install output
+        # directory. The assertion below must fail on this path, proving the
+        # regression test observes the inherited-cwd defect itself.
+        registration_body = f"{diagnostic_exec}\nPop $0\nPop $1"
+    else:
+        registration_body = re.sub(
+            r"nsExec::ExecToStack [^\n]+", diagnostic_exec, wrapper.group(0), count=1
+        )
+
+    install_root = tmp_path / "install-root"
+    payload = tmp_path / "restore-sentinel.txt"
+    payload.write_text("output directory restored", encoding="utf-8")
+    exit_code_file = tmp_path / "registration-exit-code.txt"
+    output = tmp_path / "registration-cwd.exe"
+    script = tmp_path / "registration-cwd.nsi"
+    script.write_text(
+        "Unicode true\n!include LogicLib.nsh\nSilentInstall silent\n"
+        "RequestExecutionLevel user\n"
+        f'OutFile "{output}"\n'
+        "Section\n"
+        f'SetOutPath "{install_root}"\n'
+        f"{registration_body}\n"
+        f'FileOpen $R8 "$EXEDIR\\{exit_code_file.name}" w\n'
+        'FileWrite $R8 "$0"\nFileClose $R8\n'
+        f'File /oname=restored-output.txt "{payload}"\n'
+        "SectionEnd\n",
+        encoding="utf-8",
+    )
+    compiled = subprocess.run(
+        [str(makensis), "/V2", str(script)], capture_output=True, text=True, timeout=60
+    )
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    ran = subprocess.run([str(output), "/S"], capture_output=True, timeout=60)
+    assert ran.returncode == 0, f"NSIS cwd probe exited {ran.returncode}"
+
+    child_cwd = Path(child_cwd_file.read_text(encoding="utf-8").strip()).resolve()
+    assert child_cwd != install_root.resolve(), (
+        "the registration child inherited the install-root cwd while its ACL "
+        f"walk targets that tree: {child_cwd}"
+    )
+    assert (install_root / "restored-output.txt").read_text(encoding="utf-8") == (
+        "output directory restored"
+    ), "NSIS must restore the install output directory after the child returns"
+    assert exit_code_file.read_text(encoding="utf-8") == str(exit_code), (
+        "restoring OUTDIR and recording the child output must preserve its exit code"
+    )
+
+    assert wrapper is not None, "service registration must isolate its inherited cwd"
+    assert "--civiccast-register-native-service" in wrapper.group("execute")
+    restore_at = service_step.index('SetOutPath "$R9"')
+    returned_at = service_step.index(
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration: returned $0"'
+    )
+    branch_at = service_step.index("${If} $0 == 84")
+    report_at = service_step.index(
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration: child reported: $1"'
+    )
+    assert restore_at < returned_at < report_at < branch_at, (
+        "restore OUTDIR before recording the captured child output or branching on its exit code"
+    )
+    step_logger = _slice(source, "!macro CIVICCAST_STEP TEXT", "!macroend")
+    assert "$0" not in step_logger and "$1" not in step_logger, (
+        "CIVICCAST_STEP must preserve the registration exit code and captured output"
+    )
+
+
 OWNERSHIP_OBSERVATION_FILE = "$COMMONPROGRAMDATA\\CivicCast\\provision\\ownership-observation.txt"
 OWNERSHIP_RECOVERY_DOC = "$COMMONPROGRAMDATA\\CivicCast\\provision\\OWNERSHIP-RECOVERY.md"
 

@@ -1703,9 +1703,24 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ; already implement the matching D1/D4 uninstall-side half.
   !insertmacro CIVICCAST_STEP "step d4-service-registration: begin"
   DetailPrint "Registering the CivicCast (Native) supervisor service (D4)..."
-  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-register-native-service --install-root "$INSTDIR"'
+  ; Tauri enters POSTINSTALL with $OUTDIR set to $INSTDIR, and its remaining
+  ; File statements depend on that output directory. The registration child
+  ; also walks $INSTDIR to grant service-account access; inheriting $INSTDIR
+  ; as its current directory keeps the target tree open and can make that
+  ; walk fail with a sharing violation. Give the child the installer scratch
+  ; directory as cwd, then restore Tauri's output directory before continuing.
+  InitPluginsDir
+  StrCpy $R9 "$OUTDIR"
+  SetOutPath "$PLUGINSDIR"
+  ; Capture the tool's bounded output into the progress log as well as its
+  ; exit code. ExecToLog only put diagnostics in the wizard pane, which is
+  ; absent during silent setup and lost when failure recovery restores files.
+  nsExec::ExecToStack '"$INSTDIR\CivicCast Native.exe" --civiccast-register-native-service --install-root "$INSTDIR"'
   Pop $0
+  Pop $1
+  SetOutPath "$R9"
   !insertmacro CIVICCAST_STEP "step d4-service-registration: returned $0"
+  !insertmacro CIVICCAST_STEP "step d4-service-registration: child reported: $1"
   ; pywin32's service install MOVES pythonservice.exe out of the payload's
   ; site-packages\win32 into the payload root (its own "moving host exe"
   ; step, unconditional). The payload pack ships the exe at BOTH paths, so
@@ -1759,7 +1774,7 @@ Var CIVICCAST_POSTCLEAR_ARMED
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE_NOT_STARTING} "CivicCast (Native) setup registered the station's Windows service, but Windows could not start it.$\r$\n$\r$\nThis is a startup failure, not a registration failure -- the service exists and can be inspected in services.msc.$\r$\n$\r$\nNothing was deleted. See $COMMONPROGRAMDATA\CivicCast\logs and the Windows Application event log for the exact startup error, then run setup again."
   ${ElseIf} $0 != 0
     DetailPrint "CivicCast (Native): D4 service registration FAILED (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE} "CivicCast (Native) setup could not register the CivicCast (Native) Windows service. See the installer log for the exact error."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_SERVICE} "CivicCast (Native) setup could not register the CivicCast (Native) Windows service. See the installer log for the service tool's captured output."
   ${EndIf}
   !insertmacro CIVICCAST_STEP "step d4-firewall-rule: begin"
   DetailPrint "Registering the CivicCast (Native) portal/API firewall rule (D4)..."

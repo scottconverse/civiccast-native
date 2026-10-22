@@ -39,7 +39,8 @@ from civiccast.egress.models import EgressSourcePlan
 
 # The as-run source_kind values (mirrors civiccast.reporting.models.SourceKind;
 # duplicated as a plain tuple here so the engine need not import the reporting
-# package). ``spot`` has no engine producer yet (reserved for S24 underwriting).
+# package). The reporting recorder enriches scheduled programs to ``spot``
+# only when their exact occurrence, channel and asset match a trafficked placement.
 ASRUN_SOURCE_KINDS: tuple[str, ...] = ("program", "filler", "live", "slate", "spot")
 
 
@@ -73,6 +74,7 @@ class AsRunRecorder(Protocol):
         source_label: str,
         actual_start: datetime,
         proof_event_id: str,
+        schedule_item_id: str | None = None,
     ) -> None:
         """Record that ``channel_id`` ACTUALLY went on air with this source at
         ``actual_start`` (the proof-event ``observed_at``). Closes the channel's

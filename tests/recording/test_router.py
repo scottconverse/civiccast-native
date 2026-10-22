@@ -386,6 +386,23 @@ class TestScheduleCrud:
         assert r.json()["name"] == "Renamed"
         assert r.json()["duration_seconds"] == 1800
 
+    def test_patch_full_editor_payload_preserves_nested_models(self):
+        client = _client()
+        payload = _schedule_payload(source_kind="hls", uri="http://127.0.0.1:8000/local.m3u8")
+        payload["enabled"] = False
+        created = client.post("/api/staff/recording/schedules", json=payload)
+        assert created.status_code == 201
+        updates = {
+            key: value for key, value in payload.items() if key not in ("schedule_id", "station_id")
+        }
+        updates["enabled"] = True
+        response = client.patch("/api/staff/recording/schedules/sch-1", json=updates)
+        assert response.status_code == 200
+        assert response.json()["enabled"] is True
+        assert response.json()["source"] == created.json()["source"]
+        assert response.json()["recurrence"] == created.json()["recurrence"]
+        assert client.get("/api/staff/recording/schedules/sch-1").json() == response.json()
+
     def test_patch_name_conflict_is_409(self):
         client = _client()
         client.post("/api/staff/recording/schedules", json=_schedule_payload())

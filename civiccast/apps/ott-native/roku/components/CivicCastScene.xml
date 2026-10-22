@@ -11,7 +11,7 @@
 -->
 <component name="CivicCastScene" extends="Scene">
   <interface>
-    <field id="launchArgs" type="assocarray" />
+    <field id="launchArgs" type="assocarray" alwaysNotify="true" onChange="onLaunchArgsChanged" />
   </interface>
 
   <script type="text/brightscript" uri="pkg:/components/CivicCastScene.brs" />

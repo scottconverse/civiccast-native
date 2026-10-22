@@ -683,6 +683,50 @@ class TestAuditLogApi:
 
 
 class TestReplaceSourceApi:
+    @pytest.mark.parametrize("replacement_filename", ["replacement.mp4", "original.mp4"])
+    def test_replacement_audit_identifies_primary_source_among_auxiliary_files(
+        self, factory, tmp_path, monkeypatch: pytest.MonkeyPatch, replacement_filename: str
+    ) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path))
+        asset_dir = tmp_path / "a1"
+        asset_dir.mkdir()
+        original = asset_dir / "original.mp4"
+        original.write_bytes(b"original recording")
+        thumbnail = asset_dir / "thumbnail.jpg"
+        thumbnail.write_bytes(b"thumbnail")
+        preview = asset_dir / "preview.mp4"
+        preview.write_bytes(b"preview recording")
+        _seed_asset(factory, asset_id="a1", file_path=str(original))
+        client = _client(factory, scopes=("publish", "support"))
+        # The primary source is not the final archive candidate. Directory
+        # enumeration order must not decide which file the audit identifies.
+        with (
+            patch(
+                "civiccast.schedule.media_lifecycle_router.run_ffprobe",
+                return_value=_VALID_FFPROBE_RESULT,
+            ),
+            patch(
+                "civiccast.schedule.media_lifecycle_router.Path.glob",
+                return_value=iter((original, thumbnail, preview)),
+            ),
+        ):
+            response = client.put(
+                "/api/staff/assets/a1/replace-source",
+                files={"file": (replacement_filename, b"new recording", "video/mp4")},
+            )
+        assert response.status_code == 200, response.text
+        archived_originals = list(asset_dir.glob("a1.replaced-*-original.mp4"))
+        assert len(archived_originals) == 1
+        archived_original = archived_originals[0]
+        assert archived_original.read_bytes() == b"original recording"
+        replacement_path = asset_dir / replacement_filename
+        assert replacement_path.read_bytes() == b"new recording"
+        entries = client.get("/api/staff/media-lifecycle/audit-log?asset_id=a1").json()
+        replacement = next(entry for entry in entries if entry["action"] == "source_replaced")
+        assert replacement["detail"] == (
+            f"Old file archived to {archived_original}; new file {replacement_path}."
+        )
+
     def test_replace_source_unknown_asset_404s(
         self,
         factory,

@@ -25,7 +25,7 @@ def _cfg(url: str) -> Config:
 
 def test_0089_is_linear_head() -> None:
     script = ScriptDirectory.from_config(_cfg("sqlite://"))
-    assert script.get_heads() == ["0092_notification_delivery_outcomes"]
+    assert script.get_heads() == ["0094_cg_live_video_zone"]
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 

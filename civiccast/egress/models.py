@@ -437,10 +437,9 @@ class EgressConfig(BaseModel):
     # CA-2 channel automation: "this channel runs 24/7" — the lifespan
     # automation driver re-issues a start after app/machine restarts.
     auto_start: bool = False
-    # The operator opt-in to permit CPU (software) encoding when no hardware
-    # encoder is present. Default False: without this flag, a channel with
-    # no available hardware encoder fails loud instead of silently falling
-    # back to software encoding.
+    # CPU fallback for an explicit hardware encoder request. Default False
+    # refuses unavailable explicit hardware instead of silently switching to
+    # CPU. Declarative h264 keeps automatic hardware-first/CPU selection.
     allow_software_fallback: bool = False
     # CA-3: what fills gaps between scheduled programs — the plain slate or
     # the rotating approved community bulletin board.

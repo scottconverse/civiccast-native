@@ -19,9 +19,10 @@ each line is stripped of blockquote markers, and the block is joined with
 single spaces before phrase matching, so a directive wrapped across source
 lines still trips.
 
-Historical statements remain legal: past-tense evidence ("the exact public
-rc15 installer passed ..."), possessives ("rc15's repairs"), withdrawal
-records ("rc13 is withdrawn"), and era labels ("rc15-era") do not match the
+The same control now applies to the active native beta line. Historical
+statements remain legal: past-tense evidence ("the exact public beta.15
+installer passed ..."), possessives ("beta.15's repairs"), withdrawal records
+("beta.13 is withdrawn"), and era labels ("beta.15-era") do not match the
 forbidden operative phrases below.
 """
 
@@ -31,43 +32,18 @@ import functools
 import re
 from pathlib import Path
 
-import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-CURRENT_VERSION = (
-    (REPO_ROOT / "civiccast" / "_version.py")
-    .read_text(encoding="utf-8")
-    .split('__version__ = "', 1)[1]
-    .split('"', 1)[0]
-)
-_RC_MATCH = re.search(r"-rc(\d+)$", CURRENT_VERSION)
-CURRENT_RC = int(_RC_MATCH.group(1)) if _RC_MATCH else None
-
-# 2026-08-31: the owner retired the WSL/mainline rc-numbered release line's
-# version machinery. civiccast/_version.py now carries the single native
-# version ("1.0.0-beta.1"), which is not rc-numbered, so CURRENT_RC is None
-# and evaluate_release_posture_consistency's own `if CURRENT_RC is None:
-# return violations` early-return applies -- there is no rc line left to
-# carry a stale prior-rc directive, so the guard is correctly a no-op. The
-# mechanism tests below prove the guard's phrase-matching logic against a
-# synthetic prior-rc CURRENT_RC; they cannot exercise that logic while the
-# live repo's CURRENT_RC is None, since the function short-circuits before
-# ever reading their fixtures. Skip them for that reason rather than letting
-# them fail on a premise (an rc-numbered current version) that no longer
-# holds; test_active_surfaces_have_no_stale_prior_release_directives and
-# test_prior_rc_number_does_not_match_inside_a_longer_number still run and
-# still pass (trivially, via the same early return, which is the correct
-# outcome now).
-_RC_LINE_RETIRED_REASON = (
-    "the WSL rc-numbered release line is retired (CURRENT_VERSION "
-    f"{CURRENT_VERSION!r} is not rc-numbered); evaluate_release_posture_"
-    "consistency's own CURRENT_RC-is-None early return makes this guard "
-    "a no-op by design, so its phrase-matching mechanism cannot be "
-    "exercised against synthetic fixtures until an rc-numbered line "
-    "exists again"
-)
-skip_if_rc_line_retired = pytest.mark.skipif(CURRENT_RC is None, reason=_RC_LINE_RETIRED_REASON)
+# Public directives follow the published release, even while the source version
+# advances to an owner-held next candidate. Use the authored release truth.
+CURRENT_TAG = yaml.safe_load(
+    (REPO_ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+)["current"]
+_BETA_MATCH = re.fullmatch(r"v1\.0\.0-beta\.(\d+)", CURRENT_TAG)
+assert _BETA_MATCH is not None, f"Update release posture guard for {CURRENT_TAG}"
+CURRENT_BETA = int(_BETA_MATCH.group(1))
 
 # Curated active release surfaces â€” the union of the front doors, the
 # tester path, and the adoption/public copy this repo already treats as
@@ -116,8 +92,8 @@ _QUOTE_PREFIX_RE = re.compile(r"^\s*(>\s?)+")
 
 
 def _forbidden_phrases_for_prior(n: int) -> tuple[str, ...]:
-    tag = f"v1.0.0-rc{n}"
-    short = f"rc{n}"
+    tag = f"v1.0.0-beta.{n}"
+    short = f"beta.{n}"
     return (
         f"`{tag}` is the current",
         f"{short} is the current",
@@ -150,12 +126,9 @@ def _forbidden_phrases_for_prior(n: int) -> tuple[str, ...]:
 
 @functools.cache
 def _phrase_re(phrase: str, n: int) -> re.Pattern[str]:
-    """Compile a phrase so "rc1" cannot match inside "rc17".
-
-    Without the lookahead, the rc1 phrase set matches the rc17 sentence
-    "testing is open with rc17" and reports a false violation.
-    """
-    pattern = re.escape(phrase).replace(f"rc{n}", f"rc{n}(?!\\d)")
+    """Compile a phrase so beta.1 cannot match inside beta.19."""
+    token = re.escape(f"beta.{n}")
+    pattern = re.escape(phrase).replace(token, f"{token}(?!\\d)")
     return re.compile(pattern)
 
 
@@ -193,9 +166,7 @@ def _block_text(lines: list[str], block: list[int]) -> str:
 
 def evaluate_release_posture_consistency(root: Path = REPO_ROOT) -> list[str]:
     violations: list[str] = []
-    if CURRENT_RC is None:
-        return violations
-    phrase_sets = {n: _forbidden_phrases_for_prior(n) for n in range(1, CURRENT_RC)}
+    phrase_sets = {n: _forbidden_phrases_for_prior(n) for n in range(1, CURRENT_BETA)}
     for relative in ACTIVE_SURFACES:
         path = root / relative
         if not path.exists():
@@ -216,8 +187,8 @@ def evaluate_release_posture_consistency(root: Path = REPO_ROOT) -> list[str]:
                     )
                     violations.append(
                         f"{relative}:{line_index + 1}: operative prior-release "
-                        f"directive (rc{n}) after the current version moved to "
-                        f"{CURRENT_VERSION}: {lines[line_index].strip()!r}"
+                        f"directive (beta.{n}) after the public release moved to "
+                        f"{CURRENT_TAG}: {lines[line_index].strip()!r}"
                     )
     return violations
 
@@ -229,26 +200,25 @@ def test_active_surfaces_have_no_stale_prior_release_directives() -> None:
     )
 
 
-@skip_if_rc_line_retired
-def test_guard_goes_red_on_the_exact_cc_rc17_005_shapes(tmp_path: Path) -> None:
+def test_guard_rejects_stale_native_beta_directives(tmp_path: Path) -> None:
     # Red-proof: every contradiction class the round-4 review cited must trip.
     samples = {
         "README.md": (
-            "> **Use only the public `v1.0.0-rc15` release.**\n"
-            "Begin a new installer rehearsal only with `v1.0.0-rc15`:\n"
+            "> **Use only the public `v1.0.0-beta.15` release.**\n"
+            "Begin a new installer rehearsal only with `v1.0.0-beta.15`:\n"
         ),
         "ARCHITECTURE.md": (
-            "**Current release posture:** `v1.0.0-rc15` is the public clean-Windows repair\nbeta.\n"
+            "**Current release posture:** `v1.0.0-beta.15` is the public clean-Windows repair\nbeta.\n"
         ),
-        "FAQ.md": ("`v1.0.0-rc15` is the current public Windows\nrepair beta.\n"),
-        "SUPPORT.md": ("`v1.0.0-rc15` is the current public Windows beta;\n"),
+        "FAQ.md": ("`v1.0.0-beta.15` is the current public Windows\nrepair beta.\n"),
+        "SUPPORT.md": ("`v1.0.0-beta.15` is the current public Windows beta;\n"),
         "docs/tester/SMARTSCREEN-WALKTHROUGH.md": (
-            "> `v1.0.0-rc16` is unpublished and not approved for SmartScreen walkthroughs\n"
+            "> `v1.0.0-beta.16` is unpublished and not approved for SmartScreen walkthroughs\n"
         ),
         "docs/tester/known-limitations.md": (
-            "> **Release state:** `v1.0.0-rc15` is the validated public Windows beta.\n"
-            "Use the approved rc15 replacement and verify that exact release's SHA-256\n"
-            "The repair release is `v1.0.0-rc15`; its exact public packaged installer\n"
+            "> **Release state:** `v1.0.0-beta.15` is the validated public Windows beta.\n"
+            "Use the approved beta.15 replacement and verify that exact release's SHA-256\n"
+            "The repair release is `v1.0.0-beta.15`; its exact public packaged installer\n"
         ),
     }
     for relative, text in samples.items():
@@ -262,16 +232,15 @@ def test_guard_goes_red_on_the_exact_cc_rc17_005_shapes(tmp_path: Path) -> None:
     assert tripped_files == set(samples), f"guard missed files: {set(samples) - tripped_files}"
 
 
-@skip_if_rc_line_retired
 def test_guard_goes_red_on_reflow_wrapped_directives(tmp_path: Path) -> None:
     # Round-5 falsification shapes: a normal line break inside the phrase
     # must not launder it. One wrapped sample per core directive family,
     # including a wrapped blockquote.
     samples = {
-        "README.md": ("`v1.0.0-rc15` is the\ncurrent public Windows repair beta.\n"),
-        "FAQ.md": ("Use only\n`v1.0.0-rc15` and its matching proof assets.\n"),
+        "README.md": ("`v1.0.0-beta.15` is the\ncurrent public Windows repair beta.\n"),
+        "FAQ.md": ("Use only\n`v1.0.0-beta.15` and its matching proof assets.\n"),
         "SUPPORT.md": (
-            "> `v1.0.0-rc16` is\n> unpublished and not approved for support requests.\n"
+            "> `v1.0.0-beta.16` is\n> unpublished and not approved for support requests.\n"
         ),
     }
     for relative, text in samples.items():
@@ -287,43 +256,34 @@ def test_guard_goes_red_on_reflow_wrapped_directives(tmp_path: Path) -> None:
     )
 
 
-def test_prior_rc_number_does_not_match_inside_a_longer_number(tmp_path: Path) -> None:
-    """rc1 must not match inside rc18.
-
-    Regression: the first cut of the "testing is open with rcN" phrase family
-    used plain substring matching, so the rc1 phrase matched the perfectly
-    correct sentence "Windows beta testing is open with rc17." and reported a
-    violation against the current release.
-
-    The fixture names the CURRENT release deliberately -- that is the whole
-    point of the case -- so it moves with each release bump.
-    """
+def test_prior_beta_number_does_not_match_inside_a_longer_number(tmp_path: Path) -> None:
+    """The beta.1 phrase must not match the current beta.19 invitation."""
     target = tmp_path / "docs" / "technical-ops-reference.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        "> **Windows beta testing is open with rc18.** `v1.0.0-rc13` is withdrawn.\n"
-        "Use the approved `v1.0.0-rc18` public beta.\n",
+        f"> **Windows beta testing is open with beta.{CURRENT_BETA}.** "
+        "`v1.0.0-beta.13` is withdrawn.\n"
+        f"Use the approved `{CURRENT_TAG}` public beta.\n",
         encoding="utf-8",
     )
 
     assert evaluate_release_posture_consistency(tmp_path) == []
 
 
-@skip_if_rc_line_retired
-def test_guard_goes_red_on_testing_is_open_with_a_prior_rc(tmp_path: Path) -> None:
+def test_guard_rejects_testing_is_open_with_a_prior_beta(tmp_path: Path) -> None:
     # The exact shape that hid in technical-ops-reference.md: it never used
     # the word "current", so the original phrase set walked straight past it.
     target = tmp_path / "docs" / "technical-ops-reference.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        "> **Windows beta testing is open with rc15.** Use the approved\n"
-        "> `v1.0.0-rc15` public beta and its matching verification artifacts.\n",
+        "> **Windows beta testing is open with beta.15.**\n"
+        "> Matching verification artifacts accompany that installer.\n",
         encoding="utf-8",
     )
 
     violations = evaluate_release_posture_consistency(tmp_path)
 
-    assert violations, "guard missed 'testing is open with rc15'"
+    assert violations, "guard missed 'testing is open with beta.15'"
     assert all("technical-ops-reference" in v for v in violations)
 
 
@@ -332,10 +292,10 @@ def test_guard_stays_green_on_historical_statements(tmp_path: Path) -> None:
     # must not trip â€” they are the legal way to keep history on a surface.
     target = tmp_path / "README.md"
     target.write_text(
-        "The exact public rc15 installer passed installation from a WSL-disabled\n"
-        "baseline and cold-reboot recovery. It carries rc15's clean-Windows\n"
-        "repairs and rc16's published UI/UX repairs. rc13 is withdrawn after a\n"
-        "genuine clean-host bootstrap failure; a known rc15-era limitation is\n"
+        "The exact public beta.15 installer passed installation from a WSL-disabled\n"
+        "baseline and cold-reboot recovery. It carries beta.15's clean-Windows\n"
+        "repairs and beta.16's published UI/UX repairs. beta.13 is withdrawn after a\n"
+        "genuine clean-host bootstrap failure; a known beta.15-era limitation is\n"
         "fixed in this line.\n",
         encoding="utf-8",
     )
@@ -349,12 +309,12 @@ def test_guard_does_not_join_across_blank_lines_or_list_items(tmp_path: Path) ->
     # into a false positive.
     target = tmp_path / "README.md"
     target.write_text(
-        "This paragraph mentions `v1.0.0-rc15` is the\n"
+        "This paragraph mentions `v1.0.0-beta.15` is the\n"
         "\n"
         "current section heading of an unrelated paragraph.\n"
         "\n"
         "- one list item ends with use only\n"
-        "- `v1.0.0-rc15` appears in the next item as history\n",
+        "- `v1.0.0-beta.15` appears in the next item as history\n",
         encoding="utf-8",
     )
 

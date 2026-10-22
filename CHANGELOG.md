@@ -2,6 +2,158 @@
 
 ## [Unreleased]
 
+## [1.0.0-beta.20] - 2026-10-21
+
+- Recovery station-state: replace permission handling; private-key protections unchanged.
+- Dependency pins: certifi2026.10.19/Pillow13/Vite8.3.5.
+- Relay stderr: bounded drain preserving UTF8, newlines, and performance threshold.
+- CG wrapping: font fit and cache refresh.
+- Reconcile chapter sources with generated Help.
+
+`v1.0.0-beta.20` consolidates the changes below.
+
+Beta20 caption limitation accepted by the owner: the resource-isolated installed
+observation measured approximately 8.8 seconds from one decoded-audio callback to
+its showing caption cue and showed previous-program captions over the following
+program picture. This documents accepted behavior, not a caption fix or universal
+latency bound. Sampled transcription includes substitutions; full-run input
+coverage and human-verified accuracy remain unverified.
+
+- Release an ended Live source immediately to the due program or configured
+  slate, including when the incoming feed remains connected through a schedule gap.
+- Normalize playlist timestamps before the persistent software H.264 encoder,
+  preserving its frame cadence across clip boundaries.
+- Allow the public player preview, including cached reloads, inside same-origin
+  Live Room while retaining
+  framing denial for operator pages and all cross-origin sites.
+- Keep repeated Start commands from relabeling slate as a program or clearing
+  its on-air proof, so programs committed during a gap can take air when due.
+- Return removed portal recordings to draft approval in Publish, retaining prior
+  delivery history and refreshing the dashboard after removal.
+- Preserve existing reviewed caption tracks when repackaging, retaining the
+  old playback package if the matching review cannot safely be attached.
+- Align published English and Spanish captions with the actual packaged trim,
+  clipping excluded ranges while preserving source review timestamps.
+- Map chapter-to-agenda synchronization onto the trimmed playback timeline,
+  excluding trimmed-out markers while preserving original source chapters.
+- Offer **Repackage for playback** for recorded and validated assets that already
+  have a package, so later trim and replacement-source edits can reach playback.
+- Connect Live Room start/end to durable channel takeover/handback commands,
+  recover the meeting after reload, and allow a new meeting after the prior one ends.
+- Prepare upcoming programs while a channel airs slate, so its first scheduled
+  program and short successor can reuse the existing conform cache at air time.
+- Preserve the timezone of a contributor's requested air date so an accepted
+  submission can be sent to the schedule without a timezone validation error.
+- Render saved manual primary-zone CG text in previews and channel output,
+  while retaining bulletin rotation when the primary zone has no manual text.
+
+- Show the selected channel's real outgoing HLS broadcast in Live Room, with
+  incoming-source readiness reported separately. Before takeover the preview
+  shows scheduled output.
+- Preserve schedule occurrence identity in actual as-run capture. Classify an
+  airing as an underwriting spot only when its occurrence, channel and creative
+  match a compiled placement, allowing populated affidavits from actual output.
+
+- Update the optional browser crawler's aiohttp lock to 3.14.4, with its required
+  yarl 1.25.1 dependency, for security advisories published October 19. These
+  dependencies are absent from the native application requirements lock.
+
+- Quote the CG ticker's horizontal-position expression so FFmpeg treats its
+  comma as part of the scrolling calculation. This corrects text rendering
+  failures that caused board previews to fall back to an image without text.
+
+- Let service permission setup handle Windows cache junctions inside an existing
+  station profile without following them or changing their targets' permissions.
+  Preserve normal inheritance for root-only grants and protected directory ACLs.
+  Grant permissions to loaded runtime files using ACL-only access so registration
+  does not fail with a sharing violation on its own interpreter or libraries.
+
+- Run service registration outside the install folder while its permission walk
+  is active, then restore the installer's output directory. Keep the registration
+  tool's captured output in the installation progress log for failure diagnosis.
+
+- Correct conflicting manual guidance for recorded captions, RTMP, account
+  recovery, channel operation, backups, network access and staff permissions.
+  Refresh reference inventories and align the rendered manual and Help with
+  current source, preserving historical release evidence.
+
+- Browse trusted stations' published programmes and monitor or request channel
+  starts/stops from **Other stations**, with separate remote credentials and
+  local/remote role enforcement. TownLight (formerly CivicSuite) integration is
+  owner-deferred to 2.0 and is not included.
+
+- Copy compatible H.264 video during cold preparation while retaining required
+  audio processing and accurate trims. Prioritize upcoming preparation work and
+  retry recoverable failures with bounded backoff.
+- Select available NVIDIA or Windows hardware for automatic H.264 output while
+  preserving CPU-only operation and explicit encoder choices.
+- Initialize the bundled GStreamer bindings before checking available encoders,
+  so installed channels can start and produce their web previews.
+- Report unexpected channel startup failures as errors with their cause instead
+  of leaving a non-running channel labelled as showing a slate.
+- Keep errors from a cancelled replacement's detached decoder elements from
+  terminating the programme that is still on air during channel reload.
+- Preserve scheduled-program retries on a fallback slate after rapid repeat
+  reloads by clearing the previous worker's obsolete restart state.
+- Approve CG feed items whose native IDs contain URL path separators while
+  preserving their exact IDs and existing write-role checks.
+- Send staff signing in without a return destination to a page their role can
+  use: caption review for records clerks, Assets for meeting operators, and
+  Schedule for publishing and admin roles.
+- Reject duplicate custom-field creation without overwriting saved definitions
+  or values, and direct operators to Edit.
+- Fit built-in Help contents and prose to narrow screens, while keeping wide
+  tables and code scrollable within their own blocks.
+- Save unattended backup passphrases under the installed Windows service
+  account without rewriting installer-owned folder permissions; show actionable
+  guidance if protected storage cannot be written.
+- Reload saved Control Room device timing and preserve existing profile options
+  when editing, instead of presenting zero timings.
+- Save recording schedule edits with their validated source and recurrence
+  settings, including dated one-shot schedules.
+- Identify the archived original recording in source-replacement audit records,
+  rather than an auxiliary thumbnail or preview.
+- Preserve the original recording when its replacement uses the same filename.
+- Save CG feed edits using the supported mutable fields; keep feed kind fixed
+  after registration instead of submitting an invalid update.
+- Clear stale queued/running asset-readiness labels when no active transcode
+  jobs remain, consistently with the lifecycle worker's readiness policy.
+- Remove expired emergency alerts from the active list even when automatic
+  feed polling is disabled, while retaining them in history.
+- Authenticate underwriting affidavit downloads and preserve their CSV, XML,
+  or PDF filename instead of downloading an authorization error.
+- Protect alert credentials and subscription secrets with private file ACLs
+  before writing plaintext; atomically migrate existing files with their
+  original bytes and fail closed when protection or replacement fails.
+- Build optional viewer-app downloads in writable per-job storage and include
+  the shared runtime files referenced by each selected app's entry point.
+- Explain the allowed listener-port range when network settings reject an
+  invalid port, instead of displaying the server's validation JSON.
+- Clarify asset archive verification status and direct operators to Publish
+  for the destinations required for each recording.
+- Require webhook endpoint ownership confirmation, random signing credentials
+  and public HTTPS destinations; protect delivery against redirects and DNS
+  rebinding. Older identifier-derived subscriptions require registration again.
+- Process Roku launch and subsequent deep links when the catalog is ready.
+- Reconcile architecture, capability and operations guidance; preserve executable
+  Windows examples when assembling the manual and built-in Help.
+
+- Permit the restricted Windows service account to connect to its worker control
+  pipe, and bound shutdown when a worker never connects.
+- Start the generated plain fallback slate directly instead of re-encoding
+  its hour-long fill before output can begin. Programme preparation is unchanged.
+- Apply the same generated-slate shortcut when returning from a programme,
+  avoiding prolonged black output while an already usable slate is reprocessed.
+  Custom fallback media, bulletins and trimmed programmes retain preparation.
+- Normalize selector input audio to interleaved PCM so short silence buffers
+  can bridge unequal audio/video endings without terminating the playback worker.
+- Respect scheduled start times when leaving slate; retain short-gap absorption
+  for explicit programme-boundary planning without starting and replaying future items.
+- Fix background transcoding under the restricted Windows service account:
+  generated files now default to the writable station data directory instead
+  of the protected application runtime. Explicit output paths are preserved.
+- Correct upgrade guidance and refresh source Help to match the installer flow.
+
 ## [1.0.0-beta.19] - 2026-10-15
 
 Beta 19 completes the remaining Sprint 5

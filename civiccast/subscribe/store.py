@@ -129,7 +129,9 @@ class PostgresSubscribeStore:
             session.execute(
                 text(
                     f"UPDATE {table}subscriptions SET status = :status, "  # nosec B608
-                    "confirmed_at = :confirmed_at, unsubscribed_at = :unsubscribed_at "
+                    "confirmed_at = :confirmed_at, unsubscribed_at = :unsubscribed_at, "
+                    "confirmation_token = :confirmation_token, unsubscribe_token = :unsubscribe_token, "
+                    "encrypted_webhook_secret = :encrypted_webhook_secret "
                     "WHERE subscription_id = :subscription_id"
                 ),
                 record.model_dump(mode="json"),

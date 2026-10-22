@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
+  downloadUnderwriterAffidavitExport,
   downloadReportsExport,
   fireControlRoomCue,
   getControlRoomReadiness,
@@ -161,6 +162,37 @@ describe('authenticated staff downloads', () => {
         }),
       }),
     )
+  })
+
+  it('authenticates affidavit exports and preserves the response filename and media type', async () => {
+    window.localStorage.setItem('civiccast.staffToken', 'staff-token')
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('aired_at_iso,channel_id\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition':
+            `attachment; filename="affidavit-2026-07-01-2026-07-31.csv"; filename*=UTF-8''affidavit-Acme%20Co-op-2026-07-01-2026-07-31.csv`,
+        },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const file = await downloadUnderwriterAffidavitExport({
+      underwriter: 'Acme Co-op',
+      from: '2026-07-01',
+      to: '2026-07-31',
+      format: 'csv',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/staff/underwriting/affidavits/export?underwriter=Acme+Co-op&from=2026-07-01&to=2026-07-31&format=csv',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer staff-token' }),
+      }),
+    )
+    expect(file.filename).toBe('affidavit-Acme Co-op-2026-07-01-2026-07-31.csv')
+    expect(file.blob.type).toBe('text/csv;charset=utf-8')
   })
 })
 

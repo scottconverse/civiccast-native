@@ -36,7 +36,7 @@ class SubscriptionSignupRequest(BaseModel):
 
 
 class SubscriptionWebhookRequest(BaseModel):
-    """Webhook subscription request with URL ownership represented by an opt-in link."""
+    """Webhook registration; ownership proof is delivered only to the HTTPS endpoint."""
 
     model_config = ConfigDict(extra="forbid")
 

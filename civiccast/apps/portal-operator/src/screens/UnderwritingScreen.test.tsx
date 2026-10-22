@@ -37,13 +37,13 @@ vi.mock('../api/client', () => ({
   deleteSpotFlight: vi.fn(),
   listSpotPlacements: vi.fn(),
   getUnderwriterAffidavit: vi.fn(),
-  affidavitExportUrl: vi.fn(),
+  downloadUnderwriterAffidavitExport: vi.fn(),
 }))
 
 import {
-  affidavitExportUrl,
   createUnderwritingSpot,
   deleteUnderwritingSpot,
+  downloadUnderwriterAffidavitExport,
   getStaffIdentity,
   getUnderwriterAffidavit,
   listSpotFlights,
@@ -53,6 +53,8 @@ import {
   patchSpotFlight,
 } from '../api/client'
 import { UnderwritingScreen } from './UnderwritingScreen'
+
+const downloadedFilenames: string[] = []
 
 function identity(roles: string[]): StaffIdentityResponse {
   return { operator_id: 'sam', operator_display_name: 'Sam', roles } as StaffIdentityResponse
@@ -140,6 +142,17 @@ function renderScreen() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  downloadedFilenames.length = 0
+  vi.stubGlobal(
+    'URL',
+    Object.assign(URL, {
+      createObjectURL: vi.fn(() => 'blob:affidavit-export'),
+      revokeObjectURL: vi.fn(),
+    }),
+  )
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    downloadedFilenames.push(this.download)
+  })
   vi.mocked(getStaffIdentity).mockResolvedValue(
     identity(['publish_operator', 'setup_admin', 'support_admin']),
   )
@@ -148,16 +161,14 @@ beforeEach(() => {
   vi.mocked(listScheduleBlocks).mockResolvedValue([daypart()])
   vi.mocked(listSpotPlacements).mockResolvedValue([placement()])
   vi.mocked(getUnderwriterAffidavit).mockResolvedValue(affidavit())
+  vi.mocked(downloadUnderwriterAffidavitExport).mockImplementation(async (params) => ({
+    blob: new Blob([params.format], {
+      type: params.format === 'csv' ? 'text/csv' : params.format === 'xml' ? 'application/xml' : 'application/pdf',
+    }),
+    filename: `affidavit-Acme-Co-op-2026-07-01-2026-07-31.${params.format}`,
+  }))
   vi.mocked(createUnderwritingSpot).mockResolvedValue(spot())
   vi.mocked(deleteUnderwritingSpot).mockResolvedValue(undefined)
-  vi.mocked(affidavitExportUrl).mockImplementation((p) => {
-    const sp = new URLSearchParams()
-    sp.set('underwriter', p.underwriter)
-    sp.set('from', p.from)
-    sp.set('to', p.to)
-    sp.set('format', p.format)
-    return `http://api/affidavit/export?${sp.toString()}`
-  })
 })
 
 describe('UnderwritingScreen — dayparts', () => {
@@ -344,7 +355,7 @@ describe('UnderwritingScreen — Spot tab', () => {
 })
 
 describe('UnderwritingScreen — Affidavits tab', () => {
-  it('builds the right download URL via affidavitExportUrl for CSV/XML/PDF', async () => {
+  it('downloads CSV/XML/PDF through the authenticated helper and saves response filenames', async () => {
     const { findByRole, findByLabelText } = renderScreen()
     fireEvent.click(await findByRole('tab', { name: 'Affidavits' }))
     fireEvent.change(await findByLabelText('Underwriter'), {
@@ -358,28 +369,37 @@ describe('UnderwritingScreen — Affidavits tab', () => {
     fireEvent.change(await findByLabelText('Through date'), {
       target: { value: '2026-07-31' },
     })
-    const csv = (await findByRole('link', {
-      name: 'Download affidavit CSV',
-    })) as HTMLAnchorElement
-    const xml = (await findByRole('link', {
-      name: 'Download affidavit XML',
-    })) as HTMLAnchorElement
-    const pdf = (await findByRole('link', {
-      name: 'Download affidavit PDF',
-    })) as HTMLAnchorElement
-    expect(csv.href).toContain('underwriter=Acme+Co-op')
-    expect(csv.href).toContain('from=2026-07-01')
-    expect(csv.href).toContain('to=2026-07-31')
-    expect(csv.href).toContain('format=csv')
-    expect(xml.href).toContain('format=xml')
-    expect(pdf.href).toContain('format=pdf')
-    // The builder helper must have been called with the right shape.
-    expect(vi.mocked(affidavitExportUrl)).toHaveBeenCalledWith({
+    const expected = {
       underwriter: 'Acme Co-op',
       from: '2026-07-01',
       to: '2026-07-31',
       format: 'csv',
-    })
+    } as const
+    for (const [index, format] of (['csv', 'xml', 'pdf'] as const).entries()) {
+      const button = (await findByRole('button', {
+        name: `Download affidavit ${format.toUpperCase()}`,
+      })) as HTMLButtonElement
+      fireEvent.click(button)
+      await waitFor(() =>
+        expect(downloadUnderwriterAffidavitExport).toHaveBeenCalledWith({
+          ...expected,
+          format,
+        }),
+      )
+      await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledTimes(index + 1))
+      await waitFor(() => expect(button.disabled).toBe(false))
+    }
+    expect(downloadUnderwriterAffidavitExport).toHaveBeenCalledTimes(3)
+    expect(URL.createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'text/csv' }))
+    expect(URL.createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'application/xml' }))
+    expect(URL.createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'application/pdf' }))
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(3)
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(3)
+    expect(downloadedFilenames).toEqual([
+      'affidavit-Acme-Co-op-2026-07-01-2026-07-31.csv',
+      'affidavit-Acme-Co-op-2026-07-01-2026-07-31.xml',
+      'affidavit-Acme-Co-op-2026-07-01-2026-07-31.pdf',
+    ])
   })
 
   it('UX-2: zero-airing empty state enumerates the three causes (misspelling, no flights, no airings)', async () => {
@@ -436,26 +456,23 @@ describe('UnderwritingScreen — Affidavits tab', () => {
     expect(msg?.textContent ?? '').toMatch(/From date that is on or before the Through date/i)
   })
 
-  it('UX-4: disabled download links are removed from the tab order and reject clicks', async () => {
+  it('UX-4: affidavit download buttons stay disabled until filters are valid', async () => {
     const { findByRole } = renderScreen()
     fireEvent.click(await findByRole('tab', { name: 'Affidavits' }))
-    // Underwriter is empty → links are disabled.
-    const csv = (await findByRole('link', {
+    // Underwriter is empty, so the buttons are disabled.
+    const csv = (await findByRole('button', {
       name: 'Download affidavit CSV',
-    })) as HTMLAnchorElement
-    const xml = (await findByRole('link', {
+    })) as HTMLButtonElement
+    const xml = (await findByRole('button', {
       name: 'Download affidavit XML',
-    })) as HTMLAnchorElement
-    const pdf = (await findByRole('link', {
+    })) as HTMLButtonElement
+    const pdf = (await findByRole('button', {
       name: 'Download affidavit PDF',
-    })) as HTMLAnchorElement
-    for (const link of [csv, xml, pdf]) {
-      expect(link.getAttribute('aria-disabled')).toBe('true')
-      expect(link.getAttribute('tabindex')).toBe('-1')
+    })) as HTMLButtonElement
+    for (const button of [csv, xml, pdf]) {
+      expect(button.disabled).toBe(true)
     }
-    // Clicking a disabled link must NOT trigger default navigation.
-    const evt = new MouseEvent('click', { bubbles: true, cancelable: true })
-    csv.dispatchEvent(evt)
-    expect(evt.defaultPrevented).toBe(true)
+    fireEvent.click(csv)
+    expect(downloadUnderwriterAffidavitExport).not.toHaveBeenCalled()
   })
 })

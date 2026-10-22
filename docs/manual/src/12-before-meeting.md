@@ -6,9 +6,9 @@ This chapter covers the work you do before a meeting starts and before a program
 
 You need to be signed in to the operator console ([Chapter 2](#ch-signing-in) shows how). The left-hand menu groups the screens in this chapter in two sections: **Run Meeting** (Schedule, Auto-schedule, Program Guide, Recording) and **Review Records** (Contributors, Agendas).
 
-What you can do on each screen depends on your role. The table shows who can look and who can change things. Your station administrator gives out roles ([Appendix: roles](#app-roles) lists all of them).
+What you can do on each screen depends on your role. The table shows who can load its data and who can change things. Sidebar visibility is separate: Schedule, Program Guide and Contributors appear for every signed-in person. Your station administrator gives out roles ([Appendix: roles](#app-roles) lists all of them).
 
-| Screen | Who can open it | Who can make changes |
+| Screen | Who can load its data | Who can make changes |
 | --- | --- | --- |
 | Schedule | Publish operator, setup admin, support admin | Publish operator, setup admin |
 | Program Guide | Any signed-in person | Meeting operator, support admin |
@@ -447,7 +447,7 @@ You should see the item in the **Agenda items** table. Use **Edit** on a row to 
 
 The **Bulk actions** section has four ways to fill an agenda without typing each item.
 
-- **Sync from chapters** makes an item for each eligible *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). The result shows the number of source chapters, new items and skipped items with their reasons. Existing occupied positions are preserved; repeated synchronization does not duplicate them. A zero-new-item result therefore explains whether chapters were absent or their positions were already occupied.
+- **Sync from chapters** makes an item for each eligible *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). The result shows the number of source chapters, new items and skipped items with their reasons. Source chapter times are converted to the trimmed playback timeline: a marker at source 32 seconds with a 2-second trim-in becomes a 30-second agenda link. Markers outside the selected trim are omitted. Existing occupied positions are preserved; repeated synchronization does not duplicate them. If you change a trim after synchronization, review and update the existing agenda times before publishing; re-sync does not overwrite your agenda edits. A zero-new-item result therefore explains whether chapters were absent or their positions were already occupied.
 - **Import from doc (paste plain-text agenda, one item per line)**: paste the agenda text and click **Import**. Each non-blank line becomes one draft item. A leading number such as "3.a" or "VII" becomes the **Number**. It reads "Imported N item(s)." and the help line says "Taken literally, one item per line — nothing to review." Lines whose position already has an item are skipped.
 - **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." A PDF that is a scan of paper, with no text in it, finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
 - **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and import it. See the Known issue below.

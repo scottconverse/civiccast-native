@@ -1,5 +1,11 @@
 # Sprint 3 — output completion
 
+> Historical implementation record. The checkpoints below describe work at that time.
+> These features subsequently shipped in Beta 16 and remain in Beta 19; use the
+> [current published package record](../releases/v1.0.0-beta.19-verification.md)
+> for that package identity and its results. Earlier unreleased/pending statements
+> are historical, not current outstanding tasks.
+
 Status: implementation and focused verification complete; CI and merge are tracked in PR #247 (https://github.com/scottconverse/civiccast-native/pull/247). No release or package claim.
 Branch: `codex/sprint3-output-completion`, based on Sprint 2 merge `eb1b5e5b9753d468dec0eeccea76e0ed31f51584`.
 

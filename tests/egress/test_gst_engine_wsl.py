@@ -2620,12 +2620,12 @@ def _pes_pts_backward_steps(path: Path, *, tolerance_seconds: float = 0.5) -> di
 
 
 @pytest.mark.parametrize(
-    ("video_seconds", "audio_seconds"),
-    [(2.4, 4.0), (4.0, 2.4)],
-    ids=("audio-tail-longer", "video-tail-longer"),
+    ("video_seconds", "audio_seconds", "planar_audio"),
+    [(2.4, 4.0, False), (4.0, 2.4, False), (4.0, 2.4, True)],
+    ids=("audio-tail-longer", "video-tail-longer", "planar-audio-tail"),
 )
 def test_deferred_rollover_switches_at_the_common_av_end_without_eos(
-    tmp_path: Path, video_seconds: float, audio_seconds: float
+    tmp_path: Path, video_seconds: float, audio_seconds: float, planar_audio: bool
 ) -> None:
     """B3 / hostile-review (a)(b)(c): a ``switch_at_end_of_current`` reload must hand
     over AT the outgoing leg's own end without ever producing a pipeline EOS, without a
@@ -2657,6 +2657,47 @@ def test_deferred_rollover_switches_at_the_common_av_end_without_eos(
         _finite_program_av_graph(video_seconds=video_seconds, audio_seconds=audio_seconds),
         out_ts,
     )
+    if planar_audio:
+        from civiccast.egress.gst.bridge import graph_from_config
+        from civiccast.egress.models import (
+            EgressConfig,
+            EgressSinkSpec,
+            EgressSourcePlan,
+            EgressSourceSegment,
+        )
+
+        # AAC decode supplies planar PCM. Feed that same layout through the
+        # production selector tail, then make audio end first so its synthetic
+        # no-meta silence must be accepted by the downstream audioconvert.
+        production = graph_from_config(
+            EgressConfig(
+                channel_id="c",
+                enabled=True,
+                slate_message="slate",
+                sinks=[EgressSinkSpec(kind="file", label="out", uri=out_ts.as_uri())],
+            ),
+            EgressSourcePlan(
+                channel_id="c",
+                segments=[
+                    EgressSourceSegment(
+                        label="program", path="/program.ts", duration_seconds=program_seconds
+                    )
+                ],
+            ),
+        )
+        program = graph.sources[0]
+        program = replace(
+            program,
+            audio=(
+                program.audio[0],
+                _E(
+                    "capsfilter",
+                    props={"caps": _ACAPS + ",format=F32LE,layout=non-interleaved"},
+                ),
+                *production.sources[0].audio_tail,
+            ),
+        )
+        graph = replace(graph, sources=(program, *graph.sources[1:]))
     reload_path = tmp_path / f"rollover{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
     reload_path.write_text(
         graphmod.graph_to_json(_segment_timed_reload_graph(18)), encoding="utf-8"
@@ -3008,16 +3049,24 @@ def _production_pressure_playlist_graph(
     station's ``udpsink`` so each isolated worker remains clock-paced and its TS
     can be checked without binding a station port.
     """
+    from civiccast.egress.gst.bridge import encode_chain_from_profile
+    from civiccast.egress.models import CanonicalProfile
+
     source_graph = _multi_segment_playlist_reload_graph(clip_paths, video_caps=_PRODUCTION_CAPS)
     return graphmod.PlayoutGraph(
         sources=source_graph.sources,
-        encoder=(
-            _E("videoconvert"),
-            _E("videoscale"),
-            _E("videorate"),
-            _E("capsfilter", props={"caps": _PRODUCTION_CAPS}),
-            _E("openh264enc", props={"bitrate": 6_000_000}),
-            _E("h264parse", props={"config-interval": -1}),
+        # Use the actual station encoder, including its four-slice/four-thread
+        # OpenH264 fixups and bounded GOP. The hand-written encoder silently
+        # used single-thread defaults and did not represent installed playout.
+        encoder=encode_chain_from_profile(
+            CanonicalProfile(
+                width=1280,
+                height=720,
+                fps=30,
+                video_codec="openh264",
+                video_bitrate_kbps=6000,
+                gop_size=60,
+            )
         ),
         audio_encoder=graphmod.audio_encode_specs(
             codec="avenc_aac", bitrate_kbps=192, sample_rate=48_000

@@ -23,6 +23,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from civiccast.db import Base
+from civiccast.reporting.asrun_recorder import StoreAsRunRecorder
 from civiccast.reporting.models import AsRunLogEntry
 from civiccast.reporting.store import ReportingStore
 from civiccast.underwriting.models import (
@@ -32,6 +33,8 @@ from civiccast.underwriting.models import (
 )
 from civiccast.underwriting.service import (
     AffidavitService,
+    CandidateBreakSlot,
+    TraffickingCompiler,
     UnderwriterAffidavit,
     export_affidavit_csv,
     export_affidavit_pdf,
@@ -137,6 +140,63 @@ def _asrun(
 # ---------------------------------------------------------------------------
 # AffidavitService.for_underwriter — join correctness
 # ---------------------------------------------------------------------------
+
+
+def test_actual_transition_produces_attributable_affidavit(
+    stores: tuple[UnderwritingStore, ReportingStore],
+) -> None:
+    underwriting, reporting = stores
+    start = _ts(2026, 6, 15, 12)
+    underwriting.upsert_spot(_spot("spot-acme", "Acme", "asset-acme-15"))
+    underwriting.upsert_flight(_flight("flight-acme", "spot-acme", ["gov-ch12"]))
+    compiled = TraffickingCompiler(underwriting, station_id=STATION).compile_for_date(
+        for_date=start.date(),
+        candidates=[
+            CandidateBreakSlot(
+                channel_id="gov-ch12", scheduled_at=start, schedule_item_id="schedule-acme"
+            )
+        ],
+    )
+    assert len(compiled.placements) == 1
+    recorder = StoreAsRunRecorder(reporting, station_id=STATION, underwriting_store=underwriting)
+    recorder.record_transition(
+        channel_id="gov-ch12",
+        source_kind="program",
+        asset_id="asset-acme-15",
+        source_label="Acme acknowledgment",
+        actual_start=start,
+        proof_event_id="proof-acme",
+        schedule_item_id="schedule-acme",
+    )
+    recorder.close_open(channel_id="gov-ch12", actual_end=start + timedelta(seconds=15))
+    affidavit = AffidavitService(underwriting, reporting).for_underwriter(
+        station_id=STATION, underwriter="Acme", period_start=start.date(), period_end=start.date()
+    )
+    assert affidavit.total_airings == 1
+    assert affidavit.total_seconds == 15
+    assert affidavit.aired[0].placement_id == "pl-schedule-acme"
+
+    # Same asset as an ordinary program, wrong channel, or a replaced creative
+    # must never create a billable airing for this placement.
+    for i, (channel, asset, occurrence) in enumerate(
+        [
+            ("gov-ch12", "asset-acme-15", "ordinary-program"),
+            ("education", "asset-acme-15", "schedule-acme"),
+            ("gov-ch12", "asset-other", "schedule-acme"),
+        ]
+    ):
+        at = start + timedelta(minutes=i + 1)
+        recorder.record_transition(
+            channel_id=channel,
+            source_kind="program",
+            asset_id=asset,
+            source_label="Program",
+            actual_start=at,
+            proof_event_id=f"proof-{i}",
+            schedule_item_id=occurrence,
+        )
+        recorder.close_open(channel_id=channel, actual_end=at + timedelta(seconds=15))
+    assert len(reporting.list_as_run(STATION, source_kind="spot")) == 1
 
 
 class TestAffidavitJoin:

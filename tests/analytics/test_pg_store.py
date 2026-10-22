@@ -158,7 +158,10 @@ class TestViewerCountAndTimeViewed:
 
     def test_time_viewed_sums_heartbeats_and_complete_tail(self, engine: Engine) -> None:
         store = PostgresAnalyticsStore(_factory_for(engine))
-        day = datetime.now(UTC) - timedelta(days=1)
+        # Anchor fixture at noon so all three events stay in the intended UTC day.
+        day = (datetime.now(UTC) - timedelta(days=1)).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
         store.record_event(
             _event(event_id="s1", event_name="playback_start", occurred_at=day, content_id="a1")
         )

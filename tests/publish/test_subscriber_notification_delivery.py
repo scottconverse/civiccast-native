@@ -224,12 +224,14 @@ def _confirmed_webhook(
     target_type: str = "channel",
     target_id: str = "government",
 ) -> SubscriptionPublicResponse:
+    endpoint = LocalWebhookClient()
     created = create_webhook_subscription(
         SubscriptionWebhookRequest(webhook_url=url, target_type=target_type, target_id=target_id),
         store=store,
+        webhook_client=endpoint,
     )
-    assert created.confirmation_token is not None
-    confirm_subscription(created.confirmation_token, store=store)
+    assert created.confirmation_token is None
+    confirm_subscription(endpoint.requests[0]["confirmation_token"], store=store)
     return created
 
 

@@ -37,8 +37,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
+import uuid
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
@@ -634,8 +636,10 @@ def test_channel_new_command_registers_before_dispatch_writes() -> None:
     assert json.loads(transport.sent[-1]) == {"v": 1, "id": command.id, "cmd": "swap 1"}
 
 
+@pytest.mark.parametrize("self_connect_succeeds", [True, False])
 def test_worker_pipe_close_unblocks_synchronous_accept_before_closing_handle(
     monkeypatch: pytest.MonkeyPatch,
+    self_connect_succeeds: bool,
 ) -> None:
     """A synchronous ConnectNamedPipe must leave before its handle is closed.
 
@@ -669,6 +673,8 @@ def test_worker_pipe_close_unblocks_synchronous_accept_before_closing_handle(
         @staticmethod
         def CreateFile(*_args: object) -> str:
             calls.append(("self-connect", "client"))
+            if not self_connect_succeeds:
+                raise FakePywinError("access denied")
             client_connected.set()
             return "client"
 
@@ -679,6 +685,7 @@ def test_worker_pipe_close_unblocks_synchronous_accept_before_closing_handle(
     monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=FakePywinError))
     monkeypatch.setitem(sys.modules, "win32pipe", FakeWin32Pipe)
     monkeypatch.setitem(sys.modules, "win32file", FakeWin32File)
+    monkeypatch.setattr("civiccast.egress.gst.strategy._WORKER_PIPE_CLOSE_TIMEOUT_S", 0.01)
 
     server = WindowsWorkerPipeServer("test-close")
     server._handle = "server"
@@ -688,6 +695,12 @@ def test_worker_pipe_close_unblocks_synchronous_accept_before_closing_handle(
         assert connect_entered.wait(timeout=1.0)
 
         server.close()
+        if not self_connect_succeeds:
+            assert accept_thread.is_alive()
+            assert ("disconnect", "server") not in calls
+            assert ("close", "server") not in calls
+            assert server._handle == "server"
+            return
         accept_thread.join(timeout=1.0)
 
         assert not accept_thread.is_alive()
@@ -698,6 +711,144 @@ def test_worker_pipe_close_unblocks_synchronous_accept_before_closing_handle(
         # leaves a background test thread behind.
         client_connected.set()
         accept_thread.join(timeout=1.0)
+
+
+@pytest.mark.parametrize(
+    "caller_sid,override",
+    [
+        ("S-1-5-80-12345", None),
+        ("S-1-5-18", None),
+        ("S-1-5-80-12345", "D:P(A;;GA;;;SY)"),
+    ],
+)
+def test_worker_pipe_default_acl_allows_only_system_and_process_identity(
+    monkeypatch: pytest.MonkeyPatch, caller_sid: str, override: str | None
+) -> None:
+    descriptors: list[str] = []
+    closed: list[bool] = []
+
+    class FakePywinError(Exception):
+        winerror = 0
+
+    token = SimpleNamespace(Close=lambda: closed.append(True))
+
+    def descriptor(sddl: str, _revision: int) -> str:
+        descriptors.append(sddl)
+        return sddl
+
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=FakePywinError))
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(GetCurrentProcess=lambda: 1))
+    monkeypatch.setitem(
+        sys.modules,
+        "win32security",
+        SimpleNamespace(
+            SDDL_REVISION_1=1,
+            TOKEN_QUERY=8,
+            TokenUser=1,
+            OpenProcessToken=lambda *_args: token,
+            GetTokenInformation=lambda *_args: (caller_sid, 0),
+            ConvertSidToStringSid=lambda sid: sid,
+            ConvertStringSecurityDescriptorToSecurityDescriptor=descriptor,
+            SECURITY_ATTRIBUTES=SimpleNamespace,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32pipe",
+        SimpleNamespace(
+            PIPE_ACCESS_DUPLEX=1,
+            FILE_FLAG_FIRST_PIPE_INSTANCE=2,
+            PIPE_TYPE_MESSAGE=4,
+            PIPE_READMODE_MESSAGE=8,
+            PIPE_WAIT=0,
+            CreateNamedPipe=lambda *_args: "server",
+        ),
+    )
+
+    server = (
+        WindowsWorkerPipeServer("test-acl")
+        if override is None
+        else WindowsWorkerPipeServer("test-acl", security_descriptor_sddl=override)
+    )
+    server.create()
+
+    expected = "D:P(A;;GA;;;SY)"
+    if caller_sid != "S-1-5-18":
+        expected += f"(A;;GA;;;{caller_sid})"
+    assert descriptors == [override if override is not None else expected]
+    assert closed == ([] if override is not None else [True])
+
+
+@pytest.mark.windows_only
+@pytest.mark.skipif(os.name != "nt", reason="Requires real Win32 named pipes")
+def test_worker_pipe_default_acl_roundtrips_for_current_windows_identity() -> None:
+    import pywintypes
+    import win32api
+    import win32file
+    import win32security
+
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32security.TOKEN_QUERY)
+    try:
+        sid = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+        caller_sid = win32security.ConvertSidToStringSid(sid)
+    finally:
+        token.Close()
+    if caller_sid == "S-1-5-18":
+        pytest.skip("The regression requires a non-SYSTEM caller")
+
+    legacy = WindowsWorkerPipeServer(
+        f"test-denied-{uuid.uuid4().hex}", security_descriptor_sddl="D:P(A;;GA;;;SY)"
+    )
+    legacy.create()
+    try:
+        with pytest.raises(pywintypes.error) as denied:
+            win32file.CreateFile(
+                legacy.pipe_name,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0,
+                None,
+                win32file.OPEN_EXISTING,
+                0,
+                None,
+            )
+        assert denied.value.winerror == 5
+    finally:
+        # No accept was started on this negative-control pipe.
+        legacy.close()
+
+    server = WindowsWorkerPipeServer(f"test-identity-{uuid.uuid4().hex}")
+    client = None
+    server.create()
+    try:
+        # A client can connect before ConnectNamedPipe; accept handles PIPE_CONNECTED.
+        client = win32file.CreateFile(
+            server.pipe_name,
+            win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+            0,
+            None,
+            win32file.OPEN_EXISTING,
+            0,
+            None,
+        )
+        server.accept()
+        win32file.WriteFile(client, b"worker hello\n")
+        assert server.read_line() == "worker hello"
+        assert server.write_line("strategy ack") is True
+        assert win32file.ReadFile(client, WORKER_PIPE_FRAME_CAP)[1] == b"strategy ack\n"
+        descriptor = win32security.GetSecurityInfo(
+            server._handle,
+            win32security.SE_KERNEL_OBJECT,
+            win32security.DACL_SECURITY_INFORMATION,
+        )
+        dacl = descriptor.GetSecurityDescriptorDacl()
+        assert {
+            win32security.ConvertSidToStringSid(dacl.GetAce(index)[2])
+            for index in range(dacl.GetAceCount())
+        } == {"S-1-5-18", caller_sid}
+    finally:
+        if client is not None:
+            win32file.CloseHandle(client)
+        server.close()
 
 
 def test_pipe_channel_close_waits_for_inflight_ack_reader() -> None:

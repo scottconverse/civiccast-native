@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.19
+current: v1.0.0-beta.20
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,13 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.19
+  - tag: v1.0.0-beta.20
     status: current
+    notes: >-
+      Publication snapshot prepared on the release branch; not a public-delivery receipt. Signed artifact source ea8fb79877c5d6f821fbbccbe9dc66ce3f46f3c8, build 39687830626. Exact-package installed recovery/login, CG and preservation verified; unaffected acceptance retains its original provenance. See v1.0.0-beta.20-verification.md for actual CI and delivery status.
+  - tag: v1.0.0-beta.19
+    status: superseded
+    superseded_by: v1.0.0-beta.20
     notes: >-
       Published October 15, 2026; signed artifact source 7d61cbede3123a65b4a0d6d4b413ae99edbc3f04, build 38797808863 attempt 2, setup SHA-256 62cd8d9b43c8ce823e90b5aa0e2f7b1fedb233353dd96c843063cd328f83f17e, merge/tag target b5204750bd96986dcde1adadffc0fe4b4e81f695. All 26 public assets matched prepared SHA-256 digests and byte sizes; public downloader and PDF downloads matched. Exact-package install, upgrade, uninstall and soak are unverified; see the Beta 19 verification record.
   - tag: v1.0.0-beta.18

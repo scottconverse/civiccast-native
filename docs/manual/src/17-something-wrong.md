@@ -1,12 +1,12 @@
 # When something looks wrong {#ch-something-wrong}
 
-This chapter helps you when a screen shows a red or yellow warning, an alert appears, or you are not sure the station is working. It covers the **Readiness** screen, **Alerts**, **Emergency Alerts** and **Federation**, then gives you a list of what to do and what not to do, a way to describe a problem to your IT person, and where to report a beta problem. Most staff roles can open these screens (the Alerts list and Emergency Alerts have narrower limits, described below). Fixing most problems is the IT person's job.
+This chapter helps you when a screen shows a red or yellow warning, an alert appears, or you are not sure the station is working. It covers the **Readiness** screen, **Alerts**, **Emergency Alerts** and **Federation**, then gives you a list of what to do and what not to do, a way to describe a problem to your IT person, and where to report a beta problem. Every operator role can read the runtime safe-to-air health indicator. The Alerts event list, its rule and destination editors, and Emergency Alerts have narrower permissions, described below. Fixing most problems is the IT person's job.
 
 ## Before you start
 
 The four screens live in the left sidebar under **System Health**: **Readiness**, **Alerts**, **Emergency Alerts** and **Federation**. Most of them open for any role. Individual buttons are limited by role, and a button you cannot use shows a grey note that names the role needed.
 
-> **Note:** In a normal station, everyone signs in with the first administrator account made at First Setup, and that account carries all five roles. You will usually see every button.
+> **Note:** The first administrator account carries all five roles. Staff members use their own accounts with assigned roles, so they may see fewer controls. A Setup admin manages accounts and roles in **Staff accounts**.
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
@@ -148,7 +148,7 @@ The alert titles you may see are:
 - Automatic self-check did not pass
 - Live caption worker failed or stalled
 
-Some alerts show a plain code with the dashes turned into spaces, for example "eas source unavailable", "asrun outbox degraded" or "caption tier degraded". "eas source unavailable" means an emergency-alert feed could not be reached. "asrun outbox degraded" concerns the on-air log that Reports reads.
+Some alerts show a plain code with the dashes turned into spaces, for example "eas source unavailable", "asrun outbox degraded" or "caption tier degraded". "eas source unavailable" means an emergency-alert feed could not be reached; its rule card is titled **EAS source unavailable**. "asrun outbox degraded" concerns the on-air log that Reports reads.
 
 ### Rules and destinations
 
@@ -172,15 +172,15 @@ The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours en
 > - When an alert fires and its rule has no live destination, CivicCast writes a "suppressed" delivery note that reads "No enabled alert channel is configured for condition ...". No screen shows that note.
 > - The alert itself does still appear on the **Alerts** screen and in the red and yellow counts on **Readiness**.
 > - There is no **Send test alert** button, so you cannot check a destination by pressing a button.
-> - Some kinds of alert still have no rule, including "Automatic self-check did not pass", "asrun outbox degraded" and "caption tier degraded". They show on the **Alerts** screen as warnings but cannot be routed from **Alert rules**. **Live caption worker failed or stalled** and **eas source unavailable** now have warning rules; destinations still need to be attached by an administrator before those alerts can be delivered.
+> - Some kinds of alert still have no rule, including "Automatic self-check did not pass", "asrun outbox degraded" and "caption tier degraded". They show on the **Alerts** screen as warnings but cannot be routed from **Alert rules**. **Live caption worker failed or stalled** and **EAS source unavailable** have warning rules; destinations still need to be attached by an administrator before those alerts can be delivered.
 >
 > Until a Setup admin assigns at least one enabled destination to each rule you rely on, those rules cannot notify anyone. Check **Readiness** and **Alerts** before every meeting and at the start of every shift.
 
 > **For IT staff:** A rule takes `channel_ids` (the ids of destinations) through `PUT /api/staff/alert-rules/{rule_id}`, with the Setup admin role. The 14 rules that exist come with ids like `default:off-air`. See [Chapter 14](#ch-troubleshooting) and [Chapter 15](#ch-integrations).
 
-> **Role permissions (beta.12):** Active alerts are visible to every operator role. Setup admins and Support admins can view alert rules and destinations, but only Setup admins can change them. Publish operators and Records clerks can read active alerts but do not see the rule and destination editors.
+> **Role permissions:** The Alerts event list and acknowledgement actions require Setup admin, Support admin or Meeting operator. Setup admins and Support admins can view alert rules and destinations, but only Setup admins can change them. Publish operators and Records clerks can read the runtime safe-to-air health indicator, but cannot load the Alerts event list or its rule and destination editors.
 
-## Understand emergency alerts (Emergency Alerts)
+## Understand emergency alerts (Emergency Alerts) {#understand-emergency-alerts}
 
 The **Emergency Alerts** screen shows public-safety alerts the station has pulled in from outside feeds, and lets an operator put one on a channel. You can open it with the Setup admin, Support admin or Meeting operator role.
 
@@ -328,9 +328,9 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 CivicCast is a beta. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads and use the verification record that matches the installed package. Support is community-driven, with no contract and no guaranteed response time. Problems that stop broadcasting or installation, lose data or expose a secret are handled first.
 
-1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
+1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens this **Report a beta issue** section in the Manual.
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
-3. If you do not have an account, ask your IT lead or anyone on staff who has one to post your description. If nobody has one, the same Manual section tells you to email the file and a short description to the project maintainer at the address in the project's security policy: <https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md>.
+3. If you do not have an account, ask your IT lead or anyone on staff who has one to post your description. Use the private contact in the project's security policy for security reports: <https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md>.
 
 In every report, include:
 
@@ -347,7 +347,7 @@ If the problem is with installing, also include the installer's file name and wh
 
 > **Warning:** If you think you have found a *security* problem, do **not** open a public issue. Use the private contact in the security policy linked above.
 
-> **Known issue (beta.11):** The Manual section that **Report a beta issue** opens tells people to use "System Health" and the **Create support bundle** button. The screen is called **Readiness**, and the button works only for the Support admin role.
+> **Support bundles:** Open **Readiness** to create a support bundle. **Create support bundle** requires the Support admin role. Keep the bundle private and share it only through an agreed support channel.
 
 ## If it did not work
 
@@ -356,14 +356,14 @@ If the problem is with installing, also include the installer's file name and wh
 | `Checking station readiness...` that never ends, or `Could not load System Health.` | Readiness | The page could not reach the station. Check you are signed in, then tell your IT person |
 | `The live on-air signal could not load.` | Readiness | The live banner could not load. Reload; if it stays, tell IT |
 | `Checking broadcast readiness requires the meeting operator role. Health checks remain visible.` | Readiness | You can read the checks but not run the test. Ask your station admin |
-| `Alerts could not load.` or `This action requires one of these CivicCast roles: ...` | Alerts | Your role cannot read alerts. Ask your station admin |
+| `Alerts could not load.` or `This action requires one of these CivicCast roles: ...` | Alerts | The event list requires Setup admin, Support admin or Meeting operator. Ask an operator with one of those roles to check it. If your account has the required role, check your sign-in and retry; tell the station admin if it still fails |
 | `Could not save the rule.` | Alerts | Your role cannot change rules. Only the Setup admin can |
 | `Use 24-hour HH:MM, e.g. 22:00 (or leave blank).` | Alerts, destination form | Type quiet hours as hours and minutes, such as 22:00, in UTC, or leave blank |
 | `Durable storage is not ready yet.` | Alerts and other screens | The station's database is not ready. Tell your IT person |
 | `The Emergency Alerts console requires the setup admin, support admin, or meeting operator role. Ask your station admin for access.` | Emergency Alerts | Your role cannot open this screen |
 | `Could not display the alert.` | Emergency Alerts | The server refused. The box usually shows the server's own reason instead of this sentence. For a full-screen takeover, tick **Confirm full-screen takeover** first |
 | `Could not load federation status.` | Federation | Click **Retry**. If it fails again, tell IT |
-| `Could not verify your staff identity (...)` | Emergency Alerts | Sign in again from First Setup |
+| `Could not verify your staff identity (...)` | Emergency Alerts | Sign in again at `/login` with your staff account; the first administrator uses `/setup` on the station computer |
 
 ## Related
 

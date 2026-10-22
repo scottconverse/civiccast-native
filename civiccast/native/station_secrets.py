@@ -58,8 +58,21 @@ def write_protected_secret(path: Path, value: bytes) -> None:
     from civiccast.certs.authority import _restrict_windows_private_key_acl
     from civiccast.native.service_identity import restrict_data_directory
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    restrict_data_directory(path.parent)
+    try:
+        path.parent.mkdir(parents=True)
+    except FileExistsError:
+        if not path.parent.is_dir():
+            raise
+        # The installer owns the existing credentials directory. The station
+        # service has Modify rights there, deliberately without WRITE_DAC.
+        # Each secret file is still restricted below before atomic replacement.
+    else:
+        try:
+            restrict_data_directory(path.parent)
+        except Exception:
+            # Leave no unprotected directory that a retry could reuse.
+            path.parent.rmdir()
+            raise
     encrypted = _protect(value)
     fd, name = tempfile.mkstemp(dir=path.parent, prefix=".vault-", suffix=".tmp")
     temporary = Path(name)

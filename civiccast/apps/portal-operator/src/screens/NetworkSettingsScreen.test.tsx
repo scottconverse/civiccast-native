@@ -23,7 +23,7 @@ vi.mock('../api/client', () => ({
   saveNetworkSettings: vi.fn(),
 }))
 
-import { getNetworkSettings, getStaffIdentity, saveNetworkSettings } from '../api/client'
+import { ApiError, getNetworkSettings, getStaffIdentity, saveNetworkSettings } from '../api/client'
 import { NetworkSettingsScreen } from './NetworkSettingsScreen'
 
 const loopbackSettings: NetworkSettings = {
@@ -50,6 +50,24 @@ function identity(roles: string[]): StaffIdentityResponse {
 }
 
 describe('NetworkSettingsScreen', () => {
+  it('explains rejected listener ports without exposing the validation payload', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(getNetworkSettings).mockResolvedValue(response(loopbackSettings))
+    vi.mocked(saveNetworkSettings).mockRejectedValue(new ApiError('Request failed', 422,
+      '[{"type":"greater_than_equal","loc":["body","upstream_port"],"msg":"Input should be greater than or equal to 1024","input":80,"ctx":{"ge":1024}}]',
+    ))
+
+    renderScreen()
+    await screen.findByText(/available on this computer only/i)
+    fireEvent.change(screen.getByLabelText('Listener port'), { target: { value: '80' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save network settings' }))
+
+    const error = await screen.findByRole('alert')
+    expect(error.textContent).toBe('Could not save network settings. Listener port must be a whole number between 1024 and 65535.')
+    expect(vi.mocked(saveNetworkSettings).mock.calls[0]?.[0]).toEqual({ ...loopbackSettings, upstream_port: 80 })
+    expect(screen.queryByText(/restart the civiccast service/i)).toBeNull()
+  })
+
   it('keeps the default loopback state clear and setup-admin only can edit', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
     vi.mocked(getNetworkSettings).mockResolvedValue(response(loopbackSettings))

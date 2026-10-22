@@ -49,8 +49,10 @@ import civiccast.schedule.models  # noqa: F401
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
 from civiccast.egress.models import EgressConfig, EgressProofEvent, EgressSinkSpec, EgressStateRow
-from civiccast.egress.router import get_egress_store
-from civiccast.egress.store import InMemoryEgressStore
+from civiccast.egress.router import get_egress_store, get_takeover_service
+from civiccast.egress.store import InMemoryEgressStore, PostgresEgressStore
+from civiccast.egress.takeover_service import TakeoverService
+from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
 from civiccast.live.finalization_worker import LiveFinalizationWorker
 from civiccast.live.models import LiveFinalizationJob, LiveSessionCreate
 from civiccast.live.preflight import (
@@ -62,6 +64,7 @@ from civiccast.live.preflight import (
     PreflightEvaluator,
 )
 from civiccast.live.readiness_service import LiveSourceReadinessService
+from civiccast.live.relay import build_ingest_plan
 from civiccast.live.router import (
     get_live_finalization_worker,
     get_live_relay_config_store,
@@ -176,6 +179,28 @@ def client(session_factory) -> Iterator[TestClient]:  # type: ignore[no-untyped-
         ),
     )
 
+    # Persist the same real probe observations the production preflight uses.
+    def source_probe(source):
+        _, observation, _ = readiness_service.probe(source.live_source_id)
+        return observation.ok, observation.detail
+
+    preflight_evaluator = PreflightEvaluator(session_factory, source_probe=source_probe)
+    egress_store = PostgresEgressStore(session_factory)
+    for cid in ("gov-ch12", "gov", "schools"):
+        egress_store.upsert_config(
+            EgressConfig(
+                channel_id=cid,
+                enabled=True,
+                slate_message="Stand by",
+                sinks=[EgressSinkSpec(kind="file", label="Test", uri=f"{cid}.ts")],
+            )
+        )
+    takeover_service = TakeoverService(
+        PostgresTakeoverAuditStore(session_factory),
+        egress_store,
+        lambda cid: build_ingest_plan(cid, [], live_sources=live_source_store.list(channel_id=cid)),
+    )
+    app.dependency_overrides[get_takeover_service] = lambda: takeover_service
     app.dependency_overrides[get_live_source_readiness_service] = lambda: readiness_service
     app.dependency_overrides[get_live_session_store] = lambda: live_session_store
     app.dependency_overrides[get_live_source_store] = lambda: live_source_store
@@ -365,7 +390,7 @@ class TestPublicCurrentLive:
         }
 
     def test_returns_newest_on_air_session_with_optional_manifest_url(
-        self, client: TestClient
+        self, client: TestClient, session_factory
     ) -> None:
         _seed_source_and_target(client)
         _seed_session(client, live_session_id="council-older", title="Older meeting")
@@ -375,13 +400,9 @@ class TestPublicCurrentLive:
                 client.post(f"/api/staff/live/sessions/{session_id}/start-preflight").status_code
                 == 200
             )
-            assert (
-                client.post(
-                    f"/api/staff/live/sessions/{session_id}/go-on-air",
-                    json=_all_pass_inputs(session_id),
-                ).status_code
-                == 200
-            )
+            # Historical duplicate sessions can exist; new starts now enforce
+            # a single channel takeover. Seed the legacy read scenario directly.
+            LiveSessionStore(session_factory).go_on_air(session_id)
 
         r = client.get(
             "/api/public/live/current",
@@ -1047,6 +1068,93 @@ class TestGoOnAir:
         body = r.json()
         assert body["state"] == "on_air"
         assert body["started_at"] is not None
+
+    def test_start_and_end_dispatch_the_selected_source_atomically(
+        self, client: TestClient, session_factory
+    ) -> None:
+        from sqlalchemy import select
+
+        from civiccast.egress.models import EgressCommandDb, TakeoverAuditRecordDb
+
+        sid = _seed_session(client)
+        _seed_source_and_target(client)
+        assert (
+            client.post(
+                "/api/staff/live/sources", json=_source_payload("camera-selected")
+            ).status_code
+            == 201
+        )
+        client.post(f"/api/staff/live/sessions/{sid}/start-preflight")
+        response = client.post(
+            f"/api/staff/live/sessions/{sid}/go-on-air",
+            json={**_all_pass_inputs(sid), "live_source_id": "camera-selected"},
+        )
+        assert response.status_code == 200
+        with session_factory() as db:
+            commands = db.execute(select(EgressCommandDb)).scalars().all()
+            assert [command.action for command in commands] == ["takeover"]
+            audit = db.execute(select(TakeoverAuditRecordDb)).scalar_one()
+            assert audit.source_ref == "camera-selected"
+            assert audit.returned_at is None
+        response = client.post(f"/api/staff/live/sessions/{sid}/end-broadcast")
+        assert response.status_code == 200
+        with session_factory() as db:
+            commands = (
+                db.execute(select(EgressCommandDb).order_by(EgressCommandDb.issued_at))
+                .scalars()
+                .all()
+            )
+            assert [command.action for command in commands] == ["takeover", "handback"]
+            assert db.execute(select(TakeoverAuditRecordDb)).scalar_one().returned_at is not None
+        # Repeated clicks cannot enqueue a second cut or handback.
+        assert client.post(f"/api/staff/live/sessions/{sid}/end-broadcast").status_code == 409
+        with session_factory() as db:
+            assert len(db.execute(select(EgressCommandDb)).scalars().all()) == 2
+
+    @pytest.mark.parametrize("action", ["takeover", "handback"])
+    def test_dispatch_failure_rolls_back_session_and_audit(
+        self, client: TestClient, session_factory, action: str
+    ) -> None:
+        from sqlalchemy import event, select
+
+        from civiccast.egress.models import EgressCommandDb, TakeoverAuditRecordDb
+
+        sid = _seed_session(client)
+        _seed_source_and_target(client)
+        client.post(f"/api/staff/live/sessions/{sid}/start-preflight")
+        if action == "handback":
+            assert (
+                client.post(
+                    f"/api/staff/live/sessions/{sid}/go-on-air", json=_all_pass_inputs(sid)
+                ).status_code
+                == 200
+            )
+
+        def fail_dispatch(_mapper, _connection, row):
+            if row.action == action:
+                raise RuntimeError("command write failed")
+
+        event.listen(EgressCommandDb, "before_insert", fail_dispatch)
+        try:
+            with pytest.raises(RuntimeError, match="command write failed"):
+                if action == "takeover":
+                    client.post(
+                        f"/api/staff/live/sessions/{sid}/go-on-air", json=_all_pass_inputs(sid)
+                    )
+                else:
+                    client.post(f"/api/staff/live/sessions/{sid}/end-broadcast")
+        finally:
+            event.remove(EgressCommandDb, "before_insert", fail_dispatch)
+        current = client.get(f"/api/staff/live/sessions/{sid}").json()
+        assert current["state"] == ("preflight" if action == "takeover" else "on_air")
+        with session_factory() as db:
+            audits = db.execute(select(TakeoverAuditRecordDb)).scalars().all()
+            commands = db.execute(select(EgressCommandDb)).scalars().all()
+            if action == "takeover":
+                assert audits == [] and commands == []
+            else:
+                assert len(audits) == 1 and audits[0].returned_at is None
+                assert [row.action for row in commands] == ["takeover"]
 
     def test_404_when_session_missing(self, client: TestClient) -> None:
         r = client.post(

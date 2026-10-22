@@ -309,4 +309,35 @@ test.describe('operator portal accessibility (mobile)', () => {
     await page.keyboard.press('Space')
     await expect(page.getByLabel('Hide System Health navigation')).toBeFocused()
   })
+
+  test('route-change focus does not steal focus from an open mobile drawer after a lazy route resolves', async ({ page }) => {
+    let releaseLiveChunk!: () => void
+    const liveChunkGate = new Promise<void>((resolve) => {
+      releaseLiveChunk = resolve
+    })
+    await page.route('**/*LiveRoomScreen*.js', async (route) => {
+      await liveChunkGate
+      await route.continue()
+    })
+
+    const liveChunkRequest = page.waitForRequest('**/*LiveRoomScreen*.js')
+    try {
+      await page.goto('/')
+      await expect(page.getByRole('heading', { name: 'First setup' })).toBeVisible()
+
+      await page.getByRole('button', { name: 'Open navigation' }).click()
+      await page.getByRole('button', { name: 'Live', exact: true }).click()
+      await liveChunkRequest
+
+      await page.getByRole('button', { name: 'Open navigation' }).click()
+      const help = page.getByLabel('Show Help navigation')
+      await expect(help).toBeFocused()
+
+      releaseLiveChunk()
+      await expect(page.getByRole('main').getByText('Could not load live room.', { exact: true })).toBeVisible()
+      await expect(help).toBeFocused()
+    } finally {
+      releaseLiveChunk()
+    }
+  })
 })

@@ -271,6 +271,50 @@ class _FailingExecutor:
 
 
 class TestTranscodeDispatch:
+    @pytest.mark.parametrize(
+        ("supervised", "override"), [(True, False), (True, True), (False, False)]
+    )
+    def test_output_root_respects_installed_service_layout(
+        self,
+        engine: Engine,
+        session_factory,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        supervised: bool,
+        override: bool,
+    ) -> None:
+        runtime = tmp_path / "Program Files" / "CivicCast (Native)" / "runtime"
+        runtime.mkdir(parents=True)
+        program_data = tmp_path / "ProgramData"
+        monkeypatch.setenv("PROGRAMDATA", str(program_data))
+        monkeypatch.setenv("CIVICCAST_SUPERVISED", "1" if supervised else "0")
+        monkeypatch.delenv("CIVICCAST_TRANSCODE_OUTPUT_ROOT", raising=False)
+        if override:
+            output_root = tmp_path / "custom-transcodes"
+            monkeypatch.setenv("CIVICCAST_TRANSCODE_OUTPUT_ROOT", str(output_root))
+        elif supervised:
+            output_root = program_data / "CivicCast" / "data" / "transcodes"
+        else:
+            output_root = runtime / "civiccast-data" / "transcodes"
+        media_file = tmp_path / "meeting.mp4"
+        media_file.write_bytes(b"\x00")
+        _seed_asset(engine, file_path=str(media_file))
+        # Model the installed cwd without changing the process cwd, which mutmut
+        # uses to resolve its relative source paths while instrumenting calls.
+        monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: runtime))
+        worker = MediaLifecycleWorker(
+            session_factory,
+            settings=MediaLifecycleWorkerSettings.from_env(),
+            transcode_executor=StubTranscodeExecutor(),
+        )
+
+        result = worker.run_once(now=_NOW)
+
+        assert result.transcode_jobs_completed == 1
+        with Session(bind=engine) as session:
+            job = session.query(TranscodeJob).one()
+            assert Path(job.output_path).parent == output_root
+
     def test_failed_transcode_job_records_error_detail(
         self,
         engine: Engine,

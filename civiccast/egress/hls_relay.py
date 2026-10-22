@@ -9,12 +9,17 @@ accepted it with 200 OK, and ``sink_element_spec`` had no branch for it. This
 module is the other half of the real fix: it makes an ``hls`` sink on the
 GStreamer engine genuinely produce a servable manifest + segments.
 
-**Why not a native GStreamer HLS element.** The task that opened this defect
+**Current architecture.** The current closure includes ``hlssink3``. The relay
+remains responsible for caption-preserving HLS, publication/segment lifetime
+and restart recovery; plugin availability alone does not replace those paths.
+See ``docs/ops/sprint6-gstreamer-alternatives.md`` for the current decision.
+
+**Historical runtime limitation.** The task that opened this defect
 assumed the shipped runtime carries ``hlssink2``. It does not — verified
 empirically against the real installed closure
 (``C:\\Program Files\\CivicCast (Native)\\runtime\\dependencies\\gstreamer\\lib\\gstreamer-1.0``):
 ``gst-inspect-1.0`` lists no ``hlssink``/``hlssink2``/``hlssink3`` element at
-all (no ``gsthls*.dll`` is shipped) and no ``splitmuxsink``/``multifilesink``
+all (no ``gsthls*.dll`` was shipped then) and no ``splitmuxsink``/``multifilesink``
 (no ``gstmultifile.dll``). The only HLS-shaped element present is
 ``avmux_hls`` (gst-libav wrapping FFmpeg's HLS muxer, rank ``marginal``), and
 a live pipeline test (``avmux_hls ! filesink``, both audio+video fed, run to
@@ -195,8 +200,10 @@ router and the daemon's stale-playlist discard still see ``playlist.m3u8``.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import math
@@ -957,7 +964,7 @@ class _RelayLogWriter:
         self._path = path
         self._cap_bytes = cap_bytes
         self._tail_bytes = tail_bytes
-        # Reentrant: :meth:`_append` holds it and may call :meth:`trim_if_over_cap`,
+        # Reentrant: :meth:`_drain` holds it and may call :meth:`trim_if_over_cap`,
         # which takes it again.
         self._lock = RLock()
         self._handle: IO[str] | None = None
@@ -1016,37 +1023,44 @@ class _RelayLogWriter:
     def _drain(self, stream: IO[str]) -> None:
         """Read the pipe to EOF, appending to the log. Never raises, never stalls."""
         try:
+            buffer = getattr(stream, "buffer", None)
+            read1 = getattr(buffer, "read1", None)
+            if callable(read1):
+                reader = read1
+                decoder = io.IncrementalNewlineDecoder(
+                    codecs.getincrementaldecoder("utf-8")("replace"),
+                    translate=True,
+                )
+            else:
+                reader = stream.readline
+                decoder = None
             while True:
                 try:
-                    line = stream.readline(_RELAY_LOG_READ_CHARS)
+                    chunk = reader(_RELAY_LOG_READ_CHARS)
                 except (OSError, ValueError):
-                    # The read end was closed under us (teardown, or a failed
-                    # child). Nothing left to drain.
                     break
-                if not line:
-                    break  # EOF: the child exited
-                self._append(line)
+                text = decoder.decode(chunk, final=not chunk) if decoder is not None else chunk
+                if text:
+                    with self._lock:
+                        if self._handle is None and not self._discarding:
+                            self._handle = self._open_append()
+                        handle = self._handle
+                        if handle is not None:
+                            try:
+                                handle.write(text)
+                                self._bytes += len(text)
+                            except OSError:
+                                self._note_write_failure()
+                            else:
+                                if self._bytes > self._cap_bytes:
+                                    self.trim_if_over_cap()
+                if not chunk:
+                    break
         finally:
             _close_quietly(stream)
             with self._lock:
                 handle, self._handle = self._handle, None
             _close_quietly(handle)
-
-    def _append(self, text: str) -> None:
-        with self._lock:
-            if self._handle is None and not self._discarding:
-                self._handle = self._open_append()
-            handle = self._handle
-            if handle is None:
-                return  # open failed (already warned): keep draining, discard
-            try:
-                handle.write(text)
-                self._bytes += len(text)
-            except OSError:
-                self._note_write_failure()
-                return
-            if self._bytes > self._cap_bytes:
-                self.trim_if_over_cap()
 
     def _open_append(self) -> IO[str] | None:
         try:
@@ -1122,7 +1136,8 @@ class _RelayLogWriter:
         header = _relay_log_header_line(path)
         try:
             with path.open("rb") as reader:
-                reader.seek(max(0, size - self._tail_bytes), os.SEEK_END)
+                actual_size = reader.seek(0, os.SEEK_END)
+                reader.seek(-min(actual_size, self._tail_bytes), os.SEEK_END)
                 tail = reader.read()
             # Drop the first (very likely partial) line so the retained tail
             # starts on a real line boundary.

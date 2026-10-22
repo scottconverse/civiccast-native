@@ -2598,6 +2598,82 @@ def test_second_error_from_inside_the_just_aborted_leg_is_contained(engine_modul
             thread.join(timeout=5.0)
 
 
+def test_second_error_from_detached_child_of_aborted_leg_is_contained(engine_module) -> None:
+    """Bus delivery may follow teardown detaching a decodebin child from its bin."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _Child:
+        parent: Any = None
+
+        @staticmethod
+        def get_name() -> str:
+            return "tsdemux7"
+
+        def get_parent(self) -> Any:
+            return self.parent
+
+    class _NestedBin(_FakeOldElement):
+        def __init__(self) -> None:
+            super().__init__("decodebin7", recorder)
+            self.child = _Child()
+            self.child.parent = self
+
+        def iterate_recurse(self) -> Any:
+            class _Iterator:
+                done = False
+
+                def next(inner_self) -> tuple[str, Any]:
+                    if inner_self.done:
+                        return _FakeIteratorResult.DONE, None
+                    inner_self.done = True
+                    return _FakeIteratorResult.OK, self.child
+
+            return _Iterator()
+
+        def set_state(self, state: Any) -> str:
+            # Model GstBin teardown removing the child while its already-posted
+            # error is still queued for the engine's main-loop bus callback.
+            self.child.parent = None
+            entered.set()
+            release.wait(timeout=5.0)
+            return super().set_state(state)
+
+    leg = _NestedBin()
+    engine._pending_reload = _abort_pending(recorder, [], [leg])
+    engine._abort_pending_reload("superseded")
+    assert entered.wait(timeout=5.0), "the aborted leg's retirement never started"
+    assert leg.child.get_parent() is None, "test child was not detached during retirement"
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = leg.child
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return "detached decoder failed during abort", "debug"
+
+    engine._loop = _Loop()
+    try:
+        assert engine._on_bus(None, _Message()) is True
+        assert engine._error is None, (
+            "a detached child from an aborted leg took the channel off air"
+        )
+        assert engine._loop.quit_called is False
+    finally:
+        release.set()
+        for thread in engine._abort_retire_threads:
+            thread.join(timeout=5.0)
+
+
 def test_error_from_an_unrelated_element_is_still_fatal_while_an_abort_retires(
     engine_module,
 ) -> None:

@@ -55,6 +55,12 @@ TRANSFER_ACTIONS = ("actions/upload-artifact", "actions/download-artifact")
 
 #: job key -> why it legitimately outlives MAX_MINUTES.
 LONG_BY_DESIGN: dict[tuple[str, str], str] = {
+    ("deterministic-detectors.yml", "mutation-report"): (
+        "measured run 39666692394: 7 min generation, 63 min stats PASS, and a clean "
+        "lane still live at 45 min when the old 120 cap cancelled it; the complete "
+        "mutation phase remains unmeasured. 360 min is a bounded runtime allowance, "
+        "not an acceptance waiver; diagnostics keep progress visible."
+    ),
     ("gate-a-station-acceptance.yml", "station-acceptance-dirty"): (
         "2026-08-30: the dirty lane runs TWO full sandbox cycles in one job -- a real "
         "install + uninstall (phase 1, seeding true post-uninstall remnants) and then the "

@@ -29,6 +29,7 @@ import type {
   CgFeedSource,
   CgZoneConfig,
   FeedInput,
+  FeedUpdateInput,
   LiveSourceResponse,
   ResolvedBoard,
   ZoneInput,
@@ -378,7 +379,7 @@ export function FeedForm({
       <div className="grid gap-2 sm:grid-cols-2">
         <label className="grid gap-1 text-xs">
           <span style={{ color: 'var(--cc-ink-3)' }}>Feed kind</span>
-          <select aria-label="Feed kind" value={kind} onChange={(e) => setKind(e.target.value as FeedInput['kind'])} className="rounded-md px-2 py-1.5" style={fieldStyle}>
+          <select aria-label="Feed kind" value={kind} onChange={(e) => setKind(e.target.value as FeedInput['kind'])} disabled={initial !== undefined} className="rounded-md px-2 py-1.5" style={fieldStyle}>
             {FEED_KINDS.map((k) => (
               <option key={k} value={k}>
                 {humanize(k)}
@@ -556,7 +557,7 @@ export function CgBoardDesignerScreen() {
   const updateZone = useMutation({ mutationFn: ({ id, p }: { id: string; p: ZoneInput }) => updateCgZone(channelId, id, p), onSuccess: onOk(() => setEditingZoneId(null)), onError: onError('Could not update the zone.') })
   const deleteZone = useMutation({ mutationFn: (id: string) => deleteCgZone(channelId, id), onSuccess: onOk(), onError: onError('Could not delete the zone.') })
   const addFeed = useMutation({ mutationFn: (p: FeedInput) => addCgFeed(channelId, p), onSuccess: onOk(() => setShowAddFeed(false)), onError: onError('Could not register the feed.') })
-  const updateFeed = useMutation({ mutationFn: ({ id, p }: { id: string; p: FeedInput }) => updateCgFeed(channelId, id, p), onSuccess: onOk(() => setEditingFeedId(null)), onError: onError('Could not update the feed.') })
+  const updateFeed = useMutation({ mutationFn: ({ id, p }: { id: string; p: FeedUpdateInput }) => updateCgFeed(channelId, id, p), onSuccess: onOk(() => setEditingFeedId(null)), onError: onError('Could not update the feed.') })
   const deleteFeed = useMutation({ mutationFn: (id: string) => deleteCgFeed(channelId, id), onSuccess: onOk(), onError: onError('Could not delete the feed.') })
   const setAudio = useMutation({ mutationFn: (payload: { asset_ref: string; gain_db: number }) => setCgBoardAudio(channelId, payload), onSuccess: onOk(), onError: onError('Could not save the board audio.') })
   const deleteAudio = useMutation({ mutationFn: () => deleteCgBoardAudio(channelId), onSuccess: onOk(), onError: onError('Could not remove the board audio.') })
@@ -780,7 +781,21 @@ export function CgBoardDesignerScreen() {
                       )}
                       {editingFeedId === feed.feed_source_id && canWrite && (
                         <div className="mt-2">
-                          <FeedForm submitting={updateFeed.isPending} initial={feed} onSubmit={(p) => updateFeed.mutate({ id: feed.feed_source_id, p })} />
+                          <FeedForm
+                            submitting={updateFeed.isPending}
+                            initial={feed}
+                            onSubmit={(p) => updateFeed.mutate({
+                              id: feed.feed_source_id,
+                              p: {
+                                label: p.label,
+                                source_url: p.source_url,
+                                trust_tier: p.trust_tier,
+                                refresh_seconds: p.refresh_seconds,
+                                enabled: p.enabled,
+                                tags: p.tags,
+                              },
+                            })}
+                          />
                         </div>
                       )}
                       {canRead && (

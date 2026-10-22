@@ -54,6 +54,29 @@ Tests assume the dev group's deps. A bare `pip install -e .` will skip
 `pip install -e ".[dev]"` (or `uv sync --all-extras --group dev`) any time
 you intend to run the test suite.
 
+### Prerequisite-specific CI coverage
+
+The existing `ci-test` Windows job runs the native media and installer cases
+that cannot execute in the Linux unit job. It stages only the pinned GStreamer
+closure, TSDuck runtime and small Tauri NSIS compiler, uses a fixture FFmpeg
+with `libx264` and SRT, and
+bootstraps bundled GI before pytest imports. Tests run sequentially; the caption
+pressure test retains its three concurrent workers and three attempts. Windows
+PowerShell subprocesses receive the standard Windows PowerShell module paths.
+
+The same workflow runs caption persistence against a disposable loopback-only
+PostgreSQL container through `CIVICCAST_POSTGRES_TEST_URL`; the existing harness
+creates and drops a unique test database. Never point this URL at a station DB.
+Its separate external-integration job installs `agenda-js-import` for real
+package-import checks and enables the agenda-source and TSDuck network proofs.
+Those results depend on remote services and are separate from offline units;
+import checks do not claim to run a browser crawl. The `ci-docs` Pandoc/TeX job
+runs the four real manual-render cases when its documented paths change.
+
+The explicit prerequisite-specific rosters reject skipped JUnit cases. A missing
+runtime or tool must fail that coverage rather than silently count as a pass.
+The workflow files contain the exact node selections and bootstrap commands.
+
 ### Windows: line endings
 
 CivicCast stores LF in the repo; CI on Linux validates `ruff format` against

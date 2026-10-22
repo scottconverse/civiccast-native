@@ -7,12 +7,12 @@
 
 ## Current Release State
 
-`v1.0.0-beta.19` is the latest signed GitHub pre-release. Download the complete kit from its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19),
+`v1.0.0-beta.20` is the latest signed GitHub pre-release. Download the complete kit from its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20),
 and use that release's `SHA256SUMS.txt`, installer signature and station/pack
-manifests to verify the bytes you receive. The [Beta 19 verification
-record](../releases/v1.0.0-beta.19-verification.md) identifies the exact
+manifests to verify the bytes you receive. The [Beta 20 verification
+record](../releases/v1.0.0-beta.20-verification.md) identifies the exact
 signed package and its scoped checks. Earlier installation
-results remain in their own verification records and do not qualify Beta 19.
+results remain in their own verification records and do not qualify Beta 20.
 [release-truth.yaml](../releases/release-truth.yaml)
 is the authored release-state record. Watch the official native release page,
 not `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
@@ -33,7 +33,7 @@ upgrade-baseline kit.
 This page explains how an operator should verify a CivicCast Windows setup
 download before running it.
 
-For the published Beta 19 interface, use the Help installed with Beta 19 or the manual assets from its release page. Repository manual revisions may contain later editorial corrections; source changes do not update an installed station.
+For the published Beta 20 interface, use the Help installed with Beta 20 or the manual assets from its release page. Repository manual revisions may contain later editorial corrections; source changes do not update an installed station.
 
 ## Read The Release Docs First
 
@@ -78,22 +78,22 @@ report `Valid` and the approved publisher; a local `NotSigned` engineering build
 is suitable only for an explicitly authorized local acceptance run and must not
 be distributed as a public beta.
 
-## Download The Complete Beta 15 Kit
+## Download The Complete Beta 20 Kit
 
 Use the helper asset from the exact tagged release. Download the helper and
 `SHA256SUMS.txt`, then verify the helper's own hash before executing it:
 
 ```powershell
-$tag = "v1.0.0-beta.15"
+$tag = "v1.0.0-beta.20"
 $base = "https://github.com/scottconverse/civiccast-native/releases/download/$tag"
-$helper = Join-Path $env:TEMP "CivicCast-Install-Beta15.ps1"
-$sums = Join-Path $env:TEMP "CivicCast-Beta15-SHA256SUMS.txt"
+$helper = Join-Path $env:TEMP "CivicCast-Install-Beta20.ps1"
+$sums = Join-Path $env:TEMP "CivicCast-Beta20-SHA256SUMS.txt"
 Invoke-WebRequest -UseBasicParsing "$base/download_windows_release_artifacts.ps1" -OutFile $helper
 Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS.txt" -OutFile $sums
 $expected = ((Get-Content $sums) | Where-Object { $_ -match '\s+download_windows_release_artifacts\.ps1$' } | Select-Object -First 1) -replace '^([0-9a-fA-F]{64})\s+.*$', '$1'
 $actual = (Get-FileHash $helper -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw "Downloader hash does not match the release checksum list." }
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta15")
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta20")
 ```
 
 With `-Install`, the helper downloads and checks all five runtime packs,
@@ -107,7 +107,7 @@ successful download as installation or operating proof.
 
 ## Verify The Download With PowerShell
 
-1. For the complete Beta 15 download, use the release-matched helper and
+1. For the complete Beta 20 download, use the release-matched helper and
    choose `-IncludePacks` to stage without installing or `-Install` to run setup
    after verification. The destination contains `setup.exe`, its sidecar,
    `SHA256SUMS.txt`, five runtime packs under `packs\`, station files under

@@ -377,6 +377,7 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
     onSuccess: () => {
       setUnpublishError(null)
       void queryClient.invalidateQueries({ queryKey: ['staff-assets'] })
+      void queryClient.invalidateQueries({ queryKey: ['publish-assets'] })
       void queryClient.invalidateQueries({
         queryKey: ['staff-asset', asset.asset_id],
       })

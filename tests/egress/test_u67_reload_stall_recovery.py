@@ -68,12 +68,16 @@ class _FakeProcess:
     def __init__(self, pid: int) -> None:
         self.pid = pid
         self.returncode: int | None = None
+        self.ignore_terminate = False
+        self.terminate_requests = 0
 
     def poll(self) -> int | None:
         return self.returncode
 
     def terminate(self) -> None:
-        self.returncode = 0
+        self.terminate_requests += 1
+        if not self.ignore_terminate:
+            self.returncode = 0
 
 
 class _Clock:
@@ -351,8 +355,9 @@ def test_u67_watchdog_reissues_then_restarts_a_pinned_channel(tmp_path: Path) ->
     daemon.process_once(_CHANNEL)
     assert store.read_state(_CHANNEL).current_source_label == _AIRING_LABEL
 
-    # The incident's inputs: a recorded horizon, a rollover the schedule answers
-    # with nothing, and a worker that stays up (the U41 plan-EOS hold).
+    # A passed boundary now requests an immediate restart. Exercise the watchdog
+    # independently with a worker that ignores that first termination request.
+    strategy.process.ignore_terminate = True
     boundary = datetime.now(UTC)
     command_id = "rollover-education-0325"
     daemon.record_rollover_plan_end(_CHANNEL, boundary, command_id=command_id)
@@ -364,6 +369,7 @@ def test_u67_watchdog_reissues_then_restarts_a_pinned_channel(tmp_path: Path) ->
     assert strategy.reload_requests == []
     assert store.read_state(_CHANNEL).state == "TRANSITIONING"
     assert store.read_state(_CHANNEL).pid == 24516
+    assert strategy.process.terminate_requests == 1
 
     # Inside the bound: nothing happens (a normal ~2s tick, many times over).
     for _ in range(5):
@@ -381,6 +387,7 @@ def test_u67_watchdog_reissues_then_restarts_a_pinned_channel(tmp_path: Path) ->
 
     # Past the re-issue grace: rung 2 -- the pin is dropped and the worker is
     # terminated, so _poll_process's crash-relaunch owns the recovery.
+    strategy.process.ignore_terminate = False
     clock.advance(_GRACE_SECONDS + 1.0)
     daemon.process_once(_CHANNEL)
     assert _CHANNEL not in daemon._pending_reloads, "a stalled channel must not stay pinned"

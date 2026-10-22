@@ -115,6 +115,35 @@ jobs:
             echo "No tests yet ??? placeholder green for Day 0; Sprint 0.1 lands the first tests."
           fi
 
+      - name: Caption review contract on isolated PostgreSQL (no skips)
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          container=$(docker run -d -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1::5432 postgres:17 -c shared_buffers=16MB -c max_connections=10 -c max_wal_senders=0)
+          trap 'docker rm -f "$container"' EXIT
+          for _ in $(seq 1 30); do
+            if docker exec "$container" pg_isready -U postgres; then break; fi
+            sleep 1
+          done
+          docker exec "$container" pg_isready -U postgres
+          address=$(docker port "$container" 5432/tcp)
+          export CIVICCAST_POSTGRES_TEST_URL="postgresql+psycopg://postgres@${address}/postgres"
+          uv run python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          import pytest
+          nodes = """
+          tests/captions/test_review_persistence.py::TestRealPostgres::test_contract_round_trip_on_real_postgres
+          """.strip().splitlines()
+          code = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-caption-postgres.xml"])
+          if code:
+              sys.exit(code)
+          cases = list(ET.parse("junit-caption-postgres.xml").iter("testcase"))
+          assert len(cases) >= len(nodes), "Selected cases did not all execute"
+          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"
+          print(f"Required coverage executed: {len(cases)} passed, no skips")
+          PY
+
       - name: Run tests/native's platform-independent suite (junit)
         run: uv run pytest tests/native -m "not windows_only" -q --junitxml=junit-native-pure.xml
       - name: Assert the recording-finalization real-media proofs actually ran
@@ -472,12 +501,15 @@ jobs:
         # 2026-10-13 station-operations collection: 2024 pure tests after
         # marking six Windows-only identity/DPAPI cases; preserve the same
         # 50-test margin with a floor of 1974. The 2026-10-14 Beta16 license
-        # closure assertion adds one pure test, so the floor is now 1975.
+        # closure assertion added one pure test (floor 1975).
+        # 2026-10-19: 2029 pure tests; floor 1983 leaves a 46-test margin.
+        # Current randomized CI collection: 2061 pure tests; floor 2011 keeps
+        # the standard 50-test margin.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1975 \
+            --floor 2011 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -489,6 +521,7 @@ jobs:
           path: |
             junit.xml
             junit-native-pure.xml
+            junit-caption-postgres.xml
           if-no-files-found: error
           retention-days: 1
 
@@ -502,32 +535,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  # ---------------------------------------------------------------------
-  # REMOVED 2026-08-20: the `engine` job (GStreamer live engine).
-  #
-  # It ran `bash tests/egress/run_wsl_engine_tests.sh` against an
-  # apt-installed Linux GStreamer 1.28.4 stack. Both are gone from this repo
-  # by design -- the native product ships GStreamer 1.28.5 as pinned
-  # `gstreamer-*` PyPI wheels, so that job proved a runtime this product does
-  # not use, on a platform it does not run on. Its script was deliberately not
-  # migrated, so the job could only ever fail with
-  # "run_wsl_engine_tests.sh: No such file or directory".
-  #
-  # KNOWN COVERAGE GAP, stated plainly rather than left implied: there is now
-  # NO per-PR gate on civiccast/egress/gst/* . The suite that covers it,
-  # tests/egress/test_gst_engine_wsl.py, runs natively on Windows but only
-  # when CIVICCAST_GSTREAMER_RUNTIME_ROOT points at a PROVISIONED runtime
-  # tree (see its _windows_bundled_gstreamer_available) -- pip-installing the
-  # wheels is not sufficient. Building that job means running
-  # scripts/provision_native_runtime_dependencies.py in CI first; that is real
-  # work, tracked separately, not folded in here.
-  #
-  # What still proves the engine today: the Windows Sandbox clean-box harness
-  # exercised the real native GStreamer playout end to end (TSDuck-clean,
-  # 20 real caption cues), and native-beta-candidate-artifacts builds and
-  # signs the runtime pack on every release-branch push. Neither runs per-PR.
-  # ---------------------------------------------------------------------
-
+  # Native media uses the product GStreamer closure, without station/model packs.
   windows-native:
     name: WS4 dual-runtime guard (real Windows probes)
     # workflow-cost: windows-pr-justification -- Windows registry, process-table, and WSL probes require a hosted Windows runner.
@@ -536,7 +544,7 @@ jobs:
     # the real registry, the real process table, and real wsl.exe. This job
     # is that proof running for real, not just "pure" tests/native on ubuntu.
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -570,6 +578,177 @@ jobs:
 
       - name: Install project (dev)
         run: uv sync --group dev
+
+      - name: Provision pinned GStreamer closure, TSDuck and NSIS test tools
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $runtime = (Resolve-Path .venv/Scripts).Path
+          uv run python scripts/build_native_runtime_closure.py --stage "$env:RUNNER_TEMP/gstreamer-stage" --out "$runtime/dependencies/gstreamer"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run python scripts/verify_native_runtime_closure.py --tree "$runtime/dependencies/gstreamer"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "CIVICCAST_GSTREAMER_RUNTIME_ROOT=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          @'
+          import os
+          from pathlib import Path
+          from scripts.provision_native_runtime_dependencies import load_lock, fetch_locked_artifact, safe_extract_zip
+          artifact = load_lock()["artifacts"]["tsduck"]
+          archive = fetch_locked_artifact("tsduck", artifact, Path(os.environ["RUNNER_TEMP"]) / "media-downloads")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "tsduck"
+          safe_extract_zip(archive, destination, strip_prefix=artifact["strip_prefix"], include=artifact.get("include"))
+          assert (destination / "bin/tsp.exe").is_file()
+          with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as handle:
+              handle.write(str(destination / "bin") + "\n")
+          # The same Tauri NSIS 3.11 layout used by the four compile/preflight fixtures.
+          # Pin the tiny upstream tool archive; no installer/app/model build is needed.
+          nsis = {
+              "filename": "nsis-3.11.zip", "bytes": 2361546,
+              "sha256": "c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1",
+              "url": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip",
+          }
+          archive = fetch_locked_artifact("Tauri NSIS", nsis, Path(os.environ["RUNNER_TEMP"]) / "media-downloads")
+          compiler_root = Path.home() / "AppData/Local/tauri/NSIS"
+          safe_extract_zip(archive, compiler_root, strip_prefix="nsis-3.11")
+          assert (compiler_root / "Bin/makensis.exe").is_file()
+          '@ | uv run python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $encoders = ffmpeg -hide_banner -encoders 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $encoders -notmatch 'libx264') { throw "FFmpeg fixture requires libx264" }
+          $protocols = ffmpeg -hide_banner -protocols 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $protocols -notmatch '(?m)^\s+srt\s*$') { throw "FFmpeg fixture requires SRT" }
+
+      - name: Run Windows installer and filesystem cases (no skips)
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $env:PSModulePath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"
+          @'
+          import sys, xml.etree.ElementTree as ET
+          import pytest
+          nodes = """
+          tests/certs/test_private_key_acl.py::test_machine_account_name_grant_reproduces_1332_red
+          tests/certs/test_private_key_acl.py::test_restrict_real_icacls_succeeds_and_grants_expected_principals
+          tests/certs/test_private_key_acl.py::test_unregistered_service_sid_uses_native_acl_fallback
+          tests/certs/test_private_key_acl.py::test_first_admin_completes_under_localsystem_username
+          tests/dr/test_station_backup_runtime.py::test_runtime_backup_includes_station_state_and_portable_credentials
+          tests/gate_a/test_gate_a_download_only_payload.py::test_builder_script_present
+          tests/gate_a/test_gate_a_download_only_payload.py::test_download_only_payload_builder_produces_no_reparse_points_and_cleanup_restores_kit_download
+          tests/gate_a/test_gate_a_download_only_payload.py::test_download_only_payload_builder_counts_forced_copy_fallback_within_threshold
+          tests/gate_a/test_gate_a_download_only_payload.py::test_download_only_payload_builder_fails_closed_when_forced_copy_fallback_exceeds_tiny_threshold
+          tests/installer/test_install_transaction.py::test_restores_files_activation_database_after_late_failure_and_preserves_media
+          tests/installer/test_install_transaction.py::test_interrupted_restore_keeps_recovery_point_and_retries_idempotently
+          tests/installer/test_install_transaction.py::test_dead_installer_recovery_restores_but_live_installer_is_untouched
+          tests/installer/test_install_transaction.py::test_commit_keeps_candidate_and_recovery_cannot_roll_it_back
+          tests/installer/test_install_transaction.py::test_restores_existing_shortcut_and_removes_only_new_installer_shortcut
+          tests/installer/test_install_transaction.py::test_insufficient_snapshot_space_refuses_before_replacement
+          tests/installer/test_install_transaction.py::test_snapshot_and_restore_keep_hardlinks_without_sharing_live_bytes
+          tests/installer/test_install_transaction.py::test_service_restore_preserves_start_mode_and_prior_running_state
+          tests/installer/test_nsis_bootstrap_hooks.py::test_transaction_macros_compile_with_tauri_early_hook_include[initial-tauri]
+          tests/installer/test_nsis_bootstrap_hooks.py::test_transaction_macros_compile_with_tauri_early_hook_include[final-patched]
+          tests/installer/test_nsis_bootstrap_hooks.py::test_version_preflight_preserves_extraction_destination_and_caller_state[False]
+          tests/installer/test_nsis_bootstrap_hooks.py::test_version_preflight_preserves_extraction_destination_and_caller_state[True]
+          tests/installer/test_wait_native_uninstall_cleanup.py::test_wait_succeeds_only_after_arp_and_install_root_disappear
+          tests/installer/test_wait_native_uninstall_cleanup.py::test_wait_times_out_when_cleanup_never_completes
+          tests/installer/test_wait_native_uninstall_cleanup.py::test_wait_times_out_when_only_arp_remains
+          tests/installer/test_wait_native_uninstall_cleanup.py::test_wait_times_out_when_only_install_root_remains
+          tests/installer/test_wait_native_uninstall_cleanup.py::test_default_roots_detect_standard_hkcu_arp_entry
+          tests/policy/test_native_installer_identity.py::test_repository_install_progress_matchers_accept_timestamp_prefix
+          tests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[complete]
+          tests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[traversal]
+          tests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[conflict]
+          tests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[index-mismatch]
+          tests/installer/test_install_transaction.py::test_service_restore_rejects_missing_or_unsupported_identity
+          """.strip().splitlines()
+          code = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-windows-installer.xml"])
+          if code:
+              sys.exit(code)
+          cases = list(ET.parse("junit-windows-installer.xml").iter("testcase"))
+          assert len(cases) >= len(nodes), "Selected cases did not all execute"
+          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"
+          print(f"Required coverage executed: {len(cases)} passed, no skips")
+          '@ | uv run python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run real native media cases sequentially (no skips)
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          $env:PSModulePath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"
+          @'
+          import sys, xml.etree.ElementTree as ET
+          import os
+          from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime, installed_gstreamer_environment
+          assert bootstrap_installed_gstreamer_runtime()
+          os.environ.update(installed_gstreamer_environment(os.environ["CIVICCAST_GSTREAMER_RUNTIME_ROOT"], base_environment=os.environ))
+          import pytest
+          nodes = """
+          tests/egress/test_compliance.py::test_managed_tsduck_dir_windows_default
+          tests/egress/test_gst_engine_caption_flow_native.py::test_live_caption_queue_probe_releases_real_event_reservations
+          tests/egress/test_gst_engine_caption_flow_native.py::test_three_captioned_workers_finish_complex_playlist_without_reload
+          tests/egress/test_gst_engine_reload_commit_ordering.py::test_u16_diagnostics_print_on_a_real_packaged_pipeline
+          tests/egress/test_gst_engine_reload_commit_ordering.py::test_u16_packaged_runtime_resolution_matches_its_declared_root
+          tests/egress/test_gst_engine_wsl.py::test_caption_embed_survives_to_emitted_stream
+          tests/egress/test_gst_engine_wsl.py::test_live_caption_appsrc_starts_without_a_cue_and_decodes_a_later_cue
+          tests/egress/test_gst_engine_wsl.py::test_secondary_audio_muxes_an_extra_pid
+          tests/egress/test_gst_engine_wsl.py::test_live_worker_forks_selected_program_audio_into_atomic_caption_wavs
+          tests/egress/test_gst_engine_wsl.py::test_audio_tap_queue_and_appsink_carry_the_item88_safety_properties_live
+          tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean
+          tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity
+          tests/egress/test_gst_engine_wsl.py::test_content_reload_continuity
+          tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity_av
+          tests/egress/test_gst_engine_wsl.py::test_content_reload_continuity_av
+          tests/egress/test_gst_engine_wsl.py::test_repeated_reloads_no_leak
+          tests/egress/test_gst_engine_wsl.py::test_reload_never_buffers_recovers[False]
+          tests/egress/test_gst_engine_wsl.py::test_reload_never_buffers_recovers[True]
+          tests/egress/test_gst_engine_wsl.py::test_control_stop_does_not_hang
+          tests/egress/test_gst_engine_wsl.py::test_live_udp_ingest_continuity
+          tests/egress/test_gst_engine_wsl.py::test_stall_watchdog_fires_when_live_source_freezes
+          tests/egress/test_gst_engine_wsl.py::test_stall_watchdog_commits_ready_deferred_reload_when_live_source_freezes
+          tests/egress/test_gst_engine_wsl.py::test_per_stream_watchdog_forces_a_ready_deferred_switch_that_never_fires
+          tests/egress/test_gst_engine_wsl.py::test_stall_watchdog_does_not_fire_on_healthy_output
+          tests/egress/test_gst_engine_wsl.py::test_per_stream_watchdog_fires_when_one_stream_stops_after_a_committed_reload[video]
+          tests/egress/test_gst_engine_wsl.py::test_per_stream_watchdog_fires_when_one_stream_stops_after_a_committed_reload[audio]
+          tests/egress/test_gst_engine_wsl.py::test_content_reload_to_live_udp_ingest_continuity
+          tests/egress/test_gst_engine_wsl.py::test_graphics_overlay_composites_station_bug_and_lower_third
+          tests/egress/test_gst_engine_wsl.py::test_board_live_video_is_visible_above_the_board_raster
+          tests/egress/test_gst_engine_wsl.py::test_content_reload_reapplies_graphics_overlay
+          tests/egress/test_gst_engine_wsl.py::test_content_reload_deletes_the_superseded_banner_png_not_the_live_one
+          tests/egress/test_gst_engine_wsl.py::test_graphics_overlay_disabled_matches_existing_no_overlay_behavior
+          tests/egress/test_gst_engine_wsl.py::test_deferred_rollover_switches_at_the_common_av_end_without_eos[audio-tail-longer]
+          tests/egress/test_gst_engine_wsl.py::test_deferred_rollover_switches_at_the_common_av_end_without_eos[video-tail-longer]
+          tests/egress/test_gst_engine_wsl.py::test_deferred_rollover_switches_at_the_common_av_end_without_eos[planar-audio-tail]
+          tests/egress/test_gst_engine_wsl.py::test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air
+          tests/egress/test_gst_engine_wsl.py::test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload
+          tests/egress/test_gst_engine_wsl.py::test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs
+          tests/egress/test_gst_engine_wsl.py::test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air
+          tests/egress/test_gst_engine_wsl.py::test_emergency_late_image_reaches_pixels_and_clear_preserves_logo[compositor]
+          tests/egress/test_gst_engine_wsl.py::test_emergency_late_image_reaches_pixels_and_clear_preserves_logo[d3d11compositor]
+          tests/egress/test_gst_strategy.py::test_reconnect_channel_replays_desired_state_through_strategy
+          tests/egress/test_gst_strategy.py::test_caption_delivery_id_reaches_the_worker_envelope
+          tests/egress/test_gst_strategy.py::test_reconnect_channel_is_noop_for_unknown_channel
+          tests/egress/test_gst_strategy.py::test_start_replacement_closes_old_pipe_server
+          tests/egress/test_gst_strategy.py::test_close_channel_closes_server_and_forgets_channel
+          tests/egress/test_hls_relay_live_playability.py::test_gstreamer_fed_hls_directory_serves_an_advancing_manifest_over_http
+          tests/egress/test_hls_relay_live_playability.py::test_relay_writes_to_the_channels_unchanged_configured_directory
+          tests/egress/test_hls_relay_stderr_log.py::test_rotation_needs_the_predecessors_handles_closed_so_it_runs_after_terminate
+          tests/egress/test_hls_sink_captions.py::test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence
+          tests/egress/test_ts_relay.py::test_real_tsp_relay_makes_cc_continuous_across_session_reset
+          tests/egress/test_u36_rollover_sliver_real_ffmpeg.py::test_u36_a_real_boundary_does_not_kill_the_worker
+          tests/egress/test_worker_pipe_seam.py::test_worker_module_imports_and_exposes_windows_branch_when_gi_available
+          tests/egress/test_worker_pipe_seam.py::test_worker_pipe_default_acl_roundtrips_for_current_windows_identity
+          tests/tools/test_capture_emitted_hls_audio_proof.py::test_junction_replacing_owned_scratch_is_refused
+          tests/tools/test_capture_emitted_hls_audio_proof.py::test_real_ffmpeg_measures_normalized_synthetic_window
+          """.strip().splitlines()
+          code = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-windows-media.xml"])
+          if code:
+              sys.exit(code)
+          cases = list(ET.parse("junit-windows-media.xml").iter("testcase"))
+          assert len(cases) >= len(nodes), "Selected cases did not all execute"
+          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"
+          print(f"Required coverage executed: {len(cases)} passed, no skips")
+          '@ | uv run python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run tests/native (junit)
         # PR #143 review fix: -m "not integration" excludes
@@ -627,13 +806,19 @@ jobs:
         # 2026-10-13 station-operations collection: 2256 Windows
         # non-integration tests; preserve the same 50-test margin with a
         # floor of 2206. The 2026-10-14 Beta16 license closure assertion adds
-        # one platform-independent test, so the floor is now 2207.
+        # one platform-independent test (floor 2207).
+        # 2026-10-19 junction and running-image regressions: 2268 non-integration
+        # tests; preserve the 50-test margin (2218). The exact native closure
+        # baseline regression adds one portable case:2269 non-integration,
+        # floor2219 keeps that same margin.
+        # Current randomized CI collection: 2300 Windows non-integration tests;
+        # floor 2250 keeps the standard 50-test margin.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2207 \
+            --floor 2250 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
@@ -642,7 +827,70 @@ jobs:
         timeout-minutes: 10
         with:
           name: windows-native-junit
-          path: junit-native-win.xml
+          path: |
+            junit-native-win.xml
+            junit-windows-installer.xml
+            junit-windows-media.xml
+            caption-worker-failure/
+          if-no-files-found: error
+          retention-days: 1
+
+  external-integration:
+    name: Optional agenda imports and network integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CIVICCAST_RUN_AGENDA_SOURCE_PROOF: "1"
+      CIVICCAST_TSDUCK_NETWORK_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install declared optional import dependencies
+        # Import/posture proof only; these cases do not launch Chromium.
+        run: uv sync --extra agenda-js-import --group dev
+      - name: Run optional imports and network cases separately from offline units
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          uv run python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          import pytest
+          nodes = """
+          tests/agenda_import/test_js_portal.py::TestInstalledPostureWhenCrawl4aiIsPresent::test_load_crawl4ai_classes_returns_the_real_classes
+          tests/agenda_import/test_js_portal.py::TestInstalledPostureWhenCrawl4aiIsPresent::test_describe_js_portal_runtime_reports_installed_without_raising
+          tests/agenda_import/test_live_proof.py::test_seattle_tenant_returns_a_real_nonempty_agenda
+          tests/agenda_import/test_live_proof_civicclerk.py::test_portage_tenant_returns_a_real_nonempty_agenda
+          tests/agenda_import/test_live_proof_primegov.py::test_longmont_tenant_returns_a_real_nonempty_html_agenda
+          tests/agenda_import/test_router.py::TestJsPortalPosture::test_reports_installed_when_crawl4ai_is_present
+          tests/installer/test_tsduck_install.py::test_pinned_sha_matches_release[amd64]
+          tests/installer/test_tsduck_install.py::test_pinned_sha_matches_release[arm64]
+          """.strip().splitlines()
+          code = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-external-integration.xml"])
+          if code:
+              sys.exit(code)
+          cases = list(ET.parse("junit-external-integration.xml").iter("testcase"))
+          assert len(cases) >= len(nodes), "Selected cases did not all execute"
+          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"
+          print(f"Required coverage executed: {len(cases)} passed, no skips")
+          PY
+
+      - name: Upload external integration results
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: external-integration-junit
+          path: junit-external-integration.xml
           if-no-files-found: error
           retention-days: 1
 

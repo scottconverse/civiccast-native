@@ -44,7 +44,7 @@ Use this only when the admin password is lost. If you have the password, use **A
 4. Type the code in **Recovery code**.
 5. Type a new password in **New admin password**. It needs at least 12 characters.
 6. Type the same password in **Confirm new admin password**. If the two differ, you see "Passwords do not match."
-7. Click **Recover account**. The button changes to **Confirm — consume recovery code**, and a red message appears: "This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm."
+7. Click **Recover account**. The button changes to **Confirm — consume recovery code**, and a red message appears: "This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm." That message refers to the renamed **Confirm — consume recovery code** button.
 8. Click **Confirm — consume recovery code**.
 
 You are signed in and taken to the same place as after a normal sign-in. Every other browser or device that was already signed in stays signed in.
@@ -52,6 +52,8 @@ You are signed in and taken to the same place as after a normal sign-in. Every o
 > **Warning:** The code is used up when the station accepts it. If you change any box after the first click, the button goes back to **Recover account** and you must click twice again.
 
 > **Warning:** Your printed kit may still list an old password. After a recovery, write the new password somewhere safe. While you can still sign in, a Setup admin can make a fresh set of eight codes with **Regenerate recovery kit** in the **Security** card on **Station Profile**; the old codes stop working at once, and the new kit lists the codes only, not the password. If the password and all recovery codes are lost, a local Windows administrator can recover the account offline with the administrator-reset command in [Security and privacy](#ch-security). That reset preserves station data, revokes existing first-admin sessions and old recovery codes, and requires a fresh recovery kit afterward.
+
+The Beta20 source candidate includes station-state recovery repair so the normal service can replace the session automatically without manually changing permissions. Expected behavior is a return to normal sign-in, with no permission edits needed; private-key protection is unchanged. Final installed proof is pending.
 
 ## Sign out
 
@@ -83,20 +85,24 @@ The six sections start like this. The Help, Setup and System Health sections sta
 | Section | Screens in it | You use it to |
 | --- | --- | --- |
 | **Help** | Manual | Read the manual built into the console. |
-| **Setup** | First Setup, Control Room Setup, Station Profile, Cable Commissioning, AI Models, Custom Fields, Paywall | Set the station up and change its settings. |
-| **Run Meeting** | Live, Facility, Control Room, Remote Contribution, Channels, CG Board, CG Designer, Schedule, Auto-schedule, Program Guide, Recording | Plan and run what goes on air. |
+| **Setup** | First Setup, Staff accounts, Backup and restore, Import station, Network access, Control Room Setup, Station Profile, Cable Commissioning, AI Models, Custom Fields, Paywall | Set the station up and change its settings. |
+| **Run Meeting** | Live, Facility, Control Room, Remote Contribution, Channels, Other stations, CG Board, CG Designer, Schedule, Auto-schedule, Program Guide, Recording | Plan and run what goes on air. |
 | **Review Records** | Assets, Missing Media, Media Lifecycle Settings, Contributors, Review queue, Summary review, Agendas | Look after videos, captions, summaries and agendas. |
 | **Publish** | Publish, Playback policy, Analytics, Reports, EPG Export, Underwriting, App Admin | Decide what residents see, and read audience numbers. |
 | **System Health** | Readiness, Alerts, Emergency Alerts, Federation | Check that the station is healthy. |
 
-Altogether the console has 37 sidebar entries. On a phone or a narrow window, under 768 pixels wide, the sidebar becomes a drawer. Click the button **Open navigation** to open it. Pick a screen, or click outside it, to close it.
+Altogether the console has 42 sidebar entries. On a phone or a narrow window, under 768 pixels wide, the sidebar becomes a drawer. Click the button **Open navigation** to open it. Pick a screen, or click outside it, to close it.
 
 ### Which screens you can see
 
-You hold the roles of the account you signed in with. The account made on First Setup holds all five roles, and sees all 37 entries. A person with fewer roles sees fewer entries. Nineteen entries are shown to everyone signed in: Manual, First Setup, Live, Facility, Control Room, Channels, CG Board, Schedule, Program Guide, Assets, Contributors, Review queue, Summary review, Publish, Playback policy, Analytics, Readiness, Alerts and Federation. The other eighteen need at least one of the roles marked below.
+You hold the roles of the account you signed in with. The account made on First Setup holds all five roles, and sees all 42 entries. A person with fewer roles sees fewer entries. Nineteen entries are shown to everyone signed in: Manual, First Setup, Live, Facility, Control Room, Channels, CG Board, Schedule, Program Guide, Assets, Contributors, Review queue, Summary review, Publish, Playback policy, Analytics, Readiness, Alerts and Federation. The other twenty-three need at least one of the roles marked below.
 
 | Screen | Setup admin | Meeting operator | Records clerk | Publish operator | Support admin |
 | --- | :-: | :-: | :-: | :-: | :-: |
+| Staff accounts | yes | - | - | - | - |
+| Backup and restore | yes | - | - | - | yes |
+| Import station | yes | - | - | - | - |
+| Network access | yes | - | - | - | yes |
 | Control Room Setup | yes | - | - | - | - |
 | Station Profile | yes | yes | - | - | yes |
 | Cable Commissioning | yes | - | - | - | yes |
@@ -104,6 +110,7 @@ You hold the roles of the account you signed in with. The account made on First 
 | Custom Fields | yes | - | - | - | - |
 | Paywall | yes | - | - | - | - |
 | Remote Contribution | yes | yes | - | - | yes |
+| Other stations | yes | yes | - | yes | yes |
 | CG Designer | yes | - | - | yes | yes |
 | Auto-schedule | yes | - | - | yes | yes |
 | Recording | yes | yes | - | - | yes |
@@ -122,7 +129,7 @@ These screens open for every role but refuse some things:
 
 | Role | Screen | What happens |
 | --- | --- | --- |
-| Records clerk, Publish operator | Alerts | The list does not load. You see a red "Alerts could not load." box. |
+| Records clerk, Publish operator | Alerts | The event list does not load; it requires Setup admin, Support admin or Meeting operator. The runtime safe-to-air health indicator is available to every operator role. |
 | Records clerk | Federation | **Approve**, **Reject** and **Block** are refused. |
 | Setup admin without Publish operator or Support admin | Federation | **Approve**, **Reject** and **Block** are refused. Creating the station key works. |
 | Support admin | Alerts | **Save**, **Add destination** and **Delete** are refused. |
@@ -266,6 +273,8 @@ Below **Setup complete** are four tools for a Setup admin: **Camera or test medi
 | --- | --- | --- |
 | A browser error page instead of the console | CivicCast is not running, or the browser is not on the station computer. | Ask your IT person to start it. See [Troubleshooting matrix](#ch-troubleshooting). |
 | "Invalid admin username or password." | The username or password is wrong. | Check the kit and retype both boxes. If the password is lost, use a recovery code. |
+| "Invalid staff username or password." | The staff credentials are wrong, or the account is disabled. | Retype your credentials at `/login`. Ask a Setup admin to check your account or reset its password. |
+| "Too many staff sign-in attempts. Wait and try again." (possibly followed by a retry time) | Too many failed staff sign-ins. | Wait for the stated retry time, then use the correct credentials at `/login`. |
 | "Invalid recovery code or admin username." | The code or username is wrong, or the code was already used. | Try another unused code. A wrong guess does not use up a code. |
 | "Too many sign-in attempts from this station. Wait N seconds, then try again with the correct password, or use a printed recovery code." | Too many wrong guesses. | Wait the time shown. A correct password or recovery code still gets through. |
 | "Too many failed attempts to authenticate with the staff API. Wait N seconds, then try again." | Too many requests with a bad sign-in. The station's default is 10 failures in 60 seconds. | Wait, then try again. "Staff API" means the station's staff-side service. |

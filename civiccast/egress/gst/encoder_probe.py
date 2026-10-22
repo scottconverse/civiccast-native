@@ -35,7 +35,12 @@ def gst_factory_klass(name: str) -> str | None:
     """Look up the real GStreamer factory's "klass" metadata string.
 
     Imports ``gi`` lazily so importing this module never requires GStreamer.
+    The control plane probes before the worker's engine can bootstrap its own
+    process, so initialize the same installed closure here as well.
     """
+    from civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime
+
+    bootstrap_installed_gstreamer_runtime()
     import gi  # type: ignore[import-not-found]
 
     gi.require_version("Gst", "1.0")
@@ -115,6 +120,8 @@ def decide_encoder(
     """Pure native-Windows encoder-selection policy (no gi, no platform read).
 
     ``codec`` is the channel's configured ffmpeg codec name (e.g. ``h264_vaapi``).
+    Declarative ``h264`` automatically selects NVIDIA then Windows hardware;
+    explicit encoder names retain their configured selection.
     ``probe`` reports whether a GStreamer factory is available hardware on this box.
 
     On non-Windows this is a no-op (the WSL/Linux path is byte-unchanged). On
@@ -126,6 +133,19 @@ def decide_encoder(
     """
     if not is_windows:
         return EncoderDecision(encoder_override=None, warning=None)
+    if codec.strip().lower() == "h264":
+        # Declarative H.264 requests automatic selection. Explicit encoder names
+        # continue to pin the operator's choice.
+        for candidate in ("nvh264enc", "mfh264enc"):
+            if probe(candidate):
+                return EncoderDecision(encoder_override=candidate, warning=None)
+        # Automatic H.264 previously selected software unconditionally. Preserve
+        # those working CPU-only stations; the fallback opt-in applies to an
+        # explicit hardware request, as before.
+        return EncoderDecision(
+            _SOFTWARE_FALLBACK_H264,
+            "No hardware H.264 encoder was found; automatic H.264 is using the CPU (openh264enc).",
+        )
     intended = gst_encoder_name(codec, is_windows=True)
     # Software encoders (openh264enc/x264enc/x265enc) are used unchanged and are NOT
     # subject to the hardware gate below. This MUST precede the "265" HEVC check:

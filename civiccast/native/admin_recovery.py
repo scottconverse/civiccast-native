@@ -169,7 +169,7 @@ def _protected_copy(path: Path, data: bytes, *, suffix: str) -> Path:
     try:
         # Harden the empty file BEFORE writing any password/session hashes.
         with os.fdopen(fd, "wb") as stream:
-            _restrict_state_file(target)
+            _restrict_state_file(target, service_can_replace=suffix == ".tmp")
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())

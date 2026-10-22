@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +26,40 @@ from civiccast.stream._ffmpeg import (
     run_ffmpeg,
     start_ffmpeg,
 )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {},
+        {"width": 1920},
+        {"avg_frame_rate": "2997/100"},
+        {"field_order": "tt"},
+        {"sample_aspect_ratio": "4:3"},
+        {"pix_fmt": "yuv420p10le"},
+        {"side_data_list": [{"rotation": 90}]},
+    ],
+)
+def test_canonical_video_probe_only_accepts_unfiltered_matching_video(monkeypatch, changed):
+    stream = {
+        "codec_name": "h264",
+        "width": 640,
+        "height": 360,
+        "pix_fmt": "yuv420p",
+        "sample_aspect_ratio": "1:1",
+        "field_order": "progressive",
+        "r_frame_rate": "30/1",
+        "avg_frame_rate": "30/1",
+    }
+    stream.update(changed)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(returncode=0, stdout=json.dumps({"streams": [stream]})),
+    )
+    assert ffmpeg_module.probe_canonical_video(
+        Path("source.mp4"), width=640, height=360, fps=30
+    ) is (not changed)
 
 
 def test_run_ffmpeg_cancel_event_terminates_owned_process(monkeypatch: pytest.MonkeyPatch) -> None:

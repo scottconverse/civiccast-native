@@ -76,7 +76,7 @@ console" below). Selection is also exposed over the staff API at
 The current defaults and component identities are:
 
 1. **Live captions** use the included Whistle CPU engine as the primary and
-   Whisper fallback. In the Beta 14 candidate, failed Whistle probes use a
+   Whisper fallback. Failed Whistle probes use a
    30-second initial cooldown followed by capped delays of 60, 120, 240 and
    300 seconds; retries continue while the affected channel has audio. A
    10-second slow warning is emitted, and the 30-second watchdog terminates
@@ -862,10 +862,12 @@ for the full live-verification ledger and the disclosed follow-up work.
 
 ## Approve summaries and export signed records
 
-The v0.6 workflow turns committed transcript cues into an operator-approved
-summary and a veraPDF-validated PDF/A-3B signed-record export (an archival PDF
-format with an automated validator that legal and records teams can trust
-long-term). The exported artifact includes sourced-claim, provenance,
+The summary workflow turns supplied transcript cues into a draft for operator
+review and supports PDF/A-3B record export. The console selects approved caption
+cues; authorized API callers can supply cues directly. Citation checks validate
+the supplied cue IDs and time ranges, not the semantic truth of every claim.
+Read the export validation result: veraPDF validation and fallback local shape
+checks are distinct evidence. The exported artifact includes sourced-claim, provenance,
 approval, and timestamp-token sidecars. The timestamp authority is deterministic/local by default, so do not
 describe the export as having legal-record status or real timestamp-authority
 proof unless a real authority has been configured and verified. It is
@@ -984,6 +986,14 @@ overridden.
 
 ## Backup, Restore, and Disaster Recovery
 
+Use **Station backup and restore** for encrypted station archives, manual or
+scheduled backups, retained-copy limits and progress. Archives include the
+configured database, station files, portable credentials and selected media.
+Restore with `civiccast backup restore` while station writers are stopped;
+the [station backup guide](ops/station-backup.md) explains passphrases, archive
+verification, replacement paths and restoration. Keep an off-station copy.
+Installer rollback is temporary protection during setup, not this backup.
+
 CivicCast backup planning separates the working media store from the archival
 record. Keep database backups, media originals, HLS outputs, local NAS archive
 copies, signed-record exports, and release evidence in separate retention
@@ -1061,21 +1071,33 @@ See
 [ActivityPub Federation Ops](ops/activitypub-federation.md). Email, RSS,
 webhook, and podcast delivery remain the non-federated resident-notice paths.
 
+### Managing other CivicCast stations (Sprint 6 source)
+
+**Other stations** browses trusted peers' published programme catalogs and shows
+their configured channels, current programme and latest health timestamp.
+Setup admins and meeting operators can request channel start/stop; read-only
+staff cannot. Requests are queued on the remote station, and operators refresh
+status to confirm execution. Administrators provision trusted public/staff HTTPS
+origins and credential references as described in
+[Station federation](ops/station-federation.md). This is separate from ActivityPub
+and TownLight suite integration (owner-deferred to 2.0), and is not in the published Beta 19 package.
+
 ### Podcast episodes
 
-Operators can generate a podcast episode for a published recording. The local
-deterministic implementation records the audio extraction/normalization
-contract with `-16 LUFS` loudness metadata, stable GUIDs, chapters, signed
-transcript links, summary show notes, and a public RSS item. The feed endpoint
-is suitable for local structural validation and later real podcast-directory
-submission checks.
+Operators can generate a podcast episode from a published recording's local
+media file. CivicCast extracts and normalizes audio into an MP3, serves the
+enclosure and updates the channel RSS feed with its URL and actual byte length.
+The station needs FFmpeg and a configured public URL. Missing source media or
+conversion failures appear as retryable publication failures.
 
 ### Publish workflow behavior
 
 The publish dashboard now has independent audience surfaces for podcast and
 subscriber notifications. When approved, the podcast surface generates an
-episode and the subscriber-notification surface prepares the notification
-payload. These rows can degrade independently, just like YouTube reach. The
+episode and the subscriber-notification surface delivers notices through the
+configured providers, recording outcomes and retrying eligible failures.
+Mock providers report simulated delivery. These rows can degrade independently,
+just like YouTube reach. The
 public-record archive requirement still depends on the resident portal,
 Internet Archive, Local NAS rsync, and Local NAS ZFS surfaces only.
 
@@ -1220,7 +1242,7 @@ version from the station you are monitoring.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.19","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.20","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the
@@ -1337,7 +1359,7 @@ This reference is maintained in `docs/technical-ops-reference.md`. The user-faci
 
 ## Published package evidence and historical release identity
 
-This working-tree reference follows the published `CivicCast 1.0.0-beta.19`.
+This working-tree reference follows unpublished candidate `CivicCast 1.0.0-beta.20`; installation verification is pending.
 The [Beta 19 verification record](releases/v1.0.0-beta.19-verification.md)
 identifies the signed package and its scoped checks. No Beta 19
 cross-version upgrade or extended soak is claimed. Earlier results remain tied

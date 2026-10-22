@@ -35,6 +35,7 @@ export const ROUTE_PATHS: Record<RouteId, string> = {
   'station-profile': '/station-profile',
   backups: '/backups',
   stationimport: '/station-import',
+  stations: '/stations',
   network: '/network',
   commissioning: '/commissioning',
   'custom-fields': '/custom-fields',

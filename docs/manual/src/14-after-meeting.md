@@ -105,26 +105,26 @@ Trimming sets where the video starts and ends. It does not change the original f
 
 The preview has video playback controls. Use **Play selected trim** to inspect the chosen IN/OUT range. For packaged recordings, CivicCast plays the HLS copy and translates its playhead into the original source timeline, so trim points and chapter times retain their source positions. If the preview fails, use its retry action; the original recording is preserved.
 
-> **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). Do not promise residents chapter marks from this editor.
+> **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). To expose these markers to residents, use **Sync from chapters** on an agenda, review its times, and publish that agenda.
 
-> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. Once a video is packaged, the console does not offer **Package for playback** again for that row, so a later trim change does not reach the packaged copy. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
+> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and Spanish caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 
-> **Note:** A Beta 15 field run found generated caption cues before and after one trimmed playback range. The report did not establish the resident player's subtitle offset or a general behavior; retest the mapping against the package in use. This is a Beta 17 follow-up, not a confirmed Beta 16 defect. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** Caption review keeps timestamps from the original recording. Published English and Spanish captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
 
 If saving fails with a message about another writer, someone else changed the video while you were editing. Close the editor, open the video again and redo your change. If the video is already on a schedule item that is committed to air, the save is refused with the "cannot be edited ... already published" message described under [Edit a video's public details](#ch-after-meeting).
 
 ## Package a video for playback
 
-1. On the Assets screen, find a Validated or Recorded row that has a stored source file and says **Not packaged yet**.
+1. On the Assets screen, find a Validated or Recorded row with a stored source file and no streamable copy. An unpackaged Validated row says **Not packaged yet**; an unpackaged Recorded row says **Not servable yet**.
 2. Click **Package for playback**. The button says "Packaging..." while it works.
 
 You should see the Status change to **Packaged**. This needs the publish_operator or setup_admin role; otherwise the row says "A publish operator or setup administrator must package this recording."
 
 CivicCast packages one video at a time. If another is already running you see "Another recording is already being packaged…". Wait and try again. If packaging fails, the message is the server's text or "Packaging failed. The original file was kept; try again."
 
-The list offers **Package for playback** for Validated and Recorded assets with a stored source file and no streamable copy yet. This also lets you package a recording whose automatic packaging did not finish.
+The list offers **Package for playback** for Validated and Recorded assets with a stored source file, or **Repackage for playback** when a streamable copy already exists. This also lets you package a recording whose automatic packaging did not finish.
 
 Packaged is not the same as published. Next, go to the Publish screen ([Publishing, and what residents see](#ch-publishing)).
 
@@ -134,7 +134,7 @@ Packaged is not the same as published. Next, go to the Publish screen ([Publishi
 2. In the **Technical** card, next to **Published**, click **Remove from portal**.
 3. Read the dialog and confirm. It says: "Residents will no longer be able to view or find it there. This only affects portal visibility -- the asset row, its media, and the Internet Archive / syndication copies are untouched."
 
-The video disappears from the resident portal. This needs publish_operator or setup_admin.
+The video disappears from the resident portal. Publish shows it as a draft awaiting portal approval again; previous delivery history is retained. This needs publish_operator or setup_admin.
 
 ## Check a video's readiness, hold it, or replace its file
 
@@ -148,9 +148,9 @@ To place a **legal hold**, optionally type a reason, click **Place legal hold (b
 
 To replace the video file, choose a **Replacement video file** and confirm "Replace this asset's source file?". CivicCast renames the old file aside and never deletes it, and the video goes back to State **Validated**. This needs publish_operator or setup_admin.
 
-> **Warning:** The replace-source dialog says viewers see the new file "immediately once processing finishes". In beta.11 that is not what the code does. The replacement resets the video to Validated and clears its transcode jobs, but it leaves the old streamable copy and the publish date in place. Residents keep seeing the old video. The Assets list also hides **Package for playback** because a streamable copy still exists. Do not rely on replacing a published video's file to change what residents see.
+> **Warning:** The replace-source dialog says viewers see the new file "immediately once processing finishes". In beta.11 that is not what the code does. The replacement resets the video to Validated and clears its transcode jobs, but it leaves the old streamable copy and the publish date in place. Residents keep seeing the old video. Use **Repackage for playback** in the Assets list to rebuild the streamable copy from the replacement source. Until that succeeds, residents keep seeing the earlier package.
 
-> **For IT staff:** To rebuild the copy, an administrator can call `POST /api/staff/assets/{id}/package` for that asset. See the API appendix.
+> **For IT staff:** The repackage action uses `POST /api/staff/assets/{id}/package` for that asset. See the API appendix.
 
 ## Audio tracks, loudness plan and caption status
 
@@ -182,6 +182,8 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 - Every selected Spanish cue was rejected. Open the Review queue, choose Spanish, and edit or approve cues. The Spanish track attaches once review is complete and at least one cue is approved or edited. Under **Attach English after its review**, reviewed English can already be available.
 - Spanish is selected but no translation model is available. The row says to install or repair it under "Settings > AI Models > Translation" and run 'civiccast doctor'. With **Wait for every selected language**, CivicCast retries with growing waits; after its attempts run out, the card shows **Failed** and a records clerk must click **Retry** after repair. With **Attach English after its review**, reviewed English attaches while the active job waits for Spanish. English-only jobs do not encounter this hold.
 
+Published English and Spanish captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps. Repackaging rebuilds existing tracks from reviewed source cues before replacing the old package; incomplete matching review or an unusable caption range leaves the previous package intact.
+
 ## Review and correct captions
 
 The **Review queue** (page heading "Caption review") is where a person checks the machine's caption lines before the public sees them.
@@ -191,7 +193,7 @@ This queue is for recorded-caption jobs. Ordinary live captions go to the broadc
 1. In the left menu, click **Review queue**. It opens on the **Pending** tab. The other tabs are **All**, **Edited**, **Approved** and **Rejected**, and a **Search** box above them filters by asset ID or caption text.
 2. To work on one language, click **English** or **Spanish** in the **Language** row. **All languages** shows both.
 3. Each card is one cue. It shows the recording's asset ID, the cue's time range, a language badge (EN or ES) and a status. The left box **Machine cue** is the computer's text and cannot be changed. The right box **Reviewed text** is yours to edit.
-4. If the cue is wrong, change the **Reviewed text**, then click **Save edit**. The status becomes **Edited**.
+4. If the cue is wrong, change the **Reviewed text**, then click **Save edit**. The status becomes **Edited**, and the card leaves **Pending**. If you want that correction included in an AI summary, switch to **Edited** and click **Approve** on the saved cue. Complete the audio-evidence check below if the cue has low confidence.
 5. If the cue is right, click **Approve**. The status becomes **Approved**.
 6. If the cue should not be shown at all, click **Reject**.
 
@@ -207,7 +209,7 @@ What each button really does:
 
 Approved and Edited cues both become captions, using the reviewed text. Rejected cues are left out. Pending cues hold their language's track back; selected Spanish review does not hold reviewed English back when **Attach English after its review** is selected.
 
-> **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. After **Save edit**, the cue is already counted as decided. Click **Approve** afterward only if you need the status to read Approved (see the summary section, which uses Approved cues only).
+> **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. **Save edit** counts as a decision for the caption track. For AI summaries, open **Edited** and approve the saved correction as well; the console's summary workflow uses Approved cues only.
 
 > **Warning:** **Reject** asks no question and discards the reviewed text. A rejected cue can be approved again later, which then approves the machine's original text, not your earlier correction.
 
@@ -243,7 +245,7 @@ CivicCast can write a draft summary of a meeting from its approved caption lines
 
 ### Make a summary
 
-1. Approve at least some caption cues for the recording in the Review queue. Only **Approved** cues are used. Cues that are Edited but not Approved are not used.
+1. Approve at least some caption cues for the recording in the Review queue. This console workflow uses only **Approved** cues. If you corrected cues with **Save edit**, open **Edited** and click **Approve** on those saved corrections, completing the low-confidence audio-evidence check when required. Edited cues that have not been Approved are excluded from the summary.
 2. Open the recording's detail page and find the **AI summary** card, under the **Offline caption jobs** card.
 3. Click **Generate summary**. The chip reads "queued" and then "generating…". The screen says generating locally can take 1-6 minutes on a CPU-only station, and you can close the tab; the job keeps running.
 4. When it finishes the card says "Summary generated. Review it in Summary review".
@@ -254,7 +256,7 @@ If there are no approved cues the card says "No committed transcript cues yet. A
 
 Local generation checks memory before loading the summary model and reserves 8 GiB for station operation. A resource-deferral message explains how to recover; wait for memory to become available or choose a smaller model before retrying. CivicCast unloads the local generation model after the request completes.
 
-> **Note:** In one Beta 15 field run, 12.7 GiB was available against an 8 GiB model request plus an 8 GiB broadcast reserve, so the safeguard deferred generation. The guard worked, but summary editing, approval, export and publication were not completed in that run. Usability and full-workflow follow-up is recorded for Beta 17; this observation does not establish a Beta 16 defect. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+> **Note:** In one Beta 15 field run, 12.7 GiB was available against an 8 GiB model request plus an 8 GiB broadcast reserve, so the safeguard deferred generation. The guard worked, but summary editing, approval, export and publication were not completed in that run. Usability and full-workflow follow-up was recorded for Beta 17; this observation does not establish a defect in the current package. See the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
 2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from civiccast.egress.cg_bridge import EgressCgOverlayProof
@@ -122,6 +123,7 @@ class PlayoutSupervisor(EgressDaemon):
                 channel_id,
             )
             return
+        self._operator_stopped_channels.discard(channel_id)
         self.request_live_takeover(channel_id=channel_id, live_source_plan=plan)
 
     def request_live_takeover(
@@ -154,7 +156,9 @@ class PlayoutSupervisor(EgressDaemon):
         # resolve the scheduled source again, and a content-reload rebuilds the
         # program leg back to scheduled content seamlessly (the slate pad is
         # untouched). Not a pad toggle — the program-leg content changes.
-        self._request_reload(channel_id)
+        # End is the live source's boundary. An open contribution feed has no
+        # natural EOS to await, even when the schedule currently resolves empty.
+        self._request_reload(channel_id, handoff_at=datetime.now(UTC))
 
     def request_fallback_slate(
         self,

@@ -407,3 +407,27 @@ class TestPackSlateFallback:
             pack_slate_fallback(output_dir)
 
         assert output_dir.exists()
+
+
+def test_packager_records_actual_fractional_source_range(tmp_path: Path) -> None:
+    import json
+
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    with (
+        patch("civiccast.stream.packager.generate_slate", side_effect=_make_stub_slate),
+        patch(
+            "civiccast.stream.packager._encode_rendition",
+            side_effect=lambda source, output, config, **kwargs: _make_stub_rendition_playlist(
+                output, config.name
+            ),
+        ),
+    ):
+        result = pack_vod_asset(
+            source, tmp_path / "package", trim_in_seconds=2.25, trim_out_seconds=65.5
+        )
+    assert json.loads((result.output_dir / "playback-timeline.json").read_text()) == {
+        "version": 1,
+        "source_start_seconds": 2.25,
+        "source_end_seconds": 65.5,
+    }

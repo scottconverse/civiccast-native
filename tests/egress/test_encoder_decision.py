@@ -127,3 +127,22 @@ def test_windows_h264_works_when_only_hevc_absent() -> None:
         codec="h264_vaapi", is_windows=True, allow_software_fallback=False, probe=probe
     )
     assert decision == EncoderDecision(encoder_override="mfh264enc", warning=None)
+
+
+@pytest.mark.parametrize(
+    "available,expected", [(("nvh264enc", "mfh264enc"), "nvh264enc"), (("mfh264enc",), "mfh264enc")]
+)
+def test_declarative_h264_automatically_prefers_available_hardware(available, expected):
+    decision = decide_encoder(
+        codec="h264", is_windows=True, allow_software_fallback=True, probe=_present(*available)
+    )
+    assert decision.encoder_override == expected
+
+
+def test_declarative_h264_preserves_existing_cpu_default_without_hardware():
+    decision = decide_encoder(
+        codec="h264", is_windows=True, allow_software_fallback=False, probe=_present()
+    )
+    assert decision.encoder_override == "openh264enc"
+    assert decision.warning is not None
+    assert "CPU" in decision.warning

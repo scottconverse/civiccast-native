@@ -281,7 +281,12 @@ Assert ((Get-Content "$app\models\separate-copy") -eq 'old-model-bytes') 'indepe
     )
 
 
-def test_service_restore_preserves_start_mode_and_prior_running_state(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "account", ["LocalSystem", r"NT AUTHORITY\SYSTEM", r"NT SERVICE\CivicCastSupervisor"]
+)
+def test_service_restore_preserves_start_mode_and_prior_running_state(
+    tmp_path: Path, account: str
+) -> None:
     run_recovery(
         tmp_path,
         r"""
@@ -297,9 +302,11 @@ foreach ($mode in @(2, 3, 4)) {
         $script:commands.Clear()
         $state.Service = @{ Running=$running; Tree=@{ Values=@(
             @{Name='Start'; Value=$mode}, @{Name='ImagePath'; Value='old-pythonservice.exe'},
-            @{Name='DisplayName'; Value='CivicCast'}, @{Name='DependOnService'; Value=@()}
+            @{Name='DisplayName'; Value='CivicCast'}, @{Name='DependOnService'; Value=@()},
+            @{Name='ObjectName'; Value='SAVED_ACCOUNT'}
         ); Children=@{} } }
         & $script:restoreNativeService $state
+        Assert ($script:commands[0] -like '*obj= SAVED_ACCOUNT *') 'prior service identity changed'
         $startName = switch ($mode) { 2 { 'auto' } 3 { 'demand' } 4 { 'disabled' } }
         Assert ($script:commands.Contains('start CivicCastSupervisor') -eq $running) 'prior running state changed'
         if ($running) {
@@ -310,5 +317,31 @@ foreach ($mode in @(2, 3, 4)) {
         }
     }
 }
-""",
+""".replace("SAVED_ACCOUNT", account),
+    )
+
+
+@pytest.mark.parametrize("account", [None, r".\operator"], ids=["missing", "unsupported"])
+def test_service_restore_rejects_missing_or_unsupported_identity(
+    tmp_path: Path, account: str | None
+) -> None:
+    run_recovery(
+        tmp_path,
+        r"""
+function Get-Service($Name) { return $null }
+$state.Service = @{ Running=$false; Tree=@{ Values=@(
+    @{Name='Start'; Value=2}, @{Name='ImagePath'; Value='old-pythonservice.exe'}
+    SAVED_ACCOUNT_ENTRY
+); Children=@{} } }
+try {
+    & $script:restoreNativeService $state
+    throw 'unsupported identity was accepted'
+} catch {
+    Assert ($_.Exception.Message -eq 'Unsupported saved service identity; refusing to substitute LocalSystem.') 'unexpected restore failure'
+}
+Assert ($script:events.Count -eq 0) 'unsupported identity changed service or registry'
+""".replace(
+            "SAVED_ACCOUNT_ENTRY",
+            "" if account is None else ", @{Name='ObjectName'; Value='" + account + "'}",
+        ),
     )

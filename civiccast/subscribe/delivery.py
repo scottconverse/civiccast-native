@@ -80,6 +80,7 @@ class MailboxProvider(Protocol):
 
 class WebhookProvider(Protocol):
     def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str: ...
+    def send_confirmation(self, *, url: str, confirmation_token: str, secret: str) -> None: ...
 
 
 def notification_body(payload: NotificationPayload) -> str:
@@ -145,6 +146,15 @@ class LocalWebhookClient:
 
     def __init__(self) -> None:
         self.requests: list[dict[str, str]] = []
+
+    def send_confirmation(self, *, url: str, confirmation_token: str, secret: str) -> None:
+        self.requests.append(
+            {
+                "url": url,
+                "confirmation_token": confirmation_token,
+                "signing_secret": secret,
+            }
+        )
 
     def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str:
         signature = sign_payload(payload.model_dump(mode="json"), secret)
