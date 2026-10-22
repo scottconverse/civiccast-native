@@ -393,7 +393,7 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ## Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
+This chapter describes the published Beta 20 edition. For package results, use the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md). The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) and [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) remain historical. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ## Related
 

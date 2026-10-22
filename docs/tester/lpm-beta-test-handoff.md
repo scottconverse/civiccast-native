@@ -1,10 +1,10 @@
 # CivicCast Beta Test Handoff For Longmont Public Media
 
 > **Archived Beta 10 handoff.** This document records the Beta 10 tester
-> packet and is not a current release guide. Beta 12 is the current release;
+> packet and is not a current release guide. Beta 20 is the current release;
 > use the [current User Manual](../USER-MANUAL.md), [Windows install
 > guide](../../INSTALL-WINDOWS.md), [tester start page](START-HERE.md), and
-> [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md).
+> [Beta 20 verification record](../releases/v1.0.0-beta.20-verification.md).
 
 ## Historical Beta 10 Release Record
 
@@ -44,7 +44,7 @@ install is also superseded but still runs; see "Upgrading from
 `v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
 upgrade-baseline kit and is never sent to Sergio/LPM.
 
-Use the Beta 11 manual and install guide linked above instead of following this
+Use the current Beta 20 manual and install guide linked above instead of following this
 archived package procedure for a current installation.
 
 The installer itself is small; the large AI components (caption engine, local

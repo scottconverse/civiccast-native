@@ -281,7 +281,7 @@ You are signed in and taken to the same place as after a normal sign-in. Every o
 
 > **Warning:** Your printed kit may still list an old password. After a recovery, write the new password somewhere safe. While you can still sign in, a Setup admin can make a fresh set of eight codes with **Regenerate recovery kit** in the **Security** card on **Station Profile**; the old codes stop working at once, and the new kit lists the codes only, not the password. If the password and all recovery codes are lost, a local Windows administrator can recover the account offline with the administrator-reset command in [Security and privacy](#ch-security). That reset preserves station data, revokes existing first-admin sessions and old recovery codes, and requires a fresh recovery kit afterward.
 
-The Beta20 source candidate includes station-state recovery repair so the normal service can replace the session automatically without manually changing permissions. Expected behavior is a return to normal sign-in, with no permission edits needed; private-key protection is unchanged. Final installed proof is pending.
+The Beta20 package includes station-state recovery repair so the normal service can replace the session automatically without manually changing permissions. In the signed Beta20 package, recovery/reset and normal HTTP login were exercised without manual ACL repair; private-key protection remained in place. The interactive prompt was not exercised.
 
 ### Sign out
 
@@ -4343,7 +4343,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ### Package status
 
-These instructions describe the unpublished Beta 20 candidate edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
+These instructions describe the published Beta 20 edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies that package's scoped checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
 
 ### Related
 
@@ -4741,7 +4741,7 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ### Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
+This chapter describes the published Beta 20 edition. For package results, use the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md). The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) and [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) remain historical. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ### Related
 
@@ -5041,7 +5041,7 @@ The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-
 
 ### Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+This chapter describes the published Beta 20 edition. Use the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 #### Report a security problem
 
@@ -5469,7 +5469,7 @@ If nothing here matches, do the following in order. First, run `curl.exe http://
 
 ### Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. For package-specific results, use the record matching the installed version. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
+This chapter describes the published Beta 20 edition. For package-specific results, use the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md). The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) and [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) remain historical.
 
 ### Related
 
@@ -5941,7 +5941,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ### Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the published Beta 20 edition. Use the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) for that package's scoped checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Commission each external service and headend for the station's actual configuration.
 
 ### Related
 
@@ -6344,7 +6344,7 @@ On a fresh or restarted relay, cleanup withdraws the old public playlist before 
 
 CivicCast decides who a caller is in the control plane, with a bearer token, and what they may do with a role. Figure 16-12 shows how an operator signs in at the console and how a request is checked.
 
-![Figure 16-12. Sign-in and request authorization.](manual/diagrams/d48d8a049a6f.png){width=100%}
+![Figure 16-12. Sign-in and request authorization.](manual/diagrams/e103930a14a6.png){width=100%}
 
 **What this shows.** First-admin setup and sign-in use the local First Setup screen. Staff use the separate `/login` page and `POST /api/staff/auth/login`; it returns a station-local session token after checking the username and password. The first administrator uses `POST /api/setup/login` on the station computer. Sessions last 12 hours, sign-in does not end another valid session, and at most 20 console sessions are retained. The browser sends its token on protected requests. The middleware checks `/api/staff/*` paths; `/api/setup/*` has a separate local-only guard, and public routes are intentionally available without staff sign-in. The three token kinds are:
 
@@ -9367,7 +9367,7 @@ Checklist:
 
 ## Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; the unpublished Beta 20 candidate needs its own package record. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; the published Beta 20 package checks are in the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md). The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ### Historical Beta 11: three channels, 72 hours, 99.78% live caption-input coverage
 
@@ -9429,7 +9429,7 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ### H.6 How to use this evidence
 
-Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the unpublished Beta 20 candidate, use the current operating chapters; installation verification is pending; keep each measured result associated with its recorded source and run.
+Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the published Beta 20 package, use the current operating chapters and its verification record; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->
 
@@ -10105,11 +10105,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the unpublished Beta 20 candidate edition. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) applies to that earlier signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual covers the published Beta 20 edition. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies the current package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.20** | — | Unpublished candidate edition; installation verification is pending | Consolidates Sprint 6 preparation, output, webhook, Roku and station-integration changes. |
+| **v1.0.0-beta.20** | 2026-10-21 | Published package; scoped checks in the Beta 20 verification record | Consolidates Sprint 6 preparation, hardware-aware encoding, webhook/Roku and station-federation changes. TownLight integration remains deferred to 2.0. |
 | **v1.0.0-beta.18** | 2026-10-15 | Published package; historical record | Guided Cablecast station import; see its verification record. |
 | **v1.0.0-beta.17** | 2026-10-15 | Superseded by beta.18 | Published signed package; fresh Sandbox install and service checks passed, while the product-engine TSDuck probe timed out. See the [matching verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md). |
 | **v1.0.0-beta.16** | 2026-10-14 | Superseded by beta.17 | Published signed package with recorded clean install, Beta 15 upgrade, restricted service identity, installed runtime smoke and uninstall checks in a Windows 11 Hyper-V guest. See the [matching verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md). |

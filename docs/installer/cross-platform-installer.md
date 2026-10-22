@@ -30,20 +30,20 @@ each other's runtime.
 | Windows 11 - native line (this repository) | Native Windows | Tauri/NSIS setup app and native payload | session-0 Windows service | Readiness is governed by ADR 0021 and `docs/design/spec-installer-lifecycle.md`. |
 | Windows 11 - WSL line (retired; separate archived repository) | Ubuntu on WSL2 | Tauri/NSIS setup app plus WSL2 bootstrap manifest | systemd inside WSL2 | Historical only -- this repository does not build this row. |
 
-## Windows Setup App
+## Windows Setup App (retired WSL line)
 
-This section describes the current public WSL-line setup app. Its Windows
-operator entry point is the Tauri setup executable built from
-`civiccast/apps/installer` with `npm run tauri:build`. The setup app gives the
-operator a guided readiness walkthrough, while CivicCast services still run
-inside WSL2 Ubuntu per ADR 0003. ADR 0021 governs the separate native Windows
-product and its installer lifecycle. A valid WSL-line release artifact must be copied from
+This section describes the retired WSL-line setup app as historical context; it is not shipped by this repository. Its Windows
+operator entry point was the Tauri setup executable built from
+`civiccast/apps/installer` with `npm run tauri:build`. The setup app gave the
+operator a guided readiness walkthrough, while CivicCast services ran
+inside WSL2 Ubuntu per ADR 0003. ADR 0021 governs the native Windows
+product and its installer lifecycle. A valid WSL-line release artifact had to be copied from
 Tauri's NSIS bundle output and hashed by `scripts/build_release_artifacts.py
---windows-installer`; placeholder bytes or a bootstrap manifest alone do not
+--windows-installer`; placeholder bytes or a bootstrap manifest alone did not
 satisfy the Windows double-click installer lane.
 
-When WSL2 Ubuntu is missing, the setup app must offer `Install WSL2 Ubuntu` and
-launch the Microsoft WSL installer with Windows elevation. It must not leave a
+When WSL2 Ubuntu was missing, the setup app had to offer `Install WSL2 Ubuntu` and
+launch the Microsoft WSL installer with Windows elevation. It was not to leave a
 non-technical beta tester at a bare terminal command as the only path forward.
 
 ## Artifact Verification

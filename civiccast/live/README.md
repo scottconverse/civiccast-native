@@ -55,7 +55,7 @@ Architectural decisions live in:
 Design rationale for the rest of the slice (preflight checklist contract,
 staff API endpoint shapes, source-type enumeration, QA-005 + QA-007 backend
 correctness fixes) lives at
-[`docs/research/v04-slice1-broadcast-spine-design.md`](../../docs/research/v04-slice1-broadcast-spine-design.md).
+`docs/research/v04-slice1-broadcast-spine-design.md` (historical design document, not included in this repository). The implementation and ADRs linked above are the available references.
 
 ## Public API
 

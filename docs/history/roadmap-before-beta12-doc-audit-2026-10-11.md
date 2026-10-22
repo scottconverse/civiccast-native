@@ -1,4 +1,4 @@
-> **Historical working record, preserved October 11, 2026.** Current Beta 12 guidance is in the [release verification record](../releases/v1.0.0-beta.12-verification.md) and [project status](../../PROJECT-STATUS.md). The dated checkpoints below do not define current release status.
+> **Historical working record, preserved October 11, 2026.** Current Beta 20 guidance is in the [release verification record](../releases/v1.0.0-beta.20-verification.md) and [project status](../../PROJECT-STATUS.md). The dated checkpoints below do not define current release status.
 
 # CivicCast Roadmap
 
@@ -11,7 +11,7 @@
 > (USB-delivered) is also superseded.
 > `v1.0.0-beta.2` was never published -- it exists only as an internal
 > Gate A upgrade-baseline kit. See
-> [`docs/releases/release-truth.yaml`](releases/release-truth.yaml) for the
+> [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 > authored release-state record. (The `v1.0.0-rc18` release named on this
 > page below was the retired, separate WSL2 line's -- repository
 > `scottconverse/civiccast`, not this repository -- last published release;
@@ -24,13 +24,13 @@
 
 ## Current native Windows work
 
-Beta 12 is published. It adds unattended-operation hardening and completes operator workflows: upgrades and recovery, caption health, bounded logs, summary approval/export, administrator and Control Room recovery, remote media controls, alert routing and presentation, paywall settings, and updated documentation. See its [verification record](releases/v1.0.0-beta.12-verification.md).
+Beta 12 is published. It adds unattended-operation hardening and completes operator workflows: upgrades and recovery, caption health, bounded logs, summary approval/export, administrator and Control Room recovery, remote media controls, alert routing and presentation, paywall settings, and updated documentation. See its [verification record](../releases/v1.0.0-beta.12-verification.md).
 
-A Beta 11 host ran three channels for 48 hours with **99.88% live caption-input coverage**. See the [48-hour soak report](ops/beta11-host-caption-performance-48-hour-2026-10-10.md).
+A Beta 11 host ran three channels for 48 hours with **99.88% live caption-input coverage**. See the [48-hour soak report](../ops/beta11-host-caption-performance-48-hour-2026-10-10.md).
 
 The longer-term plan below is retained as historical context. Its capability
 claims and old-platform evidence do not establish current native Windows
-package acceptance. See [project status](../PROJECT-STATUS.md) and the release
+package acceptance. See [project status](../../PROJECT-STATUS.md) and the release
 verification record for current evidence.
 
 A plain-English view of where CivicCast is today and where it's headed. "Now" is the
@@ -76,12 +76,12 @@ scale, with the results published.
 the direct-from-station ceiling is now measured —
 about **216 HD (1080p) viewers on a 1 Gbps link** (fewer on slower connections), bound by
 the station's upload speed rather than the software
-([direct-delivery ceiling](releases/0.2.0-direct-delivery-ceiling.md)). To carry a bigger
+([direct-delivery ceiling](../releases/0.2.0-direct-delivery-ceiling.md)). To carry a bigger
 crowd, 0.2.0 adds an **automatic CDN surge switch** (off by default): under load the
 station publishes one copy to a CDN and hands viewers off, then releases back to local at
 idle. The switch is **validated end-to-end in the lab — a simulated crowd rides it with
 zero stalls, it holds the CDN copy fresh under load, and it evicts at idle**
-([switch validation](releases/0.2.0-switch-validation.md)); provisioning the reference CDN
+([switch validation](../releases/0.2.0-switch-validation.md)); provisioning the reference CDN
 is reproducible via OpenTofu, an infrastructure-automation tool (`deploy/tofu/cdn-r2`). The remaining claim — that a **real**
 CDN then holds *thousands* of concurrent viewers — is measured at beta against a real CDN,
 not asserted from the lab.

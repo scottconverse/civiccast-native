@@ -634,7 +634,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ## Package status
 
-These instructions describe the unpublished Beta 20 candidate edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
+These instructions describe the published Beta 20 edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies that package's scoped checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
 
 ## Related
 

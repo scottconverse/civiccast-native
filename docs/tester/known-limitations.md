@@ -189,8 +189,9 @@ which the installer must extract and verify before claiming readiness.
 repository's native Windows line. Its cited verification documents
 (`docs/releases/v1.0.0-rc{13,17,18}-verification.md`) are not present in this
 repository and are not linked here for that reason. `v1.0.0-beta.1` (the
-current native release) was USB-delivered; no clean-host proof record for the
-native line is published in this repository yet.
+first native release) was USB-delivered; the current native-line package
+evidence is in the [Beta 20 verification
+record](../releases/v1.0.0-beta.20-verification.md).
 
 <details>
 <summary>Expand: retired WSL2-line (rc13-rc18) clean-machine proof record</summary>

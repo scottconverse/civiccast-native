@@ -6,7 +6,7 @@ Snapshot before the October 11 public station-bundle repair. Not current install
 
 > **This repository (`civiccast-native`) ships ONE product: the native
 > Windows station.** No WSL, no Docker, no Linux install target -- see
-> [BRANCHES.md](BRANCHES.md). It is a signed installer that registers a
+> [BRANCHES.md](../../BRANCHES.md). It is a signed installer that registers a
 > Windows service through the SCM and supervises the control plane,
 > Postgres, and the media workers from a bundled runtime, at
 > `C:\Program Files\CivicCast (Native)\`.
@@ -27,22 +27,22 @@ five-snapshot check did not complete. An October 11 first-install attempt
 using the exact public artifacts failed activation with exit 123 because four
 required signed station packs were missing from the public bundle. This was
 not a clean-machine qualification; interrupted repair was not run. See the
-[Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+[Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md).
 Beta 11 and its recorded package/host observations remain historical.
 
 `v1.0.0-beta.10` (published 2026-10-02) is superseded. Its historical Gate A
 clean-install lane passed 10 of 10 criteria; the upgrade and download-only
 lanes were not run. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published;
 their work was included in beta.10. See
-[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)
 for that release's record. Watch the Beta 12 release page, not
 `scottconverse/civiccast` (the retired, separate WSL2-line repository) and not
 any `v1.0.0-rcNN` tag, which belongs to that other repository. See
-[`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
 
 `v1.0.0-beta.7` (published 2026-09-15; its record is
-[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md)),
+[`docs/releases/v1.0.0-beta.7-verification.md`](../releases/v1.0.0-beta.7-verification.md)),
 `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
@@ -92,7 +92,7 @@ never a release a station receives.
   install attempt using public Beta 12 artifacts failed activation with exit
   123 because four signed station packs were absent; interrupted repair was
   not run. See the
-  [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md);
+  [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md);
   evidence from an earlier version does not qualify a different package or
   upgrade source.
 
@@ -110,7 +110,7 @@ index against that stale pack cache. Always bring the full kit for this one
 upgrade. **From `beta.3` onward, upgrades are download-only**: `beta.3` to
 `beta.4` and every later step downloads `setup.exe` and the runtime packs
 and upgrades in place, keeping recordings, settings, and AI models. See
-[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
+[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)
 for why.
 
 Setup remains visibly active during long steps: it reports its current
@@ -122,9 +122,9 @@ seconds instead of appearing frozen.
 A clean-machine test starts with the documentation, not with a copied `.exe`.
 Before running the installer, read these in order:
 
-1. [Beta Tester Start Here](docs/tester/START-HERE.md)
+1. [Beta Tester Start Here](../tester/START-HERE.md)
 2. This Windows install page
-3. [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
+3. [Windows Release Trust And Verification](../install/windows-release-trust.md)
 
 Record in the clean-machine proof report that each document was opened and read.
 If the docs and the installer/proof package disagree about version, filename,
@@ -158,7 +158,7 @@ working as a developer.
 
 ## Before Running It
 
-Read [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
+Read [Windows Release Trust And Verification](../install/windows-release-trust.md)
 before running any downloaded installer. Verify `setup.exe` against
 `SHA256SUMS.txt` and its sidecar `.sidecar.json` file first -- the trust
 page has the exact PowerShell steps.
@@ -179,7 +179,7 @@ Windows may show a blue **Windows protected your PC** screen. Do not infer a
 signature from that screen. The approved handoff must state the exact file's
 actual Authenticode status. If signed, verify the named publisher; if the result
 is `NotSigned` or differs from the handoff, stop. Read
-[docs/tester/SMARTSCREEN-WALKTHROUGH.md](docs/tester/SMARTSCREEN-WALKTHROUGH.md) before
+[docs/tester/SMARTSCREEN-WALKTHROUGH.md](../tester/SMARTSCREEN-WALKTHROUGH.md) before
 you run the installer so you know exactly what to click and why, plus how
 to independently verify the file yourself first if you want extra confidence.
 

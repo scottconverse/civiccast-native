@@ -39,8 +39,8 @@ this repository ships, read [START-HERE](../tester/START-HERE.md),
 [INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md), and
 [Windows Release Trust And Verification](../install/windows-release-trust.md)
 instead -- they carry the latest published `v1.0.0-beta.20` release guidance.
-The Beta 15 verification record distinguishes original candidate observations from
-the refreshed manual/Help bytes in this release edition. The historical native
+The [Beta 20 verification record](../releases/v1.0.0-beta.20-verification.md)
+is the current package record for this native line. The historical native
 release identities below remain background only.
 
 ## Historical: Installer Status (retired WSL2 line)

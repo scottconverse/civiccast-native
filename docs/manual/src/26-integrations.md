@@ -462,7 +462,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ## Package status and verification
 
-This chapter describes the unpublished Beta 20 candidate edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the published Beta 20 edition. Use the [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) for that package's scoped checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Commission each external service and headend for the station's actual configuration.
 
 ## Related
 

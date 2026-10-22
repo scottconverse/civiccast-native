@@ -28,7 +28,7 @@ controller requests recorded in `tester-handoff/native-caption-r7/controller/`.
 
 This contract converts the complete inherited native-Windows scope into
 bounded, remotely checkpointed work packages. It incorporates the lessons in
-[`docs/process/CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md`](../../../docs/process/CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md)
+`docs/process/CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md` (historical handoff; not included in this repository)
 and does not narrow the owner-approved v3 lifecycle specification.
 
 Authority order for this recovery:

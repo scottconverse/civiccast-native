@@ -38,11 +38,11 @@ Approving publish makes the recording public straight away — residents and
 the press can watch it before anyone has reviewed a single caption cue. That
 is deliberate: a public record must not wait days on caption review.
 
-**The recording is public immediately; captions attach after review — both
-languages together, never English alone.** So the caption queue is not a gate
-on publication, it is a gate on *captions*: until you finish both passes, the
-recording is public and uncaptioned, and when you finish, both tracks appear
-at once.
+**The recording is public immediately; captions attach after review according
+to the station setting.** With **Wait for every selected language**, both
+reviewed tracks appear together. With **Attach English after its review**,
+reviewed English can attach while Spanish work continues. The caption queue is
+therefore not a gate on publication, but it is a gate on *captions*.
 
 CivicCast will not approve a publish it cannot queue a caption job for. If
 approval fails with a message about the caption job, nothing was published —
@@ -61,13 +61,15 @@ a language filter above the list, because the two are reviewed separately:
    the same approve / edit / reject choices. The Spanish text is machine
    output too, so it gets a real review — not a rubber stamp.
 
-The recording publishes with both tracks or neither. Two consequences worth
-knowing before you start:
+With **Wait for every selected language**, the recording's selected caption
+tracks attach together; with **Attach English after its review**, reviewed
+English can attach first. Two consequences worth knowing before you start:
 
-- **Rejecting every Spanish cue does not attach English on its own.** The
-  caption job is held and says why. Edit the Spanish rows with the correct
-  wording instead — a rejected row can still be edited — and the tracks
-  attach by themselves.
+- **Rejecting every Spanish cue does not complete the selected Spanish track.**
+  If the station waits for every selected language, the caption job is held and
+  says why; if English-first is selected, reviewed English can already be
+  available while Spanish remains incomplete. Edit the Spanish rows with the
+  correct wording instead — a rejected row can still be edited.
 - **Rejecting every English cue does not finish the job either.** With no
   English there is nothing to translate and no track in either language, so
   the job is held the same way. Fix the English cues; if the audio is

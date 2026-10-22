@@ -35,7 +35,7 @@ handoff; do not click through an identity or status that differs from it.
    that exact SHA-256 — the hash must match too, not just the publisher name.
 5. Continue through the Windows installation wizard. If Windows requests
    administrator approval, check the publisher again before approving it.
-   Then follow the [field quickstart](../QUICKSTART-OPERATOR.md). Do not assume
+   Then follow the [Beta 20 tester quickstart](START-HERE.md). Do not assume
    installation succeeded merely because a window opened.
 
 The hash and valid Authenticode checks establish installer identity. Clicking

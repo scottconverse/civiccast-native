@@ -7,8 +7,10 @@
 > walkthrough's rc13/rc-artifact-soak process belongs to the separate,
 > private `scottconverse/civiccast` repository and does not apply here.
 > The native line's station-acceptance gate is Gate A -- see
-> [docs/ops/gate-a.md](../ops/gate-a.md). Kept as historical reference
-> pending a native-line station-implementation walkthrough.
+> [docs/ops/gate-a.md](../ops/gate-a.md). For current Beta 20 guidance, use the
+> [current User Manual](../USER-MANUAL.md), [Beta 20 verification
+> record](../releases/v1.0.0-beta.20-verification.md), and [tester start
+> page](START-HERE.md). This remains a historical reference.
 
 Use this walkthrough when CivicCast is ready for a station-side hands-on pass.
 It is written for the release owner and station implementer, not for CI. It is

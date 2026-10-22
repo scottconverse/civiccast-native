@@ -2,13 +2,11 @@
 
 Use this guide only for an owner-authorized Windows beta field test. It is
 candidate-neutral: the tester handoff and release verification record identify
-the approved installer and procedure. Beta 13 is the current public pre-release,
-bound to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4 and producer run
-38160778457. Its 26-asset release includes the signed installer, five runtime
-packs, manual assets, checksums, sidecar, release-matched helper and station
-bundle. The normal upgrade, one interrupted-install repair, and fresh install
-each passed a five-minute observation across all three channels. This guide
-does not itself authorize an installation, upgrade, release or station cutover.
+the approved installer and procedure. Beta 20 is the current public pre-release,
+published 2026-10-21 (MDT) from signed source ea8fb798 (PR #259 merge
+a1744918). See the [Beta 20 verification record](releases/v1.0.0-beta.20-verification.md)
+for its exact package identity and scoped checks. This guide does not itself
+authorize an installation, upgrade, release or station cutover.
 
 Give the instructions below to an assistant helping the operator. Proceed one
 step at a time, explain what the operator should see, and ask for a screenshot
@@ -49,8 +47,8 @@ signed station bundle in `station\`, and the rendered manual in
 exact handoff identifies this kit layout. `station\SHA256SUMS.txt` covers the
 station bundle; it does not verify the setup executable or runtime packs.
 
-For a Beta 13 field test, follow the owner-authorized handoff and current
-[release verification record](releases/v1.0.0-beta.13-verification.md). The
+For a Beta 20 field test, follow the owner-authorized handoff and current
+[release verification record](releases/v1.0.0-beta.20-verification.md). The
 release-matched helper is the public asset
 <code>download_windows_release_artifacts.ps1</code>; its <code>-Install</code> option downloads and
 validates the installer, runtime packs and multipart station bundle before

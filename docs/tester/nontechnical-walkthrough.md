@@ -1,9 +1,9 @@
 # Non-Technical Tester Walkthrough
 
 > **Historical Beta 10 walkthrough.** The procedure below describes Beta 10
-> only. For current Beta 12 guidance, use the [tester start page](START-HERE.md),
-> [Windows install guide](../../INSTALL-WINDOWS.md), and [Beta 12 verification
-> record](../releases/v1.0.0-beta.12-verification.md).
+> only. For current Beta 20 guidance, use the [tester start page](START-HERE.md),
+> [Windows install guide](../../INSTALL-WINDOWS.md), and [Beta 20 verification
+> record](../releases/v1.0.0-beta.20-verification.md).
 
 Use this path if your job is to see whether CivicCast makes sense for a clerk,
 meeting operator, AV helper, or public-access volunteer.

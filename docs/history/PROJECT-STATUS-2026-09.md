@@ -14,7 +14,7 @@
 > whole run, no slate or filler after startup, 40 of 41 verify checks OK (one
 > raw FAIL adjudicated as a sampling blip), loudness 16 of 16 windows, 50
 > program changes scored with no holes. See
-> [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
+> [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)
 > and `ops/beta10-oversight/verdicts/`.
 >
 > Known limits: live-caption audio can be dropped under heavy load (13
