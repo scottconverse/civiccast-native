@@ -93,6 +93,18 @@ on:
           artifacts are not installable and are not eligible for Gate A.
         type: boolean
         default: false
+      reuse_station_run_id:
+        description: Hosted preparation only; reuse a completed station job's signed embed artifact from this repository
+        type: string
+        default: ""
+      reuse_station_source_sha:
+        description: Exact source SHA naming the reused station embed artifact; station inputs must be unchanged
+        type: string
+        default: ""
+      reviewed_pyav_release_tag:
+        description: Optional existing release containing the exact pinned PyAV wheel in native-app-payload.ccpack
+        type: string
+        default: ""
   push:
     branches:
       - release/native-beta-1.0.0-beta.1-rc1
@@ -113,6 +125,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
   id-token: write
 
 jobs:
@@ -197,6 +210,7 @@ jobs:
     # assemble-native-beta-kit still co-locates the FULL bundle at
     # .\station\ next to setup.exe, and the hook still prefers that copy.
     needs: build-native-station-bundle
+    if: ${{ !cancelled() && (needs.build-native-station-bundle.result == 'success' || (inputs.build_target == 'hosted' && inputs.prepare_only && inputs.reuse_station_run_id != '' && inputs.reuse_station_source_sha != '')) }}
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
@@ -592,6 +606,24 @@ jobs:
           if ($sourceSha -ne "${{ github.sha }}") { throw "Resolved source commit $sourceSha does not match GitHub candidate ${{ github.sha }}" }
           "SOURCE_SHA=$sourceSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Reuse the exact pinned PyAV wheel from an existing release
+        if: inputs.reviewed_pyav_release_tag != ''
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_RELEASE: ${{ inputs.reviewed_pyav_release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reuse = Join-Path $env:RUNNER_TEMP 'reviewed-pyav-reuse'
+          New-Item -ItemType Directory -Path $reuse | Out-Null
+          gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern native-app-payload.ccpack --dir $reuse
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned PyAV source pack download failed.' }
+          python -c "import pathlib,sys,zipfile; from scripts.build_native_app_payload import REVIEWED_PYAV_WHEEL_NAME,REVIEWED_PYAV_WHEEL_BYTES,REVIEWED_PYAV_WHEEL_SHA256; import hashlib; p=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(p/'native-app-payload.ccpack'); names=[n for n in z.namelist() if n.endswith('/WHEELS/'+REVIEWED_PYAV_WHEEL_NAME) or n=='WHEELS/'+REVIEWED_PYAV_WHEEL_NAME]; assert len(names)==1, names; data=z.read(names[0]); assert len(data)==REVIEWED_PYAV_WHEEL_BYTES and hashlib.sha256(data).hexdigest()==REVIEWED_PYAV_WHEEL_SHA256, 'Reviewed wheel identity mismatch'; (p/REVIEWED_PYAV_WHEEL_NAME).write_bytes(data)" $reuse
+          if ($LASTEXITCODE -ne 0) { throw 'Existing wheel does not match the unchanged reviewed pin.' }
+          [IO.File]::Delete((Join-Path $reuse 'native-app-payload.ccpack'))
+          "CIVICCAST_REVIEWED_PYAV_WHEEL=$reuse\av-18.0.0-cp311-abi3-win_amd64.whl" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Build and verify signed component packs
         shell: pwsh
         env:
@@ -631,6 +663,9 @@ jobs:
             # CI run took), so the hosted-shape invocation must stay
             # byte-identical on every lane. Only the trailing splat varies.
             $appPayloadExtraArgs = @()
+            if ($env:CIVICCAST_REVIEWED_PYAV_WHEEL) {
+              $appPayloadExtraArgs = @('--reviewed-pyav-wheel', $env:CIVICCAST_REVIEWED_PYAV_WHEEL)
+            }
             if ($env:BUILD_TARGET -eq "self-hosted") {
               # See docs/process/pyav-wheel-reproducibility.md: the pinned
               # toolchain is byte-identical on this lane (same provisioned
@@ -745,11 +780,21 @@ jobs:
       # artifact, so a second small artifact is the only way to fetch a
       # kilobyte instead of eighteen gigabytes here.
       - name: Download the embedded station index and station packs (hosted)
-        if: env.BUILD_TARGET != 'self-hosted'
+        if: env.BUILD_TARGET != 'self-hosted' && inputs.reuse_station_run_id == ''
         timeout-minutes: 10
         uses: actions/download-artifact@v4
         with:
           name: native-station-embed-${{ github.sha }}
+          path: station-embed
+
+      - name: Download the previously signed unchanged station resources
+        if: inputs.reuse_station_run_id != ''
+        timeout-minutes: 10
+        uses: actions/download-artifact@v4
+        with:
+          name: native-station-embed-${{ inputs.reuse_station_source_sha }}
+          run-id: ${{ inputs.reuse_station_run_id }}
+          github-token: ${{ github.token }}
           path: station-embed
 
       - name: Stage embedded station resources for the Tauri build
@@ -1081,6 +1126,7 @@ jobs:
   # "Free ..." steps below.
   build-native-station-bundle:
     name: Provision and sign the native station bundle (K1)
+    if: inputs.reuse_station_run_id == ''
     runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:

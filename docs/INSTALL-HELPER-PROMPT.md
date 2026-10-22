@@ -3,8 +3,9 @@
 Use this guide only for an owner-authorized Windows beta field test. It is
 candidate-neutral: the tester handoff and release verification record identify
 the approved installer and procedure. Beta 20 is the current public pre-release,
-published 2026-10-21 (MDT) from signed source ea8fb798 (PR #259 merge
-a1744918). See the [Beta 20 verification record](releases/v1.0.0-beta.20-verification.md)
+originally published 2026-10-21 (MDT), with corrected documentation packaged
+on 2026-10-22 from signed source 2e196124 (build 39810481727). The original
+tag remains at a1744918; the verification record identifies the revised assets. See the [Beta 20 verification record](releases/v1.0.0-beta.20-verification.md)
 for its exact package identity and scoped checks. This guide does not itself
 authorize an installation, upgrade, release or station cutover.
 
@@ -99,7 +100,7 @@ troubleshooting shortcut.
 If a recovery code is available, use the station's recovery-code sign-in flow.
 If no recovery code is usable, the supported path is the offline local
 administrator reset described in the kit's `manual\USER-MANUAL.pdf`, under
-Security → Administrator password reset. The repository source procedure is
+Security â†’ Administrator password reset. The repository source procedure is
 [Security: administrator password reset](manual/src/24-security.md#administrator-password-reset);
 the implementation is `civiccast/native/admin_recovery.py`.
 
