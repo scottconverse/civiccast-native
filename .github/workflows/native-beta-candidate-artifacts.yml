@@ -608,6 +608,7 @@ jobs:
 
       - name: Reuse the exact pinned PyAV wheel from an existing release
         if: inputs.reviewed_pyav_release_tag != ''
+        timeout-minutes: 10
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -788,6 +789,7 @@ jobs:
 
       - name: Download the previously signed unchanged station resources
         if: inputs.reuse_station_run_id != ''
+        timeout-minutes: 10
         uses: actions/download-artifact@v4
         with:
           name: native-station-embed-${{ inputs.reuse_station_source_sha }}
