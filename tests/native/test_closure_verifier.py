@@ -1343,9 +1343,7 @@ def test_observed_package_manifest_exception_rejects_near_misses(
     package_root = tmp_path / "W"
     monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
     tree = tmp_path / "tree"
-    resource = _observed_package_manifest_path(
-        package_root, package=package, relative=relative
-    )
+    resource = _observed_package_manifest_path(package_root, package=package, relative=relative)
     payload = _with_traced_file(_clean_child_payload(), tree)
     payload.setdefault(trace_field, []).append(str(resource))
     child = _fake_child(json.dumps(payload))
