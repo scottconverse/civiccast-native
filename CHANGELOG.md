@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.0.0-beta.20]
+## [1.0.0-beta.20] - 2026-10-21
 
 - Recovery station-state: replace permission handling; private-key protections unchanged.
 - Dependency pins: certifi2026.10.19/Pillow13/Vite8.3.5.

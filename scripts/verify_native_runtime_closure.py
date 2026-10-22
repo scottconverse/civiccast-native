@@ -1930,6 +1930,9 @@ _OBSERVED_PACKAGE_MANIFEST_COMPONENTS = frozenset(
         "microsoft.windowsfeedbackhub_1.2512.16303.0_x64__8wekyb3d8bbwe",
     }
 )
+_OBSERVED_WSL_RESOURCE_COMPONENT = (
+    "microsoftcorporationii.windowssubsystemforlinux_3.0.1.0_x64__8wekyb3d8bbwe"
+)
 
 
 def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
@@ -1973,9 +1976,14 @@ def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
         )
     if len(original_relative.parts) == 2:
         package_name, filename = original_relative.parts
+        normalized_package = package_name.casefold()
+        normalized_filename = filename.casefold()
         return (
-            package_name.casefold() in _OBSERVED_PACKAGE_MANIFEST_COMPONENTS
-            and filename.casefold() == "appxmanifest.xml"
+            normalized_package in _OBSERVED_PACKAGE_MANIFEST_COMPONENTS
+            and normalized_filename == "appxmanifest.xml"
+        ) or (
+            normalized_package == _OBSERVED_WSL_RESOURCE_COMPONENT
+            and normalized_filename == "resources.pri"
         )
     return False
 
@@ -2123,10 +2131,11 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
         package_resource_note = (
             f"\n  {len(package_resources)} data-only Windows package resource file(s) "
             "were observed outside the payload. This narrow reported-data exception "
-            "covers only observed DesktopAppInstaller package resource indexes (PRI) "
-            "and observed SecHealthUI/WindowsFeedbackHub root AppxManifest.xml "
-            "manifests. It does not apply to executable or unknown-protection mappings, "
-            "DLLs, or any other WindowsApps path:\n    " + shown
+            "covers only observed DesktopAppInstaller package resource indexes (PRI), "
+            "observed SecHealthUI/WindowsFeedbackHub root AppxManifest.xml manifests, "
+            "and the observed WSL resources.pri at the package root. It does not apply "
+            "to executable or unknown-protection mappings, DLLs, or any other "
+            "WindowsApps path:\n    " + shown
         )
 
     return CheckResult(
