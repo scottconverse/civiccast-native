@@ -208,22 +208,15 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset(tmp_path: Path)
     through a real tsp continuity --fix relay and assert the OUTPUT counters
     are continuous mod 16 with no repeats/jumps.
 
-    What the 2026-07 rework changed, and what "robust" means here:
-
-    * Both UDP sockets are context-managed, so ANY failure below still closes
-      them. A leaked socket resurfaces later as an unraisable ResourceWarning
-      that the "error" filterwarnings policy escalates onto whichever
-      unrelated test the garbage collector interrupts — this test was one of
-      the two leak sources poisoning the randomized-order lane.
-    * The receive side is DEADLINE-DRIVEN (poll until enough packets arrive
-      or 5s elapses), so the assertions never depend on a magic sleep being
-      long enough on a loaded machine. The remaining time.sleep() calls only
-      pace the SEND side (letting tsp bind, spacing packets, simulating the
-      relaunch gap); they can make the test slower, never wrongly green or
-      wrongly red.
-    * The assertions test the PROPERTY (output continuity mod 16, no
-      repeats/jumps across the session splice), not a byte-exact capture, so
-      packet timing variation cannot flake the verdict.
+    Readiness is established by a bounded warmup probe, not a fixed sleep:
+    we repeatedly send short bursts on a separate warmup PID and read the
+    relay's output until we actually see a warmup packet (or 5s elapses).
+    This avoids the startup race where UDP packets sent before ``tsp`` has
+    bound its listen socket are silently dropped. The probe PID is discarded
+    before the real capture. Both session payloads (0xAA and 0xBB) must be
+    present in the output, so a relay that only forwards one session cannot
+    pass. The receive side is still deadline-driven (5s) and the assertions
+    test the PROPERTY (output continuity mod 16), not a byte-exact capture.
     """
     listen, out_port = 17997, 17998
     recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -253,8 +246,48 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset(tmp_path: Path)
             return f"tsp exit={proc.poll()}; args={args!r}; stderr={stderr!r}"
 
         try:
-            time.sleep(1.0)  # let tsp bind
-            assert proc.poll() is None, relay_diagnostic()
+            # Warmup: wait until the relay actually forwards packets.
+            # A fixed sleep is not sufficient: UDP sent before tsp binds is
+            # lost, and the receive side cannot recover it. Probe with a
+            # separate PID so the real session counters stay clean.
+            warmup_pid = _PID + 1
+            warmup_deadline = time.monotonic() + 5.0
+            warmup_ready = False
+            recv.settimeout(0.1)
+            while time.monotonic() < warmup_deadline:
+                assert proc.poll() is None, relay_diagnostic()
+                for cc in range(4):
+                    send.sendto(_ts_packet(warmup_pid, cc, 0x55), ("127.0.0.1", listen))
+                try:
+                    while True:
+                        chunk, _ = recv.recvfrom(65536)
+                        for i in range(0, len(chunk) - 187, 188):
+                            pkt = chunk[i : i + 188]
+                            if pkt[0] != 0x47:
+                                continue
+                            p = ((pkt[1] & 0x1F) << 8) | pkt[2]
+                            if p == warmup_pid:
+                                warmup_ready = True
+                                break
+                        if warmup_ready:
+                            break
+                except TimeoutError:
+                    pass
+                if warmup_ready:
+                    break
+                time.sleep(0.05)
+            assert warmup_ready, f"relay did not become ready: {relay_diagnostic()}"
+
+            # Discard any remaining warmup packets so they cannot pollute the
+            # real capture or satisfy the receive threshold.
+            recv.setblocking(False)
+            try:
+                while True:
+                    recv.recvfrom(65536)
+            except BlockingIOError:
+                pass
+            recv.settimeout(5.0)  # restore the real capture timeout
+
             # Session A: CC 0..9. Session B (relaunch): CC restarts at 0 — the
             # exact discontinuity a headend logs.
             for cc in range(10):
@@ -265,16 +298,36 @@ def test_real_tsp_relay_makes_cc_continuous_across_session_reset(tmp_path: Path)
                 send.sendto(_ts_packet(_PID, cc, 0xBB), ("127.0.0.1", listen))
                 time.sleep(0.01)
 
-            received = b""
+            # Capture only the tested PID; any stray warmup packets are ignored.
+            received = bytearray()
+            buffer = b""
             deadline = time.monotonic() + 5.0
             while time.monotonic() < deadline and len(received) < 188 * 18:
                 try:
                     chunk, _ = recv.recvfrom(65536)
-                    received += chunk
                 except TimeoutError:
                     break
+                buffer += chunk
+                while len(buffer) >= 188:
+                    pkt = buffer[:188]
+                    buffer = buffer[188:]
+                    if pkt[0] != 0x47:
+                        continue
+                    p = ((pkt[1] & 0x1F) << 8) | pkt[2]
+                    if p == _PID:
+                        received += pkt
             ccs = _cc_sequence(received, _PID)
             assert len(ccs) >= 16, f"too few relayed packets: {len(ccs)}; {relay_diagnostic()}"
+            payloads = set()
+            for i in range(0, len(received) - 187, 188):
+                pkt = received[i : i + 188]
+                if pkt[0] != 0x47:
+                    continue
+                p = ((pkt[1] & 0x1F) << 8) | pkt[2]
+                if p == _PID:
+                    payloads.add(pkt[4])
+            assert 0xAA in payloads, f"missing session A payload; {relay_diagnostic()}"
+            assert 0xBB in payloads, f"missing session B payload; {relay_diagnostic()}"
             for a, b in itertools.pairwise(ccs):
                 assert b == (a + 1) % 16, f"CC discontinuity survived the relay: {ccs}"
         finally:
