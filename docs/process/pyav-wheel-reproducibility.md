@@ -9,6 +9,17 @@ source archive, the MSYS2 base, the PyAV sdist — is verified against its own
 pinned hash and that check is **always strict**, on every build lane. This
 document is only about the *output* check: the compiled wheel itself.
 
+For a documentation-only package revision, the candidate workflow can take
+`reviewed_pyav_release_tag` to extract the retained wheel from that release's
+`native-app-payload.ccpack`. It accepts only the unchanged reviewed filename,
+size and SHA-256, then passes it through the existing `--reviewed-pyav-wheel`
+builder option. This does not enable advisory hashing or change any pin.
+Hosted preparation can also take `reuse_station_run_id` and
+`reuse_station_source_sha` to reuse that run's signed station embed artifact
+when station inputs are unchanged. The coordinator must establish that unchanged
+input boundary before dispatch; the bootstrap's existing trust verification still
+checks the supplied signed packs. These options default to empty.
+
 ## Why the same pinned toolchain can still produce different bytes
 
 The toolchain the build compiles with (MSVC Build Tools, node, python, uv)
