@@ -1205,7 +1205,8 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # The running-image ACL regression adds one Windows case: 2271 total,
     # 2268 non-integration; Windows floor 2218 retains the margin.
     # Exact native closure-baseline regression adds one portable case.
-    assert (collect("not windows_only"), collect()) == (2030, 2272)
+    # Current randomized CI collection: 2061 pure tests, 2303 total.
+    assert (collect("not windows_only"), collect()) == (2061, 2303)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
