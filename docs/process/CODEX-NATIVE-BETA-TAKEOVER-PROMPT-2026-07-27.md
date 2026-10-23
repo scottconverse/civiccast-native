@@ -56,7 +56,7 @@ For each package:
 
 Always regenerate proofs from the frozen SHA you are proposing:
 - focused runtime/pipeline tests,
-- mutation/pollution tests and randomized checks,
+- pollution tests and randomized checks,
 - lint/type/deps checks,
 - reproducible build artifacts with manifest/hash proof,
 - offline caption proof,

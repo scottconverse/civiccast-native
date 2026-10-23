@@ -503,16 +503,7 @@ show_missing = true
 skip_covered = false
 
 # ---------------------------------------------------------------------------
-# Mutation testing (deterministic-detector harness) -- NO [tool.mutmut] SECTION
-# HERE, DELIBERATELY.
-#
-# The CI mutation-report job (.github/workflows/deterministic-detectors.yml)
-# writes its own diff-scoped [tool.mutmut] at runtime and SKIPS ITSELF if one
-# already exists in this file. A permanent section here would therefore switch
-# the CI lane off silently -- the exact "looks configured, actually dark"
-# failure the harness exists to prevent.
-#
-# Local mutation substitutes are intentionally unsupported. The detector
-# contract is randomized and pollution checks locally, with diff-scoped mutmut
-# mutation proof owned by Linux PR CI.
+# Mutation testing is not a CI or release requirement. Its automatic job was
+# removed by owner instruction on 2026-10-22. No mutation proof is required.
+
 # ---------------------------------------------------------------------------
