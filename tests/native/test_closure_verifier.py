@@ -1035,6 +1035,7 @@ def test_desktop_app_installer_resource_access_is_reported_without_failing(
     "package",
     (
         "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+        "Microsoft.SecHealthUI_1000.26100.33438.0_x64__8wekyb3d8bbwe",
         "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
     ),
 )
@@ -1271,6 +1272,7 @@ def test_desktop_app_installer_resource_exception_rejects_near_misses(
     "package",
     (
         "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
+        "Microsoft.SecHealthUI_1000.26100.33438.0_x64__8wekyb3d8bbwe",
         "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
     ),
 )
@@ -1758,7 +1760,7 @@ class TestD3d12DecoderHardwareGate:
 # WSL resources.pri -- observed data-only package resource exception
 # ---------------------------------------------------------------------------
 
-_WSL_PACKAGE = "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.1.0_x64__8wekyb3d8bbwe"
+_WSL_PACKAGE = "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.3.0_x64__8wekyb3d8bbwe"
 
 
 @pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
@@ -1807,6 +1809,75 @@ def test_wsl_resources_pri_listed_as_strict_mapping_still_fails(
     tree = tmp_path / "tree"
     resource = _appinstaller_resource_path(
         package_root, package=_WSL_PACKAGE, relative=("resources.pri",)
+    )
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
+    payload[strict_field] = [*payload.get(strict_field, []), str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail
+    assert expected_leg in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+# ---------------------------------------------------------------------------
+# FeedbackHub metadata resource -- observed data-only package resource
+# ---------------------------------------------------------------------------
+
+_FEEDBACKHUB_PACKAGE = "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe"
+_FEEDBACKHUB_METADATA_RESOURCE = ("microsoft.system.package.metadata", "resources.0ff121e3.pri")
+
+
+def test_feedbackhub_metadata_resource_mapped_data_is_reported_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(
+        package_root,
+        package=_FEEDBACKHUB_PACKAGE,
+        relative=_FEEDBACKHUB_METADATA_RESOURCE,
+    )
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["mapped_data"] = [*payload.get("mapped_data", []), str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "PASS"
+    assert str(resource.resolve()) in trace.detail
+
+
+@pytest.mark.parametrize(
+    ("strict_field", "expected_leg"),
+    (
+        ("loaded_modules", "executable mapping"),
+        ("unclassified_mappings", "unknown-protection mapping"),
+    ),
+)
+def test_feedbackhub_metadata_resource_listed_as_strict_mapping_still_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    strict_field: str,
+    expected_leg: str,
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(
+        package_root,
+        package=_FEEDBACKHUB_PACKAGE,
+        relative=_FEEDBACKHUB_METADATA_RESOURCE,
     )
     payload = _with_traced_file(_clean_child_payload(), tree)
     payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]

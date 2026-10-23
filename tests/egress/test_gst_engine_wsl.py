@@ -2960,10 +2960,11 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     source_graph = _multi_segment_playlist_reload_graph(old_clip_paths, video_caps=_PRODUCTION_CAPS)
     graph = graphmod.PlayoutGraph(
         sources=source_graph.sources,
+        # Match encode_chain_specs: rate conversion belongs to each source leg,
+        # not after the selector where its timestamp grid survives a switch.
         encoder=(
             _E("videoconvert"),
             _E("videoscale"),
-            _E("videorate"),
             _E("capsfilter", props={"caps": _PRODUCTION_CAPS}),
             _E("openh264enc", props={"bitrate": 6_000_000}),
             _E("h264parse", props={"config-interval": -1}),
@@ -3411,14 +3412,27 @@ def test_emergency_late_image_reaches_pixels_and_clear_preserves_logo(tmp_path, 
         encoded = base64.b64encode(json.dumps(payload).encode()).decode()
         _send(control, f"emergency {encoded}")
         _wait_for_log(log, "CTRL graphics-overlay layer 'emergency' reload committed")
-        time.sleep(1.5)
-        snapshot = tmp_path / "displayed.ts"
-        shutil.copyfile(out_ts, snapshot)
-        raw = _ffmpeg_last_frame_rgb24(snapshot, tmp_path / "displayed.raw", width=640, height=360)
-        assert raw is not None, "FFmpeg is required for the actual-pixel claim"
-        offset = (340 * 640 + 600) * 3
-        r, g, b = raw[offset : offset + 3]
-        assert r > 90 and r > 2 * g and r > 2 * b, (r, g, b)
+        deadline = time.monotonic() + 10
+        last_rgb = None
+        observed = False
+        while time.monotonic() < deadline:
+            assert proc.poll() is None, (
+                f"worker exited before pixels observed; last RGB={last_rgb}; log={log}"
+            )
+            snapshot = tmp_path / "displayed.ts"
+            shutil.copyfile(out_ts, snapshot)
+            raw = _ffmpeg_last_frame_rgb24(
+                snapshot, tmp_path / "displayed.raw", width=640, height=360
+            )
+            assert raw is not None, "FFmpeg is required for the actual-pixel claim"
+            offset = (340 * 640 + 600) * 3
+            r, g, b = raw[offset : offset + 3]
+            last_rgb = (r, g, b)
+            if r > 90 and r > 2 * g and r > 2 * b:
+                observed = True
+                break
+            time.sleep(0.2)
+        assert observed, f"emergency pixels not observed within 10s; last RGB={last_rgb}; log={log}"
         _send(control, "emergency bnVsbA==")
         time.sleep(1.5)
         _send(control, "stop")

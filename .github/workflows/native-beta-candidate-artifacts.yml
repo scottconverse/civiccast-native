@@ -588,6 +588,24 @@ jobs:
           path: ${{ runner.temp }}\civiccast-ffmpeg-pack-cache\archives
           key: ffmpeg-pack-archive-${{ hashFiles('native-windows-runtime-dependencies.lock.json') }}
 
+      - name: Reuse the exact pinned PyAV wheel from an existing release
+        if: inputs.reviewed_pyav_release_tag != ''
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_RELEASE: ${{ inputs.reviewed_pyav_release_tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reuse = Join-Path $env:RUNNER_TEMP 'reviewed-pyav-reuse'
+          New-Item -ItemType Directory -Path $reuse | Out-Null
+          gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern native-app-payload.ccpack --dir $reuse
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned PyAV source pack download failed.' }
+          python -c "import ast,hashlib,pathlib,sys,zipfile;_MATCH=lambda n,name:(isinstance(n,ast.AnnAssign) and isinstance(n.target,ast.Name) and n.target.id==name) or (isinstance(n,ast.Assign) and len(n.targets)==1 and isinstance(n.targets[0],ast.Name) and n.targets[0].id==name);_CONST=lambda t,name:next(ast.literal_eval(n.value) for n in t.body if _MATCH(n,name));app=ast.parse(pathlib.Path('scripts/build_native_app_payload.py').read_text(encoding='utf-8'));pyav=ast.parse(pathlib.Path('scripts/build_native_pyav_wheel.py').read_text(encoding='utf-8'));wheel_name=_CONST(app,'REVIEWED_PYAV_WHEEL_NAME');wheel_bytes=_CONST(pyav,'EXPECTED_WHEEL_BYTES');wheel_sha=_CONST(pyav,'EXPECTED_WHEEL_SHA256');p=pathlib.Path(sys.argv[1]);z=zipfile.ZipFile(p/'native-app-payload.ccpack');names=[n for n in z.namelist() if n.endswith('/WHEELS/'+wheel_name) or n=='WHEELS/'+wheel_name];assert len(names)==1,names;data=z.read(names[0]);assert len(data)==wheel_bytes and hashlib.sha256(data).hexdigest()==wheel_sha,'Reviewed wheel identity mismatch';(p/wheel_name).write_bytes(data)" $reuse
+          if ($LASTEXITCODE -ne 0) { throw 'Existing wheel does not match the unchanged reviewed pin.' }
+          [IO.File]::Delete((Join-Path $reuse 'native-app-payload.ccpack'))
+          "CIVICCAST_REVIEWED_PYAV_WHEEL=$reuse\av-18.0.0-cp311-abi3-win_amd64.whl" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Assert clean source tree before pack build
         shell: pwsh
         run: |
@@ -605,24 +623,6 @@ jobs:
           if ($sourceSha -notmatch "^[0-9a-f]{40}$") { throw "Resolved source commit is not a lowercase full SHA: $sourceSha" }
           if ($sourceSha -ne "${{ github.sha }}") { throw "Resolved source commit $sourceSha does not match GitHub candidate ${{ github.sha }}" }
           "SOURCE_SHA=$sourceSha" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Reuse the exact pinned PyAV wheel from an existing release
-        if: inputs.reviewed_pyav_release_tag != ''
-        timeout-minutes: 10
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REVIEWED_RELEASE: ${{ inputs.reviewed_pyav_release_tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $reuse = Join-Path $env:RUNNER_TEMP 'reviewed-pyav-reuse'
-          New-Item -ItemType Directory -Path $reuse | Out-Null
-          gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern native-app-payload.ccpack --dir $reuse
-          if ($LASTEXITCODE -ne 0) { throw 'Pinned PyAV source pack download failed.' }
-          python -c "import pathlib,sys,zipfile; from scripts.build_native_app_payload import REVIEWED_PYAV_WHEEL_NAME,REVIEWED_PYAV_WHEEL_BYTES,REVIEWED_PYAV_WHEEL_SHA256; import hashlib; p=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(p/'native-app-payload.ccpack'); names=[n for n in z.namelist() if n.endswith('/WHEELS/'+REVIEWED_PYAV_WHEEL_NAME) or n=='WHEELS/'+REVIEWED_PYAV_WHEEL_NAME]; assert len(names)==1, names; data=z.read(names[0]); assert len(data)==REVIEWED_PYAV_WHEEL_BYTES and hashlib.sha256(data).hexdigest()==REVIEWED_PYAV_WHEEL_SHA256, 'Reviewed wheel identity mismatch'; (p/REVIEWED_PYAV_WHEEL_NAME).write_bytes(data)" $reuse
-          if ($LASTEXITCODE -ne 0) { throw 'Existing wheel does not match the unchanged reviewed pin.' }
-          [IO.File]::Delete((Join-Path $reuse 'native-app-payload.ccpack'))
-          "CIVICCAST_REVIEWED_PYAV_WHEEL=$reuse\av-18.0.0-cp311-abi3-win_amd64.whl" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build and verify signed component packs
         shell: pwsh
