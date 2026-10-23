@@ -169,7 +169,12 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert triggers["push"]["branches"] == ["release/native-beta-1.0.0-beta.1-rc1"]
     job = workflow["jobs"]["build-native-beta"]
     _assert_dual_lane_scheduling(job, workflow)
-    assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
+    # Reusing signed station artifacts from a prior run requires Actions read access.
+    assert workflow["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+    }
 
     # Was "360" -- GitHub's own default, pinned here only because that is what
     # the workflow happened to say. Two successful candidate builds measured
@@ -290,7 +295,13 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     # needs a real asset for the download-plan catalog to fetch.
     assert "artifacts/native-beta/packs/native-cuda-runtime.ccpack" in upload_paths
 
-    assert "gh release" not in text
+    # Artifact reuse may download, but the candidate producer must not publish.
+    reviewed_download = (
+        "gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY "
+        "--pattern native-app-payload.ccpack --dir $reuse"
+    )
+    assert text.count(reviewed_download) == 1
+    assert "gh release" not in text.replace(reviewed_download, "")
     assert "gh api" not in text
 
 
@@ -1143,7 +1154,9 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
     download = consumer_steps["Download the embedded station index and station packs (hosted)"]
     assert download["uses"] == "actions/download-artifact@v4"
     assert download["with"]["name"] == "native-station-embed-${{ github.sha }}"
-    assert download["if"] == "env.BUILD_TARGET != 'self-hosted'", (
+    assert download["if"] == (
+        "env.BUILD_TARGET != 'self-hosted' && inputs.reuse_station_run_id == ''"
+    ), (
         "self-hosted reads build-native-station-bundle's local mirror instead "
         "of downloading; downloading there is the transfer cost the "
         "build_target input exists to avoid"
@@ -1151,6 +1164,12 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
     assert download["with"]["name"] != "native-station-bundle-${{ github.sha }}", (
         "must not pull the full station-bundle artifact to obtain embedded resources"
     )
+    reused = consumer_steps["Download the previously signed unchanged station resources"]
+    assert reused["if"] == "inputs.reuse_station_run_id != ''"
+    assert reused["uses"] == "actions/download-artifact@v4"
+    assert reused["with"]["name"] == ("native-station-embed-${{ inputs.reuse_station_source_sha }}")
+    assert reused["with"]["run-id"] == "${{ inputs.reuse_station_run_id }}"
+    assert reused["with"]["path"] == download["with"]["path"]
 
     staging_name = "Stage embedded station resources for the Tauri build"
     staging = consumer_steps[staging_name]["run"]
