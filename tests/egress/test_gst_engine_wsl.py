@@ -2960,10 +2960,11 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     source_graph = _multi_segment_playlist_reload_graph(old_clip_paths, video_caps=_PRODUCTION_CAPS)
     graph = graphmod.PlayoutGraph(
         sources=source_graph.sources,
+        # Match encode_chain_specs: rate conversion belongs to each source leg,
+        # not after the selector where its timestamp grid survives a switch.
         encoder=(
             _E("videoconvert"),
             _E("videoscale"),
-            _E("videorate"),
             _E("capsfilter", props={"caps": _PRODUCTION_CAPS}),
             _E("openh264enc", props={"bitrate": 6_000_000}),
             _E("h264parse", props={"config-interval": -1}),
