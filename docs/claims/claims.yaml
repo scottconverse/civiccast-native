@@ -1110,7 +1110,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 4b48761e2127844142eb1bc1fdf39b38e44a67d1
+        blob: 2d46b91e6fb203c4a3848c32ea850d99ce2956d7
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -2038,7 +2038,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 4b48761e2127844142eb1bc1fdf39b38e44a67d1
+        blob: 2d46b91e6fb203c4a3848c32ea850d99ce2956d7
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
