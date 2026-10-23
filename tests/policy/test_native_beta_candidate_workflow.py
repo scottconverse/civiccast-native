@@ -1167,9 +1167,7 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
     reused = consumer_steps["Download the previously signed unchanged station resources"]
     assert reused["if"] == "inputs.reuse_station_run_id != ''"
     assert reused["uses"] == "actions/download-artifact@v4"
-    assert reused["with"]["name"] == (
-        "native-station-embed-${{ inputs.reuse_station_source_sha }}"
-    )
+    assert reused["with"]["name"] == ("native-station-embed-${{ inputs.reuse_station_source_sha }}")
     assert reused["with"]["run-id"] == "${{ inputs.reuse_station_run_id }}"
     assert reused["with"]["path"] == download["with"]["path"]
 
