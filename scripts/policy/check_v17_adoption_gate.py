@@ -47,11 +47,9 @@ REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("docs/index.html"): (
         PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
-        "72 hours across three channels.",
-        "99.78% live caption-input coverage",
-        "216 of 216 healthy checkpoints",
-        "without a service restart",
-        "beta11-host-caption-performance-72-hour-2026-10-11.md",
+        # Marketing copy links to release evidence rather than repeating
+        # historical measurements as front-page product claims.
+        f"docs/releases/{PUBLISHED_RELEASE_TAG}-verification.md",
     ),
     Path("docs/install-windows.html"): (
         PUBLISHED_RELEASE_TAG,

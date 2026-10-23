@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CivicCast - public meetings, on the air</title>
+  <title>CivicCast — Caption your meetings. Keep your budget.</title>
   <meta name="description" content="Schedule, broadcast, record, caption and publish public meetings with CivicCast, an open-source native Windows station system.">
   <link rel="canonical" href="https://scottconverse.github.io/civiccast-native/">
   <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
@@ -16,382 +16,43 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="preload" href="assets/web/fonts/Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/web/fonts/BarlowCondensed-Bold.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="assets/web/site.css">
+  <link rel="stylesheet" href="assets/web/landing.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-
-<header class="site-header">
-  <div class="wrap">
-    <a class="brand" href="#top" aria-label="CivicCast home"><img src="brand/svg/civiccast-lockup.svg" alt="CivicCast" width="162" height="34"></a>
-    <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
-    <nav class="nav" id="nav" aria-label="Main">
-      <a href="#product">Product</a>
-      <a href="#how">How it works</a>
-      <a href="#screens">Screens</a>
-      <a href="#evidence">Evidence</a>
-      <a href="#docs">Docs</a>
-      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">Beta.20 release</a>
-    </nav>
-  </div>
-</header>
-
+<header><div class="wrap nav"><a href="#" aria-label="CivicCast home"><img class="logo" src="brand/svg/civiccast-lockup.svg" alt="CivicCast"></a><nav aria-label="Main navigation"><a href="#tour">How it works</a><a href="#migration">Moving from Cablecast?</a><a href="#support">About & support</a></nav><a class="button small" href="#start">Get CivicCast <span aria-hidden="true">↗</span></a></div></header>
 <main id="main">
+<section class="hero"><div class="wrap hero-grid"><div class="hero-copy"><p class="eyebrow"><span class="signal"></span> PUBLIC MEETINGS, ON THE AIR.</p><h1>Caption your meetings.<br><em>Keep your budget.</em></h1><p class="intro">Live and recorded captions with no per-minute service fee—inside a complete, open-source station system. Schedule programming, bring guests on air, record meetings, and publish for residents from a Windows PC you control.</p><div class="actions"><a class="button" href="#tour">See the meeting workflow <span aria-hidden="true">→</span></a><a class="text-link" href="#start">Download the free beta ↗</a></div><p class="hero-fine">Open source. No software license fee. Your recordings stay yours.</p></div><figure class="hero-visual"><div class="window-label"><span><i></i> THE RESIDENT PORTAL</span><span>Live & on demand</span></div><img src="assets/web/img/portal-home-dark.webp" width="1800" height="1125" alt="CivicCast resident portal showing a sample council meeting, on-air status, and recent recordings"><figcaption>One place for residents to watch. Actual product screen with sample content.</figcaption><div class="visual-note"><span class="cc-icon">CC</span><div><b>More access. Less overhead.</b><span>Local captions, with no per-minute service fee.</span></div></div></figure></div><div class="wrap hero-bottom"><span>MADE FOR SMALL TEAMS WITH A PUBLIC MISSION</span><span>Community television</span><span>City & town government</span><span>Public-access stations</span></div></section>
+<section id="tour" class="tour workflow-tour"><div class="wrap"><div class="section-head"><div><p class="eyebrow">ONE MEETING, FROM START TO FINISH</p><h2>See the work behind the broadcast.</h2></div><p>Click through the staff workflow.<br>Illustrated controls and sample content—not a live demo.</p></div><div class="journey" role="tablist" aria-label="Meeting workflow">
+<button id="step-schedule" role="tab" aria-selected="true" aria-controls="workflow-panel" data-step="schedule"><span>01</span>Schedule</button><button id="step-live" role="tab" aria-selected="false" tabindex="-1" aria-controls="workflow-panel" data-step="live"><span>02</span>Go live</button><button id="step-record" role="tab" aria-selected="false" tabindex="-1" aria-controls="workflow-panel" data-step="record"><span>03</span>Record</button><button id="step-caption" role="tab" aria-selected="false" tabindex="-1" aria-controls="workflow-panel" data-step="caption"><span>04</span>Review captions</button><button id="step-publish" role="tab" aria-selected="false" tabindex="-1" aria-controls="workflow-panel" data-step="publish"><span>05</span>Publish</button><button id="step-watch" role="tab" aria-selected="false" tabindex="-1" aria-controls="workflow-panel" data-step="watch"><span>06</span>Residents watch</button></div>
+<div id="workflow-panel" class="workflow-panel" role="tabpanel" tabindex="0" aria-labelledby="step-schedule"><div class="workflow-story"><p class="eyebrow" id="step-role">MEETING OPERATOR</p><h3 id="step-title">Start with a plan.</h3><p id="step-description">Put the meeting on your channel schedule and bring in its agenda. Give everyone a clear view of what’s coming next.</p><span class="tour-disclosure" id="step-disclosure">Illustrated workflow based on the user manual.</span></div><div id="workflow-screen" class="workflow-screen"></div></div></div></section>
+<section class="replace"><div class="wrap replace-grid"><div><p class="eyebrow">LESS TO JUGGLE</p><h2>Your station.<br>All together.</h2></div><div><ul class="old-tools" aria-label="Separate tools CivicCast brings together"><li>Camera recorder</li><li>Playout box</li><li>Caption service</li><li>Website upload</li><li>Schedule spreadsheet</li></ul><p class="one">One schedule. One library.<br><span>One resident portal.</span></p><p class="muted">Fewer handoffs between programs. More time for the meeting—and the people watching it.</p></div></div></section>
+<section id="features" class="capabilities"><div class="wrap"><div class="section-head"><div><p class="eyebrow">THE WHOLE STATION, NOT JUST THE STREAM</p><h2>Small team. Full station.</h2></div><p>From the live picture to the public record.<br>Tools for the work that happens between meetings, too.</p></div><div class="capability-grid">
+<article><span class="feature-no">01 / RUN THE STATION</span><h3>Keep your community on air.</h3><p>Plan channel schedules, switch to live coverage, bring in remote guests, and show community announcements between programs.</p><details><summary>Explore station tools</summary><ul><li>Recurring schedules and automatic programming rules</li><li>Live production and browser-based remote guests</li><li>Community bulletin boards with video and audio</li></ul></details></article>
+<article><span class="feature-no">02 / MAKE MEETINGS ACCESSIBLE</span><h3>Let more people follow along.</h3><p>Generate live captions locally. Correct recorded captions, review English and Spanish tracks, and connect agenda items to the video.</p><details><summary>Explore accessibility tools</summary><ul><li>Live and recorded speech recognition</li><li>Human review and correction of recorded captions</li><li>English and Spanish tracks with configured models</li><li>Agenda chapters on recording watch pages</li></ul></details></article>
+<article><span class="feature-no">03 / MANAGE THE PUBLIC RECORD</span><h3>Keep the record in your hands.</h3><p>Review draft summaries against their source, approve what gets published, and manage recording retention and legal holds.</p><details><summary>Explore records tools</summary><ul><li>AI draft summaries with transcript references and human approval</li><li>Signed-record exports</li><li>Retention settings and audit-logged legal holds</li><li>Archive copies to configured destinations</li></ul></details></article>
+<article><span class="feature-no">04 / REACH YOUR COMMUNITY</span><h3>Give the meeting a longer life.</h3><p>Publish to your resident portal, turn recordings into podcasts, and notify subscribers through the services you configure.</p><details><summary>Explore publishing tools</summary><ul><li>Live viewing, recordings, and a public schedule</li><li>Podcast episodes and RSS feeds</li><li>Subscriber notifications through configured providers</li><li>Native viewer source apps for separate platform builds</li></ul></details></article>
+<article><span class="feature-no">05 / HANDLE THE DAY-TO-DAY</span><h3>Know what aired. Know what’s next.</h3><p>Manage underwriting schedules, inspect airing reports, assign staff permissions, and keep backup and recovery tools close at hand.</p><details><summary>Explore operations tools</summary><ul><li>Underwriting spots, flights, and airing affidavits</li><li>Schedule-versus-actual airing reports</li><li>Staff accounts and five operating roles</li><li>Station health, backup, and recovery guidance</li></ul></details></article>
+<aside class="capability-note"><span class="feature-no">BUILT TO BE UNDERSTOOD</span><h3>A manual for every hat you wear.</h3><p>Everyday operation for staff. Setup and recovery for IT. Architecture and API references for developers.</p><a class="text-link" href="#documentation">Find your starting point →</a></aside></div><p class="fine feature-footnote">Optional services need configuration. Native viewer apps require platform builds and submission; they are not automatically published to app stores.</p></div></section>
+<section id="migration" class="migration"><div class="wrap migration-inner"><div><p class="eyebrow">ALREADY RUNNING CABLECAST?</p><h2>Bring your schedule.<br>Build your next chapter.</h2><p>Bring your show and schedule information into CivicCast with a guided import. Preview what will come across, review conflicts, then choose what to import.</p><a class="text-link" href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md#station-import-cablecast">Read the migration guide <span aria-hidden="true">→</span></a><p class="fine">Imports metadata and media references. Media files are moved separately.</p></div><div class="import-illustration" aria-label="Illustration of the station import workflow"><div class="import-row"><span class="import-icon">≡</span><div><b>Your Cablecast station</b><span>Shows · schedules · media references</span></div></div><div class="import-path"><i></i><span>Preview → Review → Import</span></div><div class="import-row destination"><img src="brand/favicon.svg" alt=""><div><b>Your CivicCast station</b><span>A familiar starting point. A new way to run.</span></div><span class="check">✓</span></div><p>Illustrated workflow</p></div></div></section>
 
-<section class="hero on-dark" id="top">
-  <div class="wrap">
-    <div class="hero-grid">
-      <div>
-        <p class="release-tag">Native Windows station software</p>
-        <h1>Public meetings, <em>on the air.</em></h1>
-        <p class="lede">CivicCast is open-source software for public-access stations and small cities. It schedules your channels and keeps them on the air, records and captions your meetings, and publishes them to a portal where residents can watch. It runs on one Windows PC that you control.</p>
-        <div class="btn-row">
-          <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">Get Beta.20</a>
-          <a class="button ghost" href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf">Read the manual</a>
-        </div>
-      </div>
-      <figure class="hero-shot" style="margin:0">
-        <div class="frame">
-          <div class="bar"><i></i><i></i><i></i><span>127.0.0.1:8000</span></div>
-          <img src="assets/web/img/portal-home-dark.webp" width="1800" height="1125" alt="The CivicCast resident portal home page: a council meeting playing under Live now, a Broadcast status panel reading On air, and a list of latest recordings.">
-        </div>
-        <figcaption>The resident portal on a lab station, with sample content.</figcaption>
-      </figure>
-    </div>
-  </div>
-  <div class="proof">
-    <div class="wrap">
-      <ul>
-        <li><strong>Open source</strong>Code under Apache-2.0, documentation under CC BY 4.0.</li>
-        <li><strong>One Windows PC</strong>Installs as a Windows service on hardware you own.</li>
-        <li><strong>Whistle CPU captions</strong>When live captions are enabled, Whistle is the CPU primary; Whisper backs up the affected channel, with optional NVIDIA acceleration for Whisper.</li>
-        <li><strong>Free to use</strong>Local captioning without a per-minute service charge.</li>
-      </ul>
-    </div>
-  </div>
-</section>
 
-<section id="purpose">
-  <div class="wrap purpose-grid">
-    <div>
-      <p class="eyebrow">Why it exists</p>
-      <h2>A meeting should not need five tools to reach residents.</h2>
-    </div>
-    <div>
-      <ul class="five-tools" aria-label="Tools a small station often stitches together">
-        <li>Camera recorder</li><li>Playout box</li><li>Caption service</li><li>Website upload</li><li>Schedule spreadsheet</li>
-      </ul>
-      <p class="one-tool">One schedule. One library. One resident portal.</p>
-      <p>CivicCast covers the path a public meeting takes: it is scheduled, aired on a channel, recorded, captioned, checked by a person and published for residents. Staff work in one web console. Residents use a separate public portal. Live Whistle captions run on the station, with Whisper fallback scoped to the affected channel. Summary and translation use local models by default; a setup administrator can opt into Ollama Cloud or OpenRouter for those features.</p>
-    </div>
-  </div>
-</section>
-
-<section class="band" id="product">
-  <div class="wrap">
-    <p class="eyebrow">What it does</p>
-    <h2>The whole path from agenda to archive.</h2>
-    <p class="lede">Schedule, broadcast, record, caption, publish and monitor from one staff console.</p>
-    <ul class="caps">
-      <li>
-        <div><h3>Schedule and air</h3><span class="tag proven">Three channels</span></div>
-        <div>
-          <ul>
-            <li>Channels for education, government and public programming, each with its own schedule.</li>
-            <li>Premieres, recurring program-guide slots and auto-schedule rules that the station compiles into what airs.</li>
-            <li>Automatic program changes keep each channel moving through its schedule.</li>
-            <li>Audio leveling targets -16 LUFS for consistent listening levels.</li>
-          </ul>
-        </div>
-      </li>
-      <li>
-        <div><h3>Run the meeting</h3><span class="tag proven">Live controls</span></div>
-        <div>
-          <ul>
-            <li>A live screen with pre-flight checks before a stream starts.</li>
-            <li>Take a live source to air from the Channels screen and return to the schedule afterwards.</li>
-            <li>Remote guest camera and microphone controls in configured VDO.Ninja rooms.</li>
-          </ul>
-        </div>
-      </li>
-      <li>
-        <div><h3>Record and collect</h3><span class="tag proven">Media library</span></div>
-        <div>
-          <ul>
-            <li>Recurring capture schedules for live inputs and network streams, plus Record now.</li>
-            <li>Upload recordings, trim them, and import an agenda whose items link to times in the video.</li>
-            <li>Residents can submit programs through a form; staff review them in a queue.</li>
-          </ul>
-        </div>
-      </li>
-      <li>
-        <div><h3>Caption and review</h3><span class="tag proven">Local speech recognition</span></div>
-        <div>
-          <ul>
-            <li>Local speech recognition makes live captions (Whistle primary, with per-channel Whisper fallback) and offline captions for recordings.</li>
-            <li>A person reviews and approves caption text before it attaches to a saved recording.</li>
-            <li>Review and approve AI summaries with transcript-time citations, then export signed records.</li>
-          </ul>
-        </div>
-      </li>
-      <li>
-        <div><h3>Publish to residents</h3><span class="tag proven">Resident portal</span></div>
-        <div>
-          <ul>
-            <li>A public portal with Live now, searchable recordings, an upcoming schedule and watch pages with captions and agenda chapters.</li>
-            <li>A publish step with approvals, so a recording reaches residents when staff say so.</li>
-            <li>Works on a phone as well as a desktop.</li>
-          </ul>
-        </div>
-      </li>
-      <li>
-        <div><h3>Deliver and monitor</h3><span class="tag proven">Station health</span></div>
-        <div>
-          <ul>
-            <li>Channel outputs as HLS web streams or a UDP transport stream for a cable headend.</li>
-            <li>A readiness screen that says whether the station is safe to broadcast, and five staff roles from setup admin to records clerk.</li>
-            <li>The Windows service starts and restarts the database, playout workers and caption worker for you.</li>
-          </ul>
-        </div>
-      </li>
-    </ul>
-  </div>
-</section>
-
-<section id="how">
-  <div class="wrap">
-    <p class="eyebrow">How it works</p>
-    <h2>One meeting, six steps.</h2>
-    <p class="lede">The order is real: each step feeds the next.</p>
-    <ol class="flow">
-      <li><h3>Schedule it</h3><p>Add the meeting to the schedule and the program guide. Import the agenda.</p><span class="who">Meeting operator</span></li>
-      <li><h3>Run it</h3><p>Check readiness, go live or let the channel air its program, and watch the output.</p><span class="who">Camera operator, meeting operator</span></li>
-      <li><h3>Record it</h3><p>The recording lands in the asset library, ready to trim and package.</p><span class="who">Meeting operator</span></li>
-      <li><h3>Caption and check it</h3><p>Captions are generated on the station. A person reviews them before they attach.</p><span class="who">Records clerk</span></li>
-      <li><h3>Publish it</h3><p>Approve the publish steps. The recording and its captions appear on the portal.</p><span class="who">Publish operator</span></li>
-      <li><h3>Residents watch</h3><p>Residents open the portal, search the archive and watch with captions.</p><span class="who">Everyone</span></li>
-    </ol>
-  </div>
-</section>
-
-<section class="band" id="screens">
-  <div class="wrap">
-    <div class="shots-head">
-      <div>
-        <p class="eyebrow">Screens</p>
-        <h2>What residents see.</h2>
-      </div>
-      <p class="fine" style="max-width:38ch">Captured from a lab station running sample content. The staff console is covered screen by screen in the manual.</p>
-    </div>
-    <div class="tabs" role="tablist" aria-label="Resident portal pages">
-      <button role="tab" id="tab-home" aria-selected="true" aria-controls="p-home" type="button">Home</button>
-      <button role="tab" id="tab-rec" aria-selected="false" aria-controls="p-rec" type="button" tabindex="-1">Recordings</button>
-      <button role="tab" id="tab-sched" aria-selected="false" aria-controls="p-sched" type="button" tabindex="-1">Schedule</button>
-      <button role="tab" id="tab-watch" aria-selected="false" aria-controls="p-watch" type="button" tabindex="-1">Watch</button>
-    </div>
-    <div class="shot-stage">
-      <div>
-        <figure class="panel" id="p-home" role="tabpanel" aria-labelledby="tab-home" style="margin:0">
-          <div class="frame"><img src="assets/web/img/portal-home.webp" width="1800" height="1125" loading="lazy" alt="Resident portal home page: live broadcast with a Broadcast status panel, a Coming up list and Latest recordings."></div>
-          <figcaption>Home shows the channel that is on air now, what is coming up, and the latest recordings.</figcaption>
-        </figure>
-        <figure class="panel" id="p-rec" role="tabpanel" aria-labelledby="tab-rec" hidden style="margin:0">
-          <div class="frame"><img src="assets/web/img/portal-recordings.webp" width="1800" height="1125" loading="lazy" alt="Resident portal recordings page with a search box, filters and a list of published meetings."></div>
-          <figcaption>Recordings can be searched and filtered. Only recordings that staff have published appear.</figcaption>
-        </figure>
-        <figure class="panel" id="p-sched" role="tabpanel" aria-labelledby="tab-sched" hidden style="margin:0">
-          <div class="frame"><img src="assets/web/img/portal-schedule.webp" width="1800" height="1125" loading="lazy" alt="Resident portal schedule page showing upcoming programs for a channel."></div>
-          <figcaption>The schedule shows upcoming programs per channel, so residents know when a meeting will air.</figcaption>
-        </figure>
-        <figure class="panel" id="p-watch" role="tabpanel" aria-labelledby="tab-watch" hidden style="margin:0">
-          <div class="frame"><img src="assets/web/img/portal-watch.webp" width="1800" height="1125" loading="lazy" alt="Resident portal watch page with a video player, caption controls and an agenda list."></div>
-          <figcaption>A watch page has the player, caption controls and the agenda, with each item linked to its time in the video.</figcaption>
-        </figure>
-      </div>
-      <div class="phone"><img src="assets/web/img/portal-home-phone.webp" width="620" height="1342" loading="lazy" alt="The resident portal home page on a phone screen."></div>
-    </div>
-  </div>
-</section>
-
-<section class="on-dark" id="architecture">
-  <div class="wrap">
-    <p class="eyebrow">Architecture</p>
-    <h2>One service, a few well-known parts.</h2>
-    <p class="lede">CivicCast runs as a Windows service. Its programs communicate locally, while staff and residents use their web browsers to reach the console and portal.</p>
-    <div class="arch-grid">
-      <figure class="arch-fig" style="margin:0">
-        <img src="assets/web/img/architecture-processes.webp" width="1600" height="1396" loading="lazy" alt="Diagram of the processes CivicCast runs on a Windows station: a supervisor service starting the control plane, the PostgreSQL database, playout workers, relays and optional components.">
-        <figcaption>Processes on a native Windows station. From the manual, chapter 16.</figcaption>
-      </figure>
-      <ul class="tech">
-        <li><b>Supervisor</b><span>The CivicCast Native Supervisor service starts the other programs and restarts them if they stop.</span></li>
-        <li><b>Web application</b><span>The staff console, resident portal and documented HTTP API run on the station.</span></li>
-        <li><b>Database</b><span>PostgreSQL, created and configured by the installer.</span></li>
-        <li><b>Playout</b><span>One GStreamer worker per channel, with seamless program changes and a watchdog that ends a stuck change. Outputs are HLS and UDP transport stream.</span></li>
-        <li><b>Captions and AI</b><span>Whistle is the CPU primary for live captions; Whisper is the per-channel fallback and handles recorded-media captions, with optional NVIDIA CUDA. A local Ollama runtime provides summaries.</span></li>
-        <li><b>Verified installation</b><span>The installer is Authenticode-signed. Setup verifies component-pack signatures and file hashes.</span></li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section id="evidence">
-  <div class="wrap">
-    <p class="eyebrow">Runtime results</p>
-    <h2>Beta 11: 72 hours across three channels.</h2>
-    <p class="lede">A Beta 11 CivicCast host ran public, government and education programming together for 72 hours, recording 99.78% live caption-input coverage.</p>
-    <div class="ev-grid">
-      <div>
-        <table class="ev-table">
-          <thead><tr><th scope="col">Measure</th><th scope="col">Result</th><th scope="col">Run</th></tr></thead>
-          <tbody>
-            <tr><td>Channels running together</td><td>3: public, government and education</td><td>Beta 11, 72-hour host run</td></tr>
-            <tr><td>Live caption-input coverage</td><td><strong>99.78%</strong></td><td>Beta 11, three-channel, 72-hour run</td></tr>
-            <tr><td>Continuous station runtime</td><td>72 hours without a service restart</td><td>Beta 11 host run</td></tr>
-            <tr><td>Scheduled health observations</td><td>216 of 216 healthy checkpoints</td><td>Beta 11 host run</td></tr>
-          </tbody>
-        </table>
-        <p class="fine" style="margin-top:1rem">The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md">Beta 11 72-hour host report</a> gives the channel totals and measurement. The earlier <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md">48-hour report</a> preserves the preceding window's 99.88% result. Current package checks are in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md">Beta 20 verification record</a>.</p>
-      </div>
-      <aside class="limits" aria-labelledby="limits-h">
-        <h3 id="limits-h">Plan your station</h3>
-        <ul>
-          <li><strong>One Windows PC</strong> hosts the station, staff console and resident portal.</li>
-          <li><strong>CPU captioning</strong> uses Whistle, with Whisper backup and optional NVIDIA acceleration for Whisper.</li>
-          <li><strong>Offline installation</strong> uses the complete kit, including the station model folder.</li>
-          <li><strong>Your network and outputs</strong> determine how residents and your cable operator receive programming. The manual covers setup.</li>
-        </ul>
-      </aside>
-    </div>
-    <p class="fine">The separate Beta 15 R9 field evaluation later sampled slate during scheduled speech and did not establish useful three-channel live captions. The cause was unconfirmed; the report does not attribute the result to Whistle. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md">owner-deferred follow-up record</a> for the Beta 15 findings and their evidence boundaries.</p>
-  </div>
-</section>
-
-<section class="band" id="source-candidate">
-  <div class="wrap">
-    <p class="eyebrow">Current release</p>
-    <h2>Built for daily station operation.</h2>
-    <p class="lede">Beta 20 carries recovery station-state replacement ACL repair that preserves private-key protection, dependency security corrections, bounded relay log retention and efficient draining, and CG text wrapping/reduction; long text may render small, so preview at the intended resolution. It builds on Beta 19's on-air remote guests, bulletin-board video and audio, and native viewer apps, plus the guided Cablecast station import, subscriber delivery, Podcast publication and underwriting tools introduced in Beta 17 and 18.</p>
-    <p>Get the complete signed package from the release links below. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ROADMAP.md">roadmap</a> and the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md">Beta 20 verification record</a> for exact package provenance and scoped acceptance.</p>
-  </div>
-</section>
-
-<section class="band" id="start">
-  <div class="wrap">
-    <p class="eyebrow">Quick start</p>
-    <h2>Install it on a Windows PC.</h2>
-    <ol class="steps">
-      <li><b>Get the kit</b>The Beta 20 release page carries <code>setup.exe</code>, five <code>.ccpack</code> component packs, and the signed station-model bundle. The release helper verifies and prepares the complete kit. Chapter 10 of the manual explains the folder layout.</li>
-      <li><b>Run <code>setup.exe</code></b>Windows asks for administrator approval. Setup checks every pack, creates the database, runs a self-test and starts the CivicCast service.</li>
-      <li><b>Open the operator console</b>Use the <em>CivicCast Operator Console</em> shortcut on the PC, which opens <code>http://127.0.0.1:8000/operator/</code>. First setup only works from the station computer itself.</li>
-      <li><b>Create the first admin</b>Choose the station name and an admin password, and save the recovery kit. The console stays locked until you confirm it.</li>
-      <li><b>Check Readiness</b>The Readiness screen reports whether the station is safe to broadcast.</li>
-    </ol>
-    <div class="callout"><p><strong>Upgrading an existing station?</strong> Back up a working station and plan the interruption. Follow the <a href="install-windows.html">Windows installation guide</a> for the exact release-matched kit and procedure.</p></div>
-    <div class="btn-row">
-      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">Open the release page</a>
-      <a class="button ghost" href="install-windows.html">Windows install notes</a>
-    </div>
-  </div>
-</section>
-
-<section id="docs">
-  <div class="wrap">
-    <p class="eyebrow">Documentation</p>
-    <h2>A manual for each kind of reader.</h2>
-    <p class="lede">The User Manual has a plain-language part for volunteers, camera operators, editors, records clerks and station staff, and a technical part for a city's IT staff, with architecture diagrams and a full appendix.</p>
-    <p class="fine">Get the Beta 20 PDF and Word manuals from the <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">release page</a>. The manual includes everyday operating instructions, technical administration and architecture diagrams.</p>
-    <ul class="docs">
-      <li><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf"><b>User Manual (PDF)</b><span>The complete manual, formatted for reading and printing.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.docx"><b>User Manual (Word)</b><span>The same manual as an editable document.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md"><b>User Manual (Markdown)</b><span>The current source text, readable in the browser.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20"><b>Beta.20 release assets</b><span>Signed installer, runtime packs, station models and manuals.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md"><b>Beta.20 verification</b><span>Package identity, provenance and scoped checks.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md"><b>Beta.14 historical verification</b><span>Earlier package identity and installation evidence.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md"><b>Beta.12 historical verification</b><span>Package-specific evidence from the previous release.</span></a></li>
-      <li><a href="install-windows.html"><b>Windows install notes</b><span>The release status and what a first install needs.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md"><b>Changelog</b><span>What changed in each release.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/CONTRIBUTING.md"><b>Contributing</b><span>How to propose a change to the code or the docs.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md"><b>Security policy</b><span>How to report a vulnerability.</span></a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/issues"><b>Report a beta issue</b><span>Use a GitHub account. Leave out passwords, recovery codes and private meeting material.</span></a></li>
-    </ul>
-  </div>
-</section>
-
-<section id="release-status">
-  <div class="wrap">
-    <p class="eyebrow">Release and field evidence</p>
-    <h2>Beta 20 is the current published download.</h2>
-    <p>The signed <code>v1.0.0-beta.20</code> release carries the station-state recovery ACL repair, dependency security corrections, bounded relay log retention and efficient draining, and CG text wrapping/reduction. Its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md">verification record</a> identifies exact package provenance and scoped acceptance.</p>
-    <p class="fine">Historical Beta 19 completed Sprint 5 with remote guest output, bulletin-board media and native viewer apps; its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.19-verification.md">verification record</a> identifies that package and its scoped checks.</p>
-    <p class="fine">Historical Beta 11 evidence remains separate: 72 hours across three channels with 99.78% live caption-input coverage. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md">Beta 11 host report</a>; it does not qualify later packages.</p>
-  </div>
-</section>
-
-<section class="on-dark final">
-  <div class="wrap">
-    <h2>Bring your station together.</h2>
-    <p class="lede">Download the signed pre-release, set up your channels and explore the operator console. Share your experience to help shape the next release.</p>
-    <div class="btn-row">
-      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">View the beta.20 release</a>
-      <a class="button ghost" href="https://github.com/scottconverse/civiccast-native">View the repository</a>
-    </div>
-  </div>
-</section>
-
-</main>
-
-<footer>
-  <div class="wrap">
-    <div>
-      <img src="brand/svg/civiccast-lockup-reversed.svg" alt="CivicCast" width="162" height="34">
-      <p>Public meetings, on the air. Open-source code under the Apache License 2.0; documentation under CC BY 4.0. Copyright The CivicCast Authors.</p>
-      <p>v1.0.0-beta.20 is the current published native Windows pre-release. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md">Beta 20 verification record</a> for exact package provenance and scoped acceptance.</p>
-    </div>
-    <ul aria-label="Footer links">
-      <li><a href="https://github.com/scottconverse/civiccast-native">Repository</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/releases">Releases</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/issues">Issues</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/LICENSE">License notice</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf">Manual</a></li>
-    </ul>
-  </div>
-</footer>
-
+<section class="accessibility"><div class="wrap accessibility-inner"><span class="large-cc" aria-hidden="true">CC</span><div><p class="eyebrow">ACCESS THAT LASTS BEYOND MEETING NIGHT</p><h2>Make your archive easier to follow.</h2><p>Generate captions locally, review the wording, and help residents follow the recording. Your team stays in control of the published text.</p><details><summary>Planning for government web accessibility?</summary><p>DOJ’s current Title II guidance lists April 26, 2027 for governments serving 50,000 or more people, and April 26, 2028 for smaller governments and special districts. The requirements cover more than captions and include exceptions. Captioning tools support your accessibility work; they do not establish compliance on their own.</p><a href="https://www.ada.gov/resources/2024-03-08-web-rule/">Read the current DOJ guidance ↗</a><small>Guidance checked October 23, 2026.</small></details></div></div></section>
+<section class="value"><div class="wrap value-grid"><div><p class="eyebrow">A SMALLER SOFTWARE BILL</p><h2>Spend your budget<br>on your community.</h2><p>CivicCast has no software license fee and no per-minute fee for local captions. It brings scheduling, recording, caption review, and a resident website into one system.</p><p class="muted">Your PC, storage, internet connection, and staff time still cost money. What you save depends on the tools and contracts you replace.</p></div><div class="cost-sheet"><div><span>CivicCast software license</span><strong>$0</strong></div><div><span>Local caption service fees</span><strong>$0<span> / minute</span></strong></div><div><span>Scheduling, recording & resident portal</span><b>Included</b></div><div><span>Windows PC, storage & connectivity</span><b>Station responsibility</b></div><div><span>Setup, review & immediate support</span><b>Your staff or IT partner</b></div><p>Apache-2.0 open-source software. Free to use, inspect, and adapt.</p></div></div></section>
+<section id="support" class="support"><div class="wrap support-grid"><div><p class="eyebrow">BEHIND THE CREATOR</p><h2>Scott Converse.<br>Technology for the public good.</h2><p>Scott is the co-founder of <a href="https://longmontpublicmedia.org/about/our-staff/">Longmont Public Media</a>, Longmont, Colorado’s public-access television station, and serves on its Board of Directors. His experience connects the software behind a station with the community it serves.</p><p>His four-decade career spans software development, product creation, and high-tech startups, including executive roles at Apple, Motorola, Paramount Pictures/Viacom, and MCI. He founded startups including ClickCaster, Medioh, and ExtractCraft.</p><p>Alongside that technology career, Scott has co-founded organizations built for the public good: Longmont Public Media, the Longmont Observer, and TinkerMill. CivicCast brings those two strands together—software development and community media—in an independent, open-source project.</p><a class="text-link" href="https://www.linkedin.com/in/scottgconverse/">Read Scott’s full background on LinkedIn ↗</a><div class="continuity"><h3>Your station should not depend on one person.</h3><p>The Apache-2.0 license lets you use, inspect, and adapt the source. Operator instructions, recovery guidance, architecture, and API documentation give your team or an IT partner a place to start if the original maintainer is unavailable.</p></div></div><div class="faq"><details open><summary>Who helps if playout stops at 7 p.m.?</summary><p>Your station needs a local operator or IT contact for immediate help. CivicCast offers documentation and community support through GitHub—not a staffed emergency line or a guaranteed response time.</p><a href="https://github.com/scottconverse/civiccast-native/blob/main/SUPPORT.md">How to get help →</a></details><details><summary>Is this ready for my station?</summary><p>CivicCast is available as a public beta. Try your own inputs, schedule, and publishing workflow before relying on it for a live meeting. The current release notes explain known limitations.</p><a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">Read release notes →</a></details><details><summary>What do I need to run it?</summary><p>A Windows station PC, enough storage for your recordings, and a network connection suited to your audience and outputs. The installation guide covers hardware and complete-kit requirements.</p><a href="https://scottconverse.github.io/civiccast-native/install-windows.html">See installation requirements →</a></details><details><summary>Can I see the technical evidence?</summary><p>Yes. Package details, verification records, and historical field reports are public. Start with the current release’s verification record.</p><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md">View verification record →</a></details></div></div></section>
+<section id="documentation" class="documentation"><div class="wrap"><div class="section-head"><div><p class="eyebrow">ANSWERS AT THE RIGHT DEPTH</p><h2>Start with the part that’s yours.</h2></div><a class="text-link" href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf">Download the complete manual ↗</a></div><div class="doc-paths"><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf#page=6"><span>FOR STATION STAFF</span><h3>Run your next meeting.</h3><p>Scheduling, live operation, captions, approvals, and publishing.</p><b>Read the operating guide →</b></a><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf#page=133"><span>FOR IT</span><h3>Set up. Maintain. Recover.</h3><p>Hardware, installation, security, backups, and troubleshooting.</p><b>Read the administration guide →</b></a><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf#page=296"><span>FOR DEVELOPERS</span><h3>Understand what’s inside.</h3><p>Architecture, integration points, and the HTTP API reference.</p><b>Explore the architecture →</b></a></div><div class="evidence-links"><span>Release details</span><a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">Release notes & limitations</a><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md">Verification</a><a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">Changelog</a><a href="https://scottconverse.github.io/civiccast-native/install-windows.html">Installation requirements</a></div></div></section>
+<section id="start" class="start"><div class="wrap start-inner"><div><p class="eyebrow">YOUR NEXT MEETING, SIMPLIFIED</p><h2>Bring your station together.</h2><p>Take a closer look. Try your workflow. Make it your station.</p><div class="actions"><a class="button" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20">Download CivicCast <span aria-hidden="true">↗</span></a><a class="text-link" href="https://scottconverse.github.io/civiccast-native/install-windows.html">Read the installation guide →</a></div><small>Public beta: <span>v1.0.0-beta.20</span> · Windows · Signed installer and complete installation kit</small></div><div class="start-mark" aria-hidden="true">C<span>)))</span></div></div></section>
+</main><footer><div class="wrap footer-top"><img class="logo" src="brand/svg/civiccast-lockup.svg" alt="CivicCast"><p>Public meetings, on the air.</p><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf">Manual</a><a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md">Security</a><a href="https://github.com/scottconverse/civiccast-native">Source code</a></div><div class="wrap footer-bottom"><span>© The CivicCast Authors · Code: Apache-2.0 · Documentation: CC BY 4.0</span><span>Independent project. Not affiliated with Cablecast or Tightrope Media Systems.</span></div></footer>
 <script>
-  // Mobile menu and screenshot tabs. The page works without this script: the menu is a plain link list
-  // on wide screens and the first screenshot is shown.
-  (function () {
-    var toggle = document.querySelector('.menu-toggle');
-    var nav = document.getElementById('nav');
-    if (toggle && nav) {
-      toggle.addEventListener('click', function () {
-        var open = nav.classList.toggle('open');
-        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-      });
-      nav.addEventListener('click', function (e) {
-        if (e.target.tagName === 'A') { nav.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); }
-      });
-    }
-    var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-    function select(tab) {
-      tabs.forEach(function (t) {
-        var on = t === tab;
-        t.setAttribute('aria-selected', on ? 'true' : 'false');
-        t.tabIndex = on ? 0 : -1;
-        document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
-      });
-    }
-    tabs.forEach(function (t, i) {
-      t.addEventListener('click', function () { select(t); });
-      t.addEventListener('keydown', function (e) {
-        var n = null;
-        if (e.key === 'ArrowRight') n = tabs[(i + 1) % tabs.length];
-        if (e.key === 'ArrowLeft') n = tabs[(i + tabs.length - 1) % tabs.length];
-        if (n) { select(n); n.focus(); e.preventDefault(); }
-      });
-    });
-  }());
-</script>
-</body>
-</html>
+const steps={
+schedule:{role:'MEETING OPERATOR',title:'Start with a plan.',description:'Put the meeting on your channel schedule and bring in its agenda. Give everyone a clear view of what’s coming next.',label:'Schedule',body:'<div class="demo-heading"><h4>Government channel</h4><span>Sample schedule</span></div><div class="schedule-row"><span>5:30 PM</span><div><b>Community announcements</b><small>Scheduled programming</small></div></div><div class="schedule-row selected"><span>6:00 PM</span><div><b>City Council meeting</b><small>Live source · Agenda attached</small></div><i>LIVE</i></div><div class="schedule-row"><span>After meeting</span><div><b>Return to programming</b><small>Your channel schedule continues</small></div></div>'},
+live:{role:'MEETING & CAMERA OPERATORS',title:'Bring the room to your community.',description:'Check the source and station readiness, take the meeting live, and bring in configured remote guests when needed.',label:'Live operation',body:'<div class="demo-heading"><h4>City Council meeting</h4><span>Illustrated on-air view</span></div><div class="demo-video"><span class="on-air">● LIVE</span><strong>Council chamber</strong><small>Camera source → Government channel</small></div><div class="demo-chips"><span>Source preview</span><span>Remote guests</span><span>Return to schedule</span></div>'},
+record:{role:'MEETING OPERATOR',title:'Keep the recording in one library.',description:'Record a capture or network source, then find the resulting asset in your media library. Trim and prepare it for playback.',label:'Media library',body:'<div class="demo-heading"><h4>Your recordings</h4><span>Sample library</span></div><div class="asset-row"><div class="asset-icon">▶</div><div><b>City Council meeting</b><small>Meeting recording · Government</small></div></div><div class="demo-chips"><span>Trim recording</span><span>Prepare playback</span><span>Review captions</span></div>'},
+caption:{role:'RECORDS CLERK',title:'The machine drafts. Your team decides.',description:'Review recorded captions, correct names and wording, and approve the text that attaches to the recording. Live captions are a separate, first-pass feed.',label:'Caption review',body:'<div class="demo-heading"><h4>Review the words</h4><span>Illustrative caption cue</span></div><div class="caption-compare"><div><small>MACHINE TEXT · 00:12:08</small><p>Next is the maple street proposal.</p></div><div><small>REVIEWED TEXT</small><p>Next is the Maple Street proposal.</p></div></div><div class="demo-chips"><span>Listen to source</span><span>Save correction</span><span>Approve text</span></div>'},
+publish:{role:'PUBLISH OPERATOR',title:'Choose where the recording goes.',description:'Approve publication to the resident portal. Add configured archive destinations, a podcast episode, or subscriber notifications as appropriate.',label:'Publishing',body:'<div class="demo-heading"><h4>City Council meeting</h4><span>Illustrated destinations</span></div><div class="publish-row"><span>Resident portal</span><b>Public viewing</b></div><div class="publish-row"><span>Archive copies</span><b>Configured destinations</b></div><div class="publish-row"><span>Podcast & notifications</span><b>Optional services</b></div><p class="demo-foot">Recorded-caption review and attachment have their own progress.</p>'},
+watch:{role:'YOUR COMMUNITY',title:'One place to watch and return to.',description:'Residents find live programming, browse recordings, and check the upcoming schedule from their own devices.',label:'Resident portal',body:'<img class="actual-portal" src="assets/web/img/portal-home.webp" alt="Actual CivicCast resident portal with sample programming">'}
+};
+const tabs=[...document.querySelectorAll('[role="tab"]')];
+function selectTab(tab){tabs.forEach(t=>{const on=t===tab;t.setAttribute('aria-selected',String(on));t.tabIndex=on?0:-1;});const step=steps[tab.dataset.step];document.getElementById('step-role').textContent=step.role;document.getElementById('step-title').textContent=step.title;document.getElementById('step-description').textContent=step.description;document.getElementById('step-disclosure').textContent=tab.dataset.step==='watch'?'Actual product screenshot with sample content.':'Illustrated workflow based on the user manual. Controls shown here are explanatory.';document.getElementById('workflow-screen').innerHTML='<div class="window-label"><span>CIVICCAST / '+(tab.dataset.step==='watch'?'RESIDENT PORTAL':'WORKFLOW ILLUSTRATION')+'</span><span>'+step.label+'</span></div><div class="demo-content">'+step.body+'</div>';document.getElementById('workflow-panel').setAttribute('aria-labelledby',tab.id);}
+tabs.forEach((tab,i)=>{tab.addEventListener('click',()=>selectTab(tab));tab.addEventListener('keydown',e=>{let n;if(e.key==='ArrowRight')n=(i+1)%tabs.length;if(e.key==='ArrowLeft')n=(i+tabs.length-1)%tabs.length;if(e.key==='Home')n=0;if(e.key==='End')n=tabs.length-1;if(n!==undefined){e.preventDefault();selectTab(tabs[n]);tabs[n].focus();}});});selectTab(tabs[0]);
+</script></body></html>
