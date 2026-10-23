@@ -1760,7 +1760,7 @@ class TestD3d12DecoderHardwareGate:
 # WSL resources.pri -- observed data-only package resource exception
 # ---------------------------------------------------------------------------
 
-_WSL_PACKAGE = "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.1.0_x64__8wekyb3d8bbwe"
+_WSL_PACKAGE = "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.3.0_x64__8wekyb3d8bbwe"
 
 
 @pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))

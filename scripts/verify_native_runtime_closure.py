@@ -1940,8 +1940,9 @@ _OBSERVED_PACKAGE_METADATA_RESOURCE_INDEX = re.compile(
     r"^resources\.[0-9a-f]+\.pri$",
     re.IGNORECASE,
 )
-_OBSERVED_WSL_RESOURCE_COMPONENT = (
-    "microsoftcorporationii.windowssubsystemforlinux_3.0.1.0_x64__8wekyb3d8bbwe"
+_OBSERVED_WSL_RESOURCE_COMPONENT = re.compile(
+    r"^microsoftcorporationii\.windowssubsystemforlinux_\d+(?:\.\d+){3}_x64__8wekyb3d8bbwe$",
+    re.IGNORECASE,
 )
 
 
@@ -2000,7 +2001,7 @@ def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
             normalized_package in _OBSERVED_PACKAGE_MANIFEST_COMPONENTS
             and normalized_filename == "appxmanifest.xml"
         ) or (
-            normalized_package == _OBSERVED_WSL_RESOURCE_COMPONENT
+            _OBSERVED_WSL_RESOURCE_COMPONENT.fullmatch(package_name) is not None
             and normalized_filename == "resources.pri"
         )
     return False
