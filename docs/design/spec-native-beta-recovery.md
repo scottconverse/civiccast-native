@@ -231,7 +231,6 @@ After WP0-WP4 are remotely checkpointed, freeze one candidate commit and run:
 
 - full test suite and recorded-seed randomized suite;
 - pollution and order-dependence detector;
-- diff-scoped mutation testing with survivor disposition;
 - lint, formatting, type, policy, security, license, and dependency checks;
 - two-workspace reproducible payload and bootstrap builds;
 - online and air-gapped offline-caption proofs;
