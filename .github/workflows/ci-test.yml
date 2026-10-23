@@ -503,13 +503,13 @@ jobs:
         # 50-test margin with a floor of 1974. The 2026-10-14 Beta16 license
         # closure assertion added one pure test (floor 1975).
         # 2026-10-19: 2029 pure tests; floor 1983 leaves a 46-test margin.
-        # Current randomized CI collection: 2061 pure tests; floor 2011 keeps
+        # Current randomized CI collection: 2069 pure tests; floor 2019 keeps
         # the standard 50-test margin.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 2011 \
+            --floor 2019 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -818,7 +818,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2250 \
+            --floor 2261 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
