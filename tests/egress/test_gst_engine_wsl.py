@@ -3416,10 +3416,14 @@ def test_emergency_late_image_reaches_pixels_and_clear_preserves_logo(tmp_path, 
         last_rgb = None
         observed = False
         while time.monotonic() < deadline:
-            assert proc.poll() is None, f"worker exited before pixels observed; last RGB={last_rgb}; log={log}"
+            assert proc.poll() is None, (
+                f"worker exited before pixels observed; last RGB={last_rgb}; log={log}"
+            )
             snapshot = tmp_path / "displayed.ts"
             shutil.copyfile(out_ts, snapshot)
-            raw = _ffmpeg_last_frame_rgb24(snapshot, tmp_path / "displayed.raw", width=640, height=360)
+            raw = _ffmpeg_last_frame_rgb24(
+                snapshot, tmp_path / "displayed.raw", width=640, height=360
+            )
             assert raw is not None, "FFmpeg is required for the actual-pixel claim"
             offset = (340 * 640 + 600) * 3
             r, g, b = raw[offset : offset + 3]
