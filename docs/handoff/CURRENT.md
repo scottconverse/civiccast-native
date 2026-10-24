@@ -1,0 +1,156 @@
+# CivicCast portable handoff — October 24, 2026
+
+Read this file and the root `AGENTS.md` / `CLAUDE.md` before continuing. This is
+the current handoff, replacing dependence on the previous coordinator's local
+chat and drive. Historical release records retain their original evidence scope.
+
+## Get the complete handoff
+
+Repository: <https://github.com/scottconverse/civiccast-native>
+
+This handoff and the checker fix are on **`fix/beta20-portable-handoff`**, based on
+published main commit `121465506a7314f02ad7572337b46a83fa3f6e51`. They are being
+delivered as a branch, not represented as already merged into `main`.
+Do not start from the Beta20 tag expecting the latest instructions or package source.
+
+PowerShell, on the destination machine (choose a short writable source directory):
+
+```powershell
+$env:GIT_LFS_SKIP_SMUDGE = '1'
+$env:GIT_LFS_SKIP_PUSH = '1'
+git clone --single-branch --branch fix/beta20-portable-handoff https://github.com/scottconverse/civiccast-native.git civiccast-native
+Set-Location civiccast-native
+git status --short --branch
+git log -1 --oneline
+```
+
+No `git lfs pull`, `fetch`, or `push`; no LFS transfers or spending through
+October 2026. The current tree has no LFS-tracked files; historical revisions may.
+The handoff branch deliberately has no PR yet: creating a PR launches broad
+application CI. Scott requested a push and portable handoff, not another CI cycle
+or merge. Check current remote state before later integration.
+
+## Current result and exact identities
+
+- **Beta20 is already public:** [release and assets](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20).
+  GitHub labels it a prerelease because it is a beta; it is not a draft.
+- Current installer is the documentation revision built from
+  `2e19612467fda894d63e499580e4d7b5f029f5f2`, signed
+  [build 39810481727](https://github.com/scottconverse/civiccast-native/actions/runs/39810481727).
+  Setup SHA-256: `6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d`.
+  Existing evidence records a valid Scott Converse signature and installed Help/manual acceptance.
+  See [Beta20 verification](../releases/v1.0.0-beta.20-verification.md).
+- Original release tag remains at `a17449189a39af6474d914137eab020169f91023`.
+  The tag's automatic source ZIP is **not** the documentation-revision source.
+  Do not move the tag or rebuild an installer to reconcile these identities.
+- [PR263](https://github.com/scottconverse/civiccast-native/pull/263) merged the final
+  prior CI corrections at `086f1b967766aaea31a5a4296ce6f96771e2d72f`.
+  Its recorded rollup was 21 successes / 3 inapplicable skips / 0 failures.
+  That historical pass does not claim later CI is green.
+- The approved station-manager landing page and Scott's biography are live at
+  <https://scottconverse.github.io/civiccast-native/>.
+  [PR264](https://github.com/scottconverse/civiccast-native/pull/264) merged at
+  `121465506a7314f02ad7572337b46a83fa3f6e51`;
+  [Pages run 39989225060](https://github.com/scottconverse/civiccast-native/actions/runs/39989225060)
+  succeeded. Live HTTP 200, headline, biography/LinkedIn, loaded images and working
+  walkthrough were checked, with no browser JavaScript errors. Six local tabs and
+  390/768/1440-width layouts passed. The walkthrough is explicitly an illustration,
+  not a real station demo. No customer testimonial or production-station claim was invented.
+
+## Checker correction included in this branch
+
+Only `scripts/verify_native_runtime_closure.py` and
+`tests/native/test_closure_verifier.py` change checker behavior.
+
+The last passing Windows run used GitHub image `20261007.264.1`; the failing run
+used `20261021.278.1`. Product runtime, dependency lock, checker and workflow were
+unchanged between those runs. The rejected file was Windows Terminal's root
+`resources.pri`, observed as a known non-executable mapping. Six other closure
+checks passed, including plugin origin and the caption embed/decode round trip.
+This is a data-resource classification false positive, not evidence of a missing
+media DLL. The precise Windows API that mapped the file was not captured.
+
+The correction recognizes the stable Microsoft Windows Terminal x64 package
+identity (numeric version, publisher `8wekyb3d8bbwe`) and **only root
+`resources.pri`**. The path stays visible in the report. Executable and unknown
+protection mappings, DLLs, wrong publishers, different packages and subdirectories
+still fail. Canonical-path and file-identity safeguards are retained.
+
+Existing verification, October 23, reused without rerunning unchanged code:
+
+```text
+.venv\Scripts\python.exe -m pytest tests/native/test_closure_verifier.py -q --no-cov
+153 passed in 6.38s
+ruff check: passed
+ruff format: applied; changed files reviewed
+git diff --check: passed
+```
+
+This is local checker-logic evidence, not a new hosted Windows pass or installed
+product test. No installer rebuild is required for this change.
+
+Historical Windows runs:
+[passing 39923178286](https://github.com/scottconverse/civiccast-native/actions/runs/39923178286)
+and [failure 39987938776](https://github.com/scottconverse/civiccast-native/actions/runs/39987938776).
+The failed prerequisite caused later Windows suites to skip; missing JUnit reports
+are consequences, not separate product defects. Other broad PR264 runs were cancelled
+to avoid unchanged full-suite/manual work; cancellation is not a pass.
+
+## Remaining work, not authorized as part of this handoff push
+
+1. Integrate this branch through the repository's normal PR process when requested.
+   The corrected checker has not been exercised on the updated hosted Windows image.
+   Use the existing affected Windows job when integration requires it, not repeated
+   full suites or a new installer. Do not claim repository-wide CI is green.
+2. The Python audit reported `brotli 1.2.0 / PYSEC-2026-4322`, pulled in through
+   `crawl4ai 0.9.2`. See [run 39987938274](https://github.com/scottconverse/civiccast-native/actions/runs/39987938274)
+   and main security run `39989225752`. Severity, reachability and inclusion in the
+   released installer were **not established** in this session. The finding has not
+   been fixed or waived. Inspect the advisory and actual dependency use before a
+   bounded dependency correction; do not invent an allowlist exception.
+
+The next agent should take Scott's current assignment. Reading this handoff is not
+permission to restart old nine/twelve-goal lists, redesign the product, create a
+new release, or repair unrelated findings.
+
+## Accepted behavior and boundaries to preserve
+
+- Scott accepted the observed ~8.763-second caption sample delay and brief
+  previous-program carryover for Beta20. It is not a universal latency bound and
+  not a new release blocker.
+- Summary evidence covers a short transcript and cited narrative; no long-meeting
+  benchmark is claimed. Local AI model RAM requirements still apply.
+- Roku acceptance uses the repository's software/API mocks and BrightScript
+  validation. Scott explicitly prohibits physical-hardware testing requirements.
+- The previous host was a test server, with owner-authorized reset/stop/start
+  operations. Do not infer that a new machine is a test host without context.
+- Mutation testing was removed at Scott's request. Never restore it as a CI or
+  release requirement, or promote informational results into mandatory gates.
+- Serial work, one justified candidate, no automatic subagents or repeated audits.
+  Every additional check must address changed behavior, an unresolved requirement,
+  a concrete defect or required CI. Reuse unaffected evidence and artifacts.
+- No LFS transfers, new spending, host reboot or installer rebuild for this handoff.
+  Keep windows/helpers hidden. No automatic monitor or continuation is required.
+
+## Build, runtime and machine state
+
+See [BUILD-ASSETS.md](BUILD-ASSETS.md) for exact source locations, asset sizes,
+existing release downloads, the FFmpeg mirror and PyAV reuse recipe.
+Source checkout and checker development do not require copying the old machine's
+station data, models, installer, virtual machines, `.venv`, or agent tooling.
+
+The old untracked `.codex/` directory is deliberately not imported. It contains
+machine-specific Desktop paths, historical authorization/evidence files and
+wake/completion hooks for a previous assignment. These are not product build inputs.
+Current owner rules are portable in `AGENTS.md` and `CLAUDE.md`; do not recreate
+old hooks or depend on `C:/Dev/codex-hook-kit` to develop CivicCast.
+
+The previous workspace has older candidate/worktree directories. This handoff is
+for the current released native product and this branch; it does not certify or
+publish abandoned experiments from every historical worktree. The coordinator's
+incident drafts, token-accounting reports and browser mockup scratch files are
+not prerequisites. Relevant product status and evidence are linked above.
+
+No fresh-machine build was run for this handoff. Required binary sources are
+identified; availability of every third-party download and access to private
+signing credentials are not implied by a successful Git clone.

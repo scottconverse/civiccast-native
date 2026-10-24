@@ -1761,11 +1761,13 @@ class TestD3d12DecoderHardwareGate:
 # ---------------------------------------------------------------------------
 
 _WSL_PACKAGE = "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.3.0_x64__8wekyb3d8bbwe"
+_TERMINAL_PACKAGE = "Microsoft.WindowsTerminal_1.23.20211.0_x64__8wekyb3d8bbwe"
 
 
 @pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
+@pytest.mark.parametrize("package", (_WSL_PACKAGE, _TERMINAL_PACKAGE))
 def test_wsl_resources_pri_access_is_reported_without_failing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trace_field: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trace_field: str, package: str
 ) -> None:
     from scripts import verify_native_runtime_closure as verifier
 
@@ -1773,7 +1775,7 @@ def test_wsl_resources_pri_access_is_reported_without_failing(
     monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
     tree = tmp_path / "tree"
     resource = _appinstaller_resource_path(
-        package_root, package=_WSL_PACKAGE, relative=("resources.pri",)
+        package_root, package=package, relative=("resources.pri",)
     )
     payload = _with_traced_file(_clean_child_payload(), tree)
     payload.setdefault(trace_field, []).append(str(resource))
@@ -1784,6 +1786,7 @@ def test_wsl_resources_pri_access_is_reported_without_failing(
 
     assert trace.status == "PASS"
     assert "WSL resources.pri" in trace.detail
+    assert "Windows Terminal resources.pri" in trace.detail
     assert "DesktopAppInstaller package resource" in trace.detail
     assert "AppxManifest.xml" in trace.detail
     assert str(resource.resolve()) in trace.detail
@@ -1796,11 +1799,13 @@ def test_wsl_resources_pri_access_is_reported_without_failing(
         ("unclassified_mappings", "unknown-protection mapping"),
     ),
 )
+@pytest.mark.parametrize("package", (_WSL_PACKAGE, _TERMINAL_PACKAGE))
 def test_wsl_resources_pri_listed_as_strict_mapping_still_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     strict_field: str,
     expected_leg: str,
+    package: str,
 ) -> None:
     from scripts import verify_native_runtime_closure as verifier
 
@@ -1808,7 +1813,7 @@ def test_wsl_resources_pri_listed_as_strict_mapping_still_fails(
     monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
     tree = tmp_path / "tree"
     resource = _appinstaller_resource_path(
-        package_root, package=_WSL_PACKAGE, relative=("resources.pri",)
+        package_root, package=package, relative=("resources.pri",)
     )
     payload = _with_traced_file(_clean_child_payload(), tree)
     payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
@@ -1899,9 +1904,25 @@ def test_feedbackhub_metadata_resource_listed_as_strict_mapping_still_fails(
         (_WSL_PACKAGE[:-1] + "f", ("resources.pri",)),
         (_WSL_PACKAGE, ("resources.pri.other",)),
         (_WSL_PACKAGE, ("nested", "resources.pri")),
+        (_TERMINAL_PACKAGE[:-1] + "f", ("resources.pri",)),
+        (_TERMINAL_PACKAGE, ("resources.dll",)),
+        (_TERMINAL_PACKAGE, ("nested", "resources.pri")),
+        (
+            _TERMINAL_PACKAGE.replace("WindowsTerminal", "WindowsTerminalPreview"),
+            ("resources.pri",),
+        ),
         ("Microsoft.OtherPackage_1.0.0.0_x64__8wekyb3d8bbwe", ("resources.pri",)),
     ),
-    ids=("wrong-publisher", "wrong-filename", "subdirectory", "foreign-package"),
+    ids=(
+        "wrong-publisher",
+        "wrong-filename",
+        "subdirectory",
+        "terminal-wrong-publisher",
+        "terminal-dll",
+        "terminal-subdirectory",
+        "terminal-other-package",
+        "foreign-package",
+    ),
 )
 @pytest.mark.parametrize("trace_field", ("accessed_paths", "mapped_data"))
 def test_wsl_resources_pri_exception_rejects_near_misses(

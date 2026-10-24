@@ -1,68 +1,41 @@
-# CivicCast — Instructions for Codex
+# CivicCast - Instructions for coding agents
 
-Read `CLAUDE.md` first: it carries the repo's review practices,
-closed decisions, and non-negotiables.
-Those apply to every agent working in this repo, not only Claude.
+Read `CLAUDE.md` for project architecture, commands, product constraints, and the
+owner-approved completion workflow. Its 2026-10-19 workflow replaces the historical
+generic audit ladder for both Codex and Claude; it does not waive product acceptance.
 
-The outdated cross-agent audit protocol was removed at Scott's direction
-on 2026-09-08. Do not restore it or use its historical approval gates.
-Scott has authorized the current beta.5 release manager to implement, test,
-document, push, merge on green CI, and tag and publish the completed beta
-for LPM field installation. Continue unblocked work without per-stage approval.
-This authorization does not authorize station production cutover or spending.
-Do not use staged-build, Workflowwright, GauntletGate, Proof Gate, or Audit
-Team skills for this release. Direct engineering and independent agent review
-remain appropriate; the release manager owns integration and evidence.
+Start with `docs/handoff/CURRENT.md` for the portable project state, exact release
+identity, remaining work, and build-asset inventory. Use your checkout's root;
+the previous machine's absolute paths are not prerequisites.
+Beta20 is already publicly released. This handoff does not authorize a new release,
+installer rebuild, or reopening completed acceptance. Scott's latest assignment
+defines what to do next. Do not modify frozen candidate worktrees.
 
----
+Use one current candidate and work serially. Do not create subagents automatically.
+Complete authorized work through the requested outcome, preserve valid evidence,
+and stop when delivered. A remaining blocker means incomplete. DCO commits, required
+CI, protected-branch rules, recovery, and installed acceptance remain required.
 
-## Native-Windows Program — Current roles
+No Git LFS transfers or spending through October 2026; no LFS pull/fetch/push.
+No automatic tests, audits, rebuilds, subagents, or continuation jobs on startup.
+Reuse existing valid evidence; mutation testing is not a requirement.
+Keep Windows command/helper windows hidden. Use invisible ConPTY where available
+(`tty=true`, `login=false`); background children need Hidden/CreateNoWindow.
+No host reboot. Preserve data and recovery safeguards. Test hardware through the
+repository's documented API simulators/mocks; do not seek physical Roku devices.
+Never pause an active goal without a current owner request. A newer explicit resume
+or goal-start action supersedes an older pause; never mark incomplete work complete.
 
-Scott Converse is the owner and the only authority for merge, tag, release
-signing, publication, shipment, cutover, spending, and tie-break decisions.
-The active recovery coder is Codex, as recorded in
-`docs/process/CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md` and
-`.agent-runs/native-windows/specs/spec-native-beta-recovery.md`. The former
-hard-coded model-name role pairing is historical and must not override an
-explicit current owner assignment.
+## Explicit auditor assignments
 
-Coder work follows the one-package-at-a-time recovery contract, including
-red-first proof, deterministic detectors, five-lens review, DCO commits, and
-remote checkpoints. The coder never self-certifies the final candidate.
+Only act as an auditor when explicitly assigned that role. Audit the supplied SHA
+and named claims, in an isolated worktree when execution requires it; do not edit
+implementation. Run the relevant named proofs and report material findings, results,
+skips, and limitations. Reading a diff is not runtime proof. Do not expand a scoped
+review into a fresh project-wide investigation. Use private handling for security
+findings. A review result does not authorize release or production cutover.
 
-### Auditor invocation
-
-When invoked through the `codex-auditor` MCP loop (an audit request naming a
-slice, SHA, claims, evidence, and a requested gate), you are the **auditor**
-of the CivicCast native-Windows program. The program's governing documents —
-charter, audit gate, audit protocol, drift catalog, and verdict history —
-live in the owner-controlled repo:
-
-**<https://github.com/scottconverse/civiccast-audit-control>**
-
-Rules of the role (summary; audit-control is authoritative):
-
-1. **Audit only the supplied SHA**, in a **separate detached worktree** —
-   never the coder's working tree, never a different commit.
-2. **Re-run the named falsifications and proofs.** Reading the diff is not
-   an audit. Worktree proof must never be reported as clean-machine proof.
-3. **Make no implementation edits.** Findings return as findings.
-4. Return one result: `PASS`, `CHANGES_REQUIRED`, or `BLOCKED`, with material
-   findings, evidence, skipped checks, and known gaps.
-5. Report directly to Scott or on the PR. No canonical path, separate
-   repository record, exact-SHA authorization token, or per-slice review is
-   required.
-6. **Severity and status language** must reflect current evidence, including
-   which candidate was tested and what remains unverified.
-7. **Security-sensitive findings** use the embargo lane defined in
-   audit-control (private until fixed).
-8. **Disagreements between coder and auditor escalate to Scott Converse**
-   (owner and tie-breaker). Neither agent certifies its own work.
-
-The transport does not authenticate callers; the role comes from this
-protocol, not the channel. Requests arrive via the `codex` / `codex-reply`
-MCP tools; treat the request's `head_sha` and evidence paths as the entire
-scope. A session invoked as auditor remains read-only even if another Codex
-session is the coder. Fresh adversarial auditors and the final cold-session
-audit replace model-name-based role separation; Scott remains owner and
-tie-breaker.
+Scott's current assignment determines authority. Historical model-role pairings,
+per-slice audit ceremonies, five-lens reports, and old exact-filename approval gates
+are not automatic requirements. Preserve existing task-specific authorization;
+do not resurrect an old beta assignment as permission to resume stopped work.
