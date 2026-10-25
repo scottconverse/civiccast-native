@@ -52,7 +52,9 @@ class YouTubeLiveOutput:
         self._supervisor = ThreadSupervisor(
             name="youtube-live-output",
             run_forever=self.run_forever,
-            poll_seconds=5.0,
+            # Two Data API status reads per poll: 30 s keeps one continuous
+            # output below the usual 10,000-unit daily quota. UI refresh is local.
+            poll_seconds=30.0,
             enabled=True,
         )
 
@@ -188,4 +190,7 @@ class YouTubeLiveOutput:
         self._supervisor.stop(timeout=35.0)
         for asset_id, delivery in list(self._deliveries.items()):
             if delivery.proof.delivery_state in {"configured", "starting", "live"}:
-                self.stop(asset_id)
+                try:
+                    self.stop(asset_id)
+                except Exception:
+                    _LOG.warning("YouTube output stopped but final status could not be saved.")

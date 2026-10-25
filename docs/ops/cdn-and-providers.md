@@ -200,7 +200,8 @@ and binds an event with the recording title, current scheduled start, configured
 privacy (unlisted by default), and automatic start/stop. A separate owned FFmpeg
 process sends that channel's existing audio/video to the private RTMPS endpoint.
 The dashboard returns a viewer watch link and `starting`; `live` requires both
-an active YouTube stream and a live broadcast reported by YouTube. Setup alone
+an active YouTube stream and a live broadcast reported by YouTube. Destination
+status is polled every 30 seconds; dashboard refreshes read local status. Setup alone
 never establishes live delivery. Startup times out after two minutes without
 confirmation; process exits, destination errors and disconnects report `failed`
 without disabling local portal publication. Stop YouTube output stops that

@@ -27,7 +27,8 @@ until real YouTube acceptance and CI are satisfied.**
   Watch links replace ingest links. Destination polling distinguishes starting/live/
   failed/stopped; startup timeout, process exit, disconnect, stop, partial event setup,
   shutdown and restart interruption are handled. Unused events/streams are cleaned up;
-  remote cleanup failure is reported. CAS surface updates preserve concurrent publish
+  remote cleanup failure is reported; shutdown continues if status saving fails.
+  Destination polling is 30 seconds to limit API quota use; UI polling stays local. CAS surface updates preserve concurrent publish
   work; dashboard reads remain batched. Legacy unconfirmed YouTube successes display
   unverified and private ingest URLs are removed from responses. Local portal survives
   output/provider failures. Mocks explicitly remain simulated/unverified.
@@ -74,7 +75,11 @@ locks (including caption environment filelock where present). Nothing was instal
 restarted or rebuilt for the endurance station. Source CI does not prove its remediation.
 
 - Next: finish focused restart/setup results, commit/push one candidate, open PR, then
-  follow required CI using GitHub's existing watch facility. No CI watcher launched yet.
+  follow CI using GitHub's existing watch facility. PR267 is open (no merge authorized).
+  Initial candidate `4b90b888375b7a20eb92c3c7f0e69c47aa4a60b0`; one final cleanup/quota
+  correction is being pushed. CI watch session98103, started October25 ~13:54 Denver,
+  watches PR267 every30s and exits when checks finish; Ctrl-C cancels only this watch.
+  ci-test run40228250962 is the initial run (a new push supersedes it automatically).
   Local check sessions/logs live under the original chat's `work/` scratch directory;
   all local check processes are terminal; no owned background process remains.
 - Boundaries: no station touch, LFS transfer, installer, release, merge, paid service,

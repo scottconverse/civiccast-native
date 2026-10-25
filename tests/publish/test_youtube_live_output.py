@@ -235,3 +235,14 @@ def test_legacy_ingest_proof_is_not_viewable_or_verified():
     assert status.surfaces[1].url is None
     assert "private-key" not in status.model_dump_json()
     assert status.surfaces[0].state == "succeeded"
+
+
+def test_shutdown_reaps_all_senders_even_when_status_store_fails(output):
+    for asset_id in ["first", "second"]:
+        output.manager.start(
+            output.client, asset_id=asset_id, title=asset_id, channel_id="government"
+        )
+    output.record.side_effect = RuntimeError("store unavailable")
+    output.manager.close()
+    assert output.process.terminate.call_count == 2
+    assert output.client.finish_live.call_count == 2
