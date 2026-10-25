@@ -60,6 +60,8 @@ def test_public_docs_do_not_overclaim_sdi_or_cg_proof() -> None:
 
     assert "DeckLink SDI through the engine's own sink" not in public_page
     assert "Multi-zone CG designer" not in public_page
-    assert "72 hours across three channels." in public_page
-    assert "99.78% live caption-input coverage" in public_page
-    assert "beta11-host-caption-performance-72-hour-2026-10-11.md" in public_page
+    # The redesigned page links current verification rather than advertising
+    # historical measurements. If those measurements return, retain their source.
+    assert f"{CURRENT_BETA_RELEASE_TAG}-verification.md" in public_page
+    if "72 hours" in public_page or "99.78%" in public_page:
+        assert "beta11-host-caption-performance-72-hour-2026-10-11.md" in public_page

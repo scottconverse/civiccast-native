@@ -154,3 +154,65 @@ not prerequisites. Relevant product status and evidence are linked above.
 No fresh-machine build was run for this handoff. Required binary sources are
 identified; availability of every third-party download and access to private
 signing credentials are not implied by a successful Git clone.
+
+
+## Integration and advisory investigation — October 24, 2026
+
+Scott authorized [PR265](https://github.com/scottconverse/civiccast-native/pull/265)
+and merge after applicable CI passes, followed by a Brotli investigation/report.
+No installer rebuild or new release is authorized. At preparation of this update,
+integration awaits corrected-head CI; PR265 records the subsequent merge result.
+Do not infer repository-wide green CI from a merge: informational scans have findings.
+
+- Initial PR head: `50b4e11d15f36aa50ba2bf02f9bd417d1e1ddf60`.
+  Windows closure/native job `121056228553` passed in run `40155601318`.
+  App-payload reproducibility run `40155601291` passed byte equality.
+- Informational randomized run `40155601353` exposed five deterministic stale
+  policy/doc assertions (seed `824704267`): native collection counts/floors,
+  removed historical coder-seat wording, and two old landing-page assumptions.
+  All five reproduced locally. The still-running unit workflow `40155601318`
+  was cancelled before pushing corrections; cancelled is not passed.
+- The integration correction updates collection expectations to 2082 pure /
+  2324 total / 2321 Windows non-integration tests, and raises JUnit floors to
+  2032 / 2271, preserving the existing 50-test margin. Role checks protect
+  current owner assignment; landing-page checks protect current release links,
+  reject withdrawn releases, retain prohibited-claim checks and require historical
+  citations if historical measurements return. Product/page content is unchanged.
+- Reuse the passed payload byte-equality proof for these test/doc/floor-only
+  corrections; they do not alter packaging. Await applicable CI on the corrected
+  PR head, including the downstream claims-evidence verifier, before merging.
+  Main rules require a PR but returned no named required checks or approving
+  review requirement. The security workflow and randomized suite are explicitly
+  non-required/informational; report their findings without making them new gates.
+- Focused local verification passed: 50 documentation/role tests and 21 native
+  workflow-policy tests (including live collection/floor checks), plus ruff lint,
+  formatting and git diff --check. The checker code remains unchanged; reuse its
+  153-test evidence and the hosted Windows proof above.
+- Previous local watchers ended. Next action at preparation: push the corrected
+  head, wait for applicable CI, and merge the exact authorized candidate.
+
+Brotli findings (dependency correction is not implemented):
+
+- PYSEC-2026-4322 / CVE-2026-111497 / GHSA-9v8h-qqgm-4m35 is one upstream
+  decoder memory-corruption issue, rated critical (CVSS 4.0 9.2), fixed in 1.2.1.
+  See [PyPA advisory](https://github.com/pypa/advisory-database/blob/main/vulns/brotli/PYSEC-2026-4322.yaml)
+  and [upstream fix release](https://github.com/google/brotli/releases/tag/v1.2.1).
+- Optional `agenda-js-import` -> crawl4ai 0.9.2 (`brotli>=1.1.0`) locks 1.2.0.
+  Installing that extra enables HTTPX's Brotli decoder automatically. CivicCast's
+  `js_portal` robots.txt fetch provides a concrete remote-response input path.
+  This is static reachability evidence, not an executed exploit or compromise.
+- Fix needed: require `brotli>=1.2.1` in that optional extra and refresh only its
+  affected lock/hashes; verify the selected version, advisory result and focused
+  agenda/HTTP tests. Crawl4ai 0.9.2 accepts 1.2.1, and a Python 3.12 Windows x64
+  wheel exists. Installed affected environments also need their decoder updated
+  and processes restarted. Do not add an allowlist waiver.
+- Exact released source `2e19612467fda894d63e499580e4d7b5f029f5f2` excludes Brotli
+  and crawl4ai from the native Python locks; packaging uses `--no-deps`.
+  Bounded HTTP ranges inspected the published app pack's ZIP directory:
+  1,152,522 bytes read, 9963 entries / 83 wheels, no Brotli/crawl4ai paths.
+  Full artifact checksum/signature verification and installed-environment
+  inspection were not performed; other embedded decoders are not ruled out.
+- Security run `40155601323` also reports filelock, pypdf, setuptools, virtualenv,
+  Zod, Vitest/mocker and Undici findings. Their reachability and artifact scope
+  were not investigated here. No dependency edits, waiver, installer rebuild,
+  release or LFS transfer was performed.

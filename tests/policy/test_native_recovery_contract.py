@@ -72,12 +72,15 @@ def test_current_role_docs_do_not_restore_model_name_based_roles() -> None:
 
     assert "Claude = coder, Codex = auditor" not in agents
     assert "Claude = coder, Codex = auditor" not in claude
-    # The pinned sentence tracks the owner's CURRENT seat assignment: the
-    # 2026-07-25 recovery handoff named Codex; the owner transferred the
-    # seat to Claude on 2026-07-29 (recorded in the recovery spec's
-    # owner-amendment section). The assignment mechanism -- owner handoff,
-    # never model-name-based role inference -- is what this test protects.
-    assert "transferred from Codex to Claude on 2026-07-29" in claude
-    assert "Do not infer a role" in claude
+    # Protect current owner assignment without pinning a historical coder seat.
+    assert "Scott's current assignment determines authority." in _normalized_prose(agents)
+    assert (
+        "Scott's current assignment determines the coder, reviewer, and authority."
+        in _normalized_prose(claude)
+    )
+    assert (
+        "Old model-role assignments and prior beta authorizations are historical, not permission "
+        "to resume a stopped task."
+    ) in _normalized_prose(claude)
     assert "Superseded source-control rule" in old_handoff
     assert "scoped commits and pushes are authorized" in _normalized_prose(old_handoff)
