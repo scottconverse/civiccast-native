@@ -1,230 +1,85 @@
-# CivicCast — Project Instructions for Claude Code
+# CivicCast - Project Instructions for Codex and Claude Code
 
-> **When moving this file into the project repo, rename it to `CLAUDE.md` and place it at the repo root.** This file orients Claude Code on every fresh session. Read it before doing anything else.
+## Current owner workflow - 2026-10-19
 
----
+Scott authorized simplifying these instructions to end repeated audit/build/status
+loops. This replaces the mandatory five-lens audit before every push, automatic
+cross-agent review ladder, zero-findings-at-HEAD rule, and ceremonial role reports.
+Older process documents and historical handoffs do not restore those generic rules.
+Product requirements, explicit task acceptance, required CI, branch protections,
+security/data safeguards, and release recovery requirements remain in force.
 
-## Current owner authorization — 2026-09-08 beta.5 release
+Beta20 was publicly released; the October 19 pause is historical, not current state.
+Read `docs/handoff/CURRENT.md` for the portable handoff and outstanding work.
+Scott authorized publishing the checker fix, portable instructions, and handoff on
+October 24. This is not an installer or product-release assignment. Do not launch
+builds, test suites, or release workflows merely because a new agent opens the repo.
 
-The outdated cross-agent audit protocol has been removed at Scott's request.
-Do not restore or follow it. The current release manager is authorized to
-finish the operating beta for LPM: repair, test, document, push, merge on
-green CI, tag, and publish. This explicit assignment supersedes historical
-owner-only execution rules below for this release; no per-stage approval is
-needed. Station production cutover and new spending still require authorization.
+## Completion contract (owner-approved 2026-10-19)
 
-Do not use staged-build, Workflowwright, GauntletGate, Proof Gate, or Audit
-Team skills on this assignment. Manage work directly, use independent agents
-when useful, and support release claims with results from the actual candidate.
+- Complete the requested acceptance outcomes and authorized delivery. Do not stop merely to give a progress update when executable authorized work remains. Stop when the requested outcome is delivered; do not invent the next project.
+- Treat "continue", "finish", and "keep going" as continuation of the current authorized scope. Continuous development requires an explicit request for ongoing work with no bounded terminal. Do not silently narrow an existing assignment.
+- Keep one concise current list of outcomes, passed evidence, remaining work, blockers, candidate identity, and next action when work spans sessions or external waits. Reuse an existing list; do not create parallel ledgers. Before handoff or compaction, preserve that state and relevant decisions.
+- Default to serial execution and one current candidate. No automatic delegation. Use a bounded independent reviewer only when explicitly authorized or required by the current assignment; otherwise disclose the absence of independent review rather than claiming it occurred.
+- Inspect relevant files, make the smallest sufficient change, and run the narrowest meaningful checks plus required CI and acceptance checks. Reproduce a bug before fixing when practical. Do not manufacture tests for prose or mechanical changes.
+- Every additional check, review, or rebuild must address changed behavior, a named defect, an unresolved required outcome, or required CI. Reuse valid unaffected evidence. Test-only and bookkeeping changes do not invalidate unchanged signed artifacts.
+- After two failed attempts for the same cause, diagnose before another attempt. Change the approach based on evidence; if genuinely blocked, report the concrete blocker and continue independent authorized work. Do not blind-retry or abandon the whole task merely because a repair is difficult.
+- Update documentation where behavior or a relied-upon claim changed. Do not force every change through every document, a five-lens report, multiple review gates, or a new harness. Optional improvements go outside the current assignment.
+- Preserve required CI, review requirements enforced by the repository, data preservation, signing, backup/recovery, and actual installed-behavior acceptance. Do not waive required outcomes or fake receipts to finish faster. Existing authorization remains valid; do not ask again at every stage.
+- For background work, record the owned process/job identity, start time, expected terminal result, next action, and cancellation method in the existing task state. Verify resource headroom before expensive or concurrent operations. A watcher proves only what it actually performs; do not promise automatic continuation without a working wakeup/continuation mechanism.
+- An explicit stop takes priority: stop launching work, cancel owned agents/jobs/helpers/remote runs as authorized, verify terminal state, and report anything still running or inaccessible. Pausing a goal or ending a launcher is not OS/CI cancellation. Never act on stale PIDs without verifying ownership. A paused task requires explicit resumption.
+- Query live state for progress claims; distinguish prepared, executed, verified, and delivered. A documented blocker means incomplete, not complete. Final reports state delivered results, checks actually run, and remaining limitations. Effort, a deadline, or a polished summary is not completion evidence.
+- Mutation testing was removed by Scott on October 22. Do not restore it or turn informational checks into completion gates. No repeated broad testing, audits, or rebuilds without an affected requirement or concrete unresolved defect.
+- No Git LFS transfers or spending through October 2026. Keep LFS smudging and push transfers disabled. Source work and this handoff do not need installers or model downloads.
+- Keep Windows terminals/helpers invisible; use ConPTY (`tty=true`, `login=false`) and Hidden/CreateNoWindow for background children. Preserve disabled GitHub CLI telemetry and existing hidden launchers. Never reboot the host.
+- Never pause an active goal without a current owner request. A newer explicit resume or physical goal-start action supersedes an earlier pause. Do not mark a goal complete with required work remaining.
+- Use documented software/API simulators for hardware-facing integrations, including Roku. Do not make physical-device testing an acceptance gate. The prior host was a test server; that does not automatically authorize changes to a different machine's live workloads.
 
----
+## Native-Windows product and authority
 
-## Mandatory 5-lens self-audit before every push
+CivicCast is a native Windows civic broadcast application; `main` is the single
+product line. WSL/Linux deployment was retired. Keep version identities consistent
+with `scripts/policy/check_release_identity.py`; do not reopen that architecture.
+Scott's current assignment determines the coder, reviewer, and authority. Old
+model-role assignments and prior beta authorizations are historical, not permission
+to resume a stopped task. Existing authorization for a current task remains valid.
 
-This repository checklist covers engineering, user experience, tests,
-documentation, and QA before pushing a change.
+Use DCO sign-off and PRs to `main`; merge only when authorized and required CI and
+review requirements pass. Publish, tag, or cut over production only within actual
+owner authorization. Do not bypass branch protection or move published tags.
 
-**Before every `git push` that touches code, docs, or status artifacts on
-this repo,** run a hostile 5-lens self-audit on the actual diff. The result
-goes in the user-facing report. No exceptions even when the change "feels
-small" or "is just a typo fix." Full rule body, rationale, and the
-artifact-state checklist live in:
+## Sources of truth and working path
 
-`docs/process/5-lens-self-audit.md`
+- Source: `https://github.com/scottconverse/civiccast-native`; use the current checkout root, not a fixed drive path.
+- Current portable state: `docs/handoff/CURRENT.md`; build inputs: `docs/handoff/BUILD-ASSETS.md`. Update this existing handoff when work resumes, rather than creating parallel ledgers.
+- Product spec: `docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md`.
+- Branch policy: `BRANCHES.md`. Architectural decisions: `docs/adr/`.
+- Read relevant product sections before changing behavior; do not reload the entire
+  spec for bookkeeping. Resolve material product ambiguity with Scott; routine
+  implementation choices remain the engineer's responsibility.
+- Work on the assigned branch. Never edit frozen release-candidate worktrees merely
+  to update these process instructions.
 
-The five lenses (each *hostile* — assume the diff lies until evidence
-proves otherwise):
+## Verification and release
 
-1. **Engineering.** Grep every claim / path / SHA / run-ID / symbol in the
-   diff against the actual repo. If the diff names `/api/staff/uploads`,
-   grep the router. Hostile means: a sentence is wrong until the grep
-   matches.
-2. **UX.** Read every user-visible string cold. Adjacent screens, error
-   states, success surfaces, copy voice. Hostile means: the user is
-   confused until the copy proves they aren't.
-3. **Tests.** Logic / data-flow / public-interface changes need real
-   assertions, not just exercise. Skip predicates lie by default.
-   Hostile means: "passes" ≠ "covers."
-4. **Docs.** Every code change moves the README, CHANGELOG, HANDOFF, PR
-   body, verification log, ledger, ADRs *if they touch this surface.*
-   Hostile means: a doc silent about the change is wrong, not OK.
-5. **QA.** Read the final state across files cold, as the next agent
-   walking in. Cross-file contradictions, ledger top-totals vs row
-   counts, and readiness claims unsupported by current evidence.
-   Hostile means: drift exists until cross-file
-   reading proves it doesn't.
+Inspect the affected path, implement the smallest correct change, run meaningful
+affected checks and required CI, and review the resulting diff. The optional
+checklist at `docs/process/5-lens-self-audit.md` is guidance, not a push gate.
+Independent review is bounded and used when the assignment or repository requires
+it; it is not automatically launched for every push or documentation correction.
 
-The artifact-state checklist (specific drift Scott has had to find by hand)
-is in the memory file referenced above. Read it before any v0.3.x release-
-gate push.
+Keep claims-evidence CI for the registered governed set (`docs/claims/claims.yaml`,
+`scripts/policy/check_claims_evidence.py`). Do not weaken it or sweep unrelated files.
+For a release, follow its applicable executable requirements in
+`docs/ops/release-candidates.md` and the current acceptance contract: signed exact
+candidate, required CI, isolated install/preservation, actual requested workflows,
+and applicable lifecycle checks. A new soak is not automatic. Source/health checks
+do not establish installed acceptance. Reuse unaffected evidence at its actual scope.
 
-Report format on the push report:
-
-```
-5-lens self-audit:
-- Engineering: [pass | findings: ...]
-- UX:          [pass | findings: ...]
-- Tests:       [pass | findings: ...]
-- Docs:        [pass | findings: ...]
-- QA:          [pass | findings: ...]
-Artifact-state: [pass | findings: ...]
-```
-
-Established 2026-05-10 after the v0.3.0 → v0.3.1 audit-fix loop produced
-a third audit-fix sprint to fix the second audit-fix sprint's drift.
-Chat-message promises about behavior change do not survive a fresh
-session; this section is the durable enforcement.
-
----
-
-## Native-Windows Program — Coder and audit roles
-
-CivicCast is a native Windows product. There is one product line in this
-repository and `main` carries it. The WSL2/Linux lane it once shipped
-alongside (ADR 0021's "parallel-shipped deployment line") was retired by owner
-decision on 2026-08-19 and is not present here -- no docker/, no systemd
-units, no WSL2 install target. Its history remains in the private (not
-archived) scottconverse/civiccast if something needs recovering. On
-2026-08-31 the owner also fully retired the WSL line's vestigial *version*
-machinery: `civiccast/_version.py` no longer tracks a separate WSL release
-identity (it used to hold `1.0.0-rcNN` while `civiccast/_native_version.py`
-held the native line's own `1.0.0-beta.N`). There is one product and one
-version now -- both files hold the same current `1.0.0-beta.N` value, and
-`scripts/policy/check_release_identity.py` enforces that they, and every
-other release-identity surface it checks (README, docs/index.html,
-CHANGELOG, docs/API-REFERENCE.md, the installer's Cargo/Tauri/package.json
-identities, main.rs's `CIVICCAST_VERSION`), agree. **Scott Converse is the owner** (merge, tag, release
-signing, publication, shipment, cutover, and tie-break decisions). The active
-coder is assigned by the owner's current handoff; the coder seat was
-transferred from Codex to Claude on 2026-07-29 (owner decision, recorded in
-the recovery spec's amendment section). Fresh read-only adversarial
-sessions/subagents perform the audit function. Do not infer a role from the
-model or tool name.
-The charter, audit gate, audit protocol, drift catalog, and verdict history
-live in the owner-controlled repo — authoritative, not mirrored here:
-
-**<https://github.com/scottconverse/civiccast-audit-control>**
-
-Coder loop for every program slice:
-
-1. Implement on the owner-authorized slice branch. Repo protocols above apply
-   in full (careful-coding, checkpoints, 5-lens self-audit before push).
-2. Every completion claim ships **commit-bound evidence** under
-   `.agent-runs/native-windows/<slice-id>/evidence/` — exact commands,
-   outputs, hashes, environment. A claim without evidence is not a claim.
-3. Obtain an independent review of the integrated release candidate and give
-   Scott its findings, evidence, and known gaps. The review is an engineering
-   input, not a separate repository-record or exact-filename gate.
-4. Nothing merges to `main`, touches rc-line releases, or creates tags without
-   Scott's explicit approval.
-
----
-
-## What CivicCast is
-
-CivicCast is an open-source, self-hostable civic broadcast platform for native Windows stations, with portal, archive, and syndication capabilities. Apache 2.0 / CC BY 4.0 throughout. No proprietary appliance or per-minute software fees.
-
-The full product narrative, audience model, deployment profiles, module catalog, data model, hardware reference, governance, and roadmap live in the canonical spec. Read the spec before any architectural work.
-
-## Source-of-truth documents
-
-1. **`docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md`** is the canonical
-   product spec — what the product is, what it does, how it's structured, what
-   its non-negotiables are. Read it before any architectural work.
-   (`docs/spec/spec.md` self-declares historical and is superseded by the 3.0
-   MASTER; do not implement against it.)
-
-2. **`BRANCHES.md`** (repo root) records the single-line branch policy and
-   the old (private, not archived) repository's whereabouts. There is no
-   line to choose.
-
-If a question isn't answered there, it's an open question — not an invitation
-to improvise; surface it to the human director.
-
-ADRs live in `docs/adr/`. Every accepted ADR is referenced from this file and from the spec.
-
-## Order of operations on every change
-
-1. **Read** the relevant section of the canonical spec (`docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md`).
-2. **Branch from `main` and target `main`.** One line, one base. If a change looks like it belongs to the retired WSL lane, it does not belong here at all — surface that before proceeding.
-3. **State your approach** before writing code — what pattern, why it's the right one (not just the convenient one), what the data provenance is, what the blast radius is, what states the change touches.
-4. **Build** to production-quality on the first pass. No prototype-then-clean-up. Every state (loading, success-with-data, success-empty, error, partial) is designed before code.
-5. **Apply the verification that actually gates this repo** — per-change careful-coding, the hostile 5-lens self-audit before every push, cross-agent review on the PR, and (for anything claims-evidence-governed or release-candidate-facing) the claims-evidence and clean-box/sandbox gates. See below.
-6. **Open the PR against `main`.** Tags and releases are owner-only — see "Owner gates" below.
-
-## Verification that actually gates this repo
-
-There is no rung ladder and no time-boxed altitude schedule. Verification is
-layered by what kind of change it is, not by a fixed cadence — every layer
-below is currently enforced, not aspirational.
-
-1. **Per-change careful-coding.** Before/after-edit discipline for every
-   non-trivial change: read the callers, trace the runtime context, fan-out
-   grep for everything affected, name the data contract, state the blast
-   radius before editing; re-read end-to-end, narrate one full code path,
-   and prove the render/data path for any new state after editing. The
-   working checklist is `docs/templates/careful-coding.md`. Do not skip
-   steps because the change "feels small."
-2. **Hostile 5-lens self-audit before every push.** Mandatory, no
-   exceptions, defined in `docs/process/5-lens-self-audit.md`: engineering,
-   UX, tests, docs, QA, each read as if the diff is guilty until grep/tests
-   prove otherwise, plus the artifact-state checklist (stale totals,
-   unresolved SHAs, status-word discipline). The 5-lens report goes in the
-   push report in the fixed format documented there.
-3. **Cross-agent review on the PR.** A reviewing agent (Codex or a
-   fresh-context Claude session that did not write the code) reviews with a
-   refutation mandate, not a rubber-stamp mandate — its job is to prove the
-   change wrong, re-running proofs rather than reading claims about them.
-   On the native line
-   (`release/native-beta-1.0.0-beta.1-rc1`), GitHub branch protection
-   mechanically enforces `required_conversation_resolution`: a PR cannot
-   merge while any review thread is open, regardless of approval count.
-   `main` does not currently carry that same branch-protection setting —
-   don't assume thread-resolution enforcement applies there without
-   checking `gh api repos/scottconverse/civiccast-native/branches/main/protection`
-   first.
-4. **Claims-evidence binding for proof-bearing changes.** Prose claims in
-   the governed doc set (README, CAPABILITIES, DR docs, release
-   verification docs, and specific governed source paths — see
-   `docs/claims/claims.yaml`) must bind to registered, executed evidence.
-   Enforced in CI by `scripts/policy/check_claims_evidence.py` against
-   `docs/claims/claims.yaml` / `claims-schema.json` / `workflow-contract.yaml`.
-   A capability claim without bound evidence fails the check; this is not a
-   repo-wide sweep, only the registered governed set.
-5. **Windows installation and operation proof.** Follow the executable
-   release path in `docs/ops/release-candidates.md`: an exact-source signed
-   candidate, then `gate-a-station-acceptance.yml` clean-install,
-   cross-version upgrade and download-only PASS verdicts for that candidate.
-   `sandbox-lab/Run-SandboxSoak.ps1` is a shorter local runtime check.
-   The separate tester-machine soak establishes sustained runtime evidence;
-   physical station/headend acceptance still requires that equipment.
-6. **Keystone framing for major capabilities.** The CivicCast One
-   reconciliation work names major native-line capabilities as keystones
-   (K1, K2, K3, …) — see the CHANGELOG entries tagged "CivicCast One
-   keystone K1/K2/K3" for the current, real usage of this framing. A
-   keystone is a capability-level milestone with its own audit round, not a
-   version-numbered rung.
-
-### Native-Windows Program audit function
-
-For the native line specifically, the "Native-Windows Program" section above
-governs: commit-bound evidence under `.agent-runs/native-windows/<slice-id>/evidence/`,
-fresh read-only adversarial sessions performing the audit function (never
-same-session self-review), and zero findings at HEAD before the owner
-merges.
-
-### Owner gates
-
-Merges to `main` require green CI and resolved review conversations.
-**Tags, releases and publication require owner authorization.** The current
-beta.5 assignment at the top of this file supplies that authorization after
-the candidate passes its required checks. It does not authorize moving an
-existing published tag or cutting over the station's production feed.
-
-Standing instruction from the owner, which supersedes the older "Scott
-performs every merge personally" note this file used to carry: agents PUSH
-always, MERGE on green, and gate only tagging and publication on his explicit
-say-so.
+Before production cutover, verify a usable recovery backup and recovery procedure,
+then perform only the authorized upgrade and actual post-upgrade acceptance. Honor
+the no-host-reboot constraint. Never synthesize an acceptance receipt or lower a
+resource/security requirement to get a pass. A blocker remains open until resolved.
 
 ## Closed architectural decisions
 
@@ -232,13 +87,13 @@ These are decided. Do not reopen them without surfacing to the human director fi
 
 - **Messaging substrate: in-process broker (`civiccast.platform.broker.InProcessBrokerClient`).** ADR 0001 originally chose NATS JetStream: Apache 2.0 license, single-binary install, sub-millisecond latency, persistent streams with consumer-group fan-out, rejecting Redis Streams for license posture (SSPL/RSAL fork situation creates a procurement smell municipal evaluators will flag) and Postgres LISTEN/NOTIFY for capability (8KB payload limit, no durable replay, no consumer groups). The owner reopened and reversed that decision on 2026-08-20: NATS never did real production work in this codebase, and it has been cut entirely — the supervised child process, the config file, packaging, and every health/readiness gate that required it. ADR 0023 records the reversal and supersedes ADR 0001. The in-process broker is now the sole event-bus implementation for every deployment mode; there is no separate "production" broker mode. Postgres LISTEN/NOTIFY is still used for low-volume "tell the UI a row changed" purposes — not as the broadcast event bus.
 
-- **Whisper runtime: faster-whisper (CTranslate2).** ADR 0002 records the rationale. MIT license, Python-native, in-process API that maps cleanly onto the stabilization layer. Whisper.cpp registered as a future alternate but not shipped in v1.0. The captions module is built against an internal runtime adapter (`civiccast.captions.runtime` protocol) so a community-contributed Whisper.cpp implementation can plug in later without rewriting the module.
+- **Caption runtimes:** Whistle is the CPU live-caption primary in Beta20; faster-whisper (CTranslate2) supplies per-channel fallback, with supported NVIDIA acceleration applying to Whisper. ADR 0002 describes the Whisper choice; current source and the release manual describe the later Whistle integration.
 
 - **Cable broadcast scope: deferred to optional `civiccast-cable` add-on.** Phase 3+ in the spec. D1 (Rust vs Go for cable-grade playout) and D14 (full loudness preset library) are closed at the spec level — both moved to the cable add-on doc. Streaming-core code does not depend on cable artifacts.
 
 - **License: Apache 2.0 for code, CC BY 4.0 for documentation.** No relicensing without the multi-layer approval defined in spec §14.8.
 
-- **Repository layout: monorepo with per-module Python namespace packages.** Single Git repo at `CivicCast/civiccast`. Each module is a Python namespace package under `civiccast.*` (e.g., `civiccast.stream`, `civiccast.captions`, `civiccast.archive`, `civiccast.syndicate`). Each module has its own subdirectory with its own `README.md`, `CHANGELOG.md`, test suite, and Alembic migration directory. Cross-module imports go through the documented public API of each module — never through internals.
+- **Repository layout:** the native product is in `scottconverse/civiccast-native`, with Python modules under `civiccast/`, apps under `civiccast/apps/`, build tools under `scripts/`, and documentation under `docs/`. Follow actual module boundaries and documented APIs.
 
 - **Schema: `civiccast.*` PostgreSQL namespace.** Mode A: only schema in DB. Mode B: lives alongside `civiccore.*`, `civicclerk.*`, etc. CivicCast never reads or writes outside its own schema except through documented APIs.
 
@@ -266,11 +121,11 @@ Don't pick silently.
 - **Type checker: mypy** in strict mode for service modules. `--ignore-missing-imports` is permitted at module boundaries with a documented reason.
 - **Tests: pytest + hypothesis.** Coverage targets: 80% service modules, 90% platform substrate, 95% streaming origin and syndication module (where bugs cause channel outages).
 - **Database: PostgreSQL 17 + pgvector.** Migrations: Alembic, one Python file per migration, both `upgrade` and `downgrade` implemented and tested.
-- **Cache / broker: Redis 7.2 (or Valkey 8 if D-future closes that way).**
-- **AI runtime: Ollama for LLMs, faster-whisper (CTranslate2) for ASR** (per ADR 0002).
+- **Broker:** in-process broker, as described in the closed decision above; do not provision a separate Redis/NATS broker from historical instructions.
+- **AI runtime:** Ollama for LLMs; Whistle primary and faster-whisper fallback for live captions. Product models are separate from an agent's coding-model choice.
 - **Pre-commit hooks:** ruff, mypy, trailing-whitespace, end-of-file-fixer, conventional-commit-message check.
-- **Frontend: React 18 + Vite + TypeScript + Tailwind + shadcn/ui.** Per spec §5.2. State management: TanStack Query for server state, Zustand for client state. Forms: React Hook Form + Zod.
-- **Documentation rendering:** MkDocs Material for the docs site (per spec §8.20). Pandoc for `USER-MANUAL.pdf` and `USER-MANUAL.docx` generation from `USER-MANUAL.md`. Pandoc setup is a Sprint 0.1 ADR.
+- **Frontend:** use each app's `package.json` and `package-lock.json` for current tool versions and commands; do not install historical versions copied from a spec.
+- **Documentation:** the public landing page is `docs/index.html` with `docs/assets/web/landing.css`, deployed by GitHub Pages. Follow the existing documentation workflow for full manual rendering; a prose-only handoff does not require rerendering manuals.
 - **License header on every source file:** `# SPDX-License-Identifier: Apache-2.0` on the first or second line. Use `# Copyright (c) The CivicCast Authors` rather than per-contributor copyright lines (matches the DCO no-CLA contribution model in spec §14.6).
 - **Commit message convention: Conventional Commits** (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). Sign off every commit with `Signed-off-by: Name <email>` per the DCO.
 
@@ -317,41 +172,35 @@ When you ask, name (1) the branch/line you're on, (2) the section of the spec th
 - Branch from `main`; there is no second line to choose between.
 - Conventional commits with DCO sign-off on every commit.
 - Use pull requests to `main`; merge on green CI under the owner's assignment.
-- This native Windows product uses `v1.0.0-beta.N` release tags. Tag and publish only with owner authorization, including the explicit beta.5 assignment above.
-- Release notes and PR descriptions carry the 5-lens self-audit result and any ADRs the change touched.
+- This native Windows product uses `v1.0.0-beta.N` release tags. Tag and publish only within current owner authorization. Historical beta.5 authorization does not resume a stopped Beta20 task.
+- Release notes and PR descriptions state the resulting behavior, relevant verification, limitations, and affected ADRs. No fixed audit report is required.
 
-## Role posture (carry over from the human director's standing instructions)
+## Engineering posture
 
-You operate as three senior roles simultaneously, not one. Do not collapse them into a single voice.
-
-**Principal Software Engineer.** Architect first, hack last. Choose proven, boring patterns. Notice unnecessary re-renders, N+1 queries, blocking calls, unoptimized assets, bundle-size regressions. Catch security issues — unsanitized inputs, exposed secrets, XSS vectors, unprotected routes, unsafe rendering. Update comments and docs in the same commit as logic changes. Challenge requirements that are wrong or unclear before building them.
-
-**Senior UI/UX Designer.** Design for humans. Every state is responsibility-owned (loading, success-with-data, success-empty, error, partial). Visual hierarchy, spacing, typography, contrast — deliberate, not default. Every user-visible string is a design decision; vague labels and unhelpful errors are bugs. Accessibility is not optional — WCAG 2.2 AA, keyboard navigation, screen-reader labels, focus states, contrast.
-
-**Senior QA / Test Engineer.** Be professionally paranoid. Static is not runtime — a value in source is not the same as a value the user sees. Grep passing is not UI correct. A passing test suite is evidence that those tests passed, not that the product is ready. List the test suite's blind spots explicitly. Check the console on every page. Identify the blast radius of every change.
-
-The bar is not "it works." The bar is: is this the right thing to build, architected correctly? Would a real user find every state of this interface clear and unbroken? Have I actually verified this — in the running product, across all states, with the console open? Did I check what it might have broken, not just what I built? Is everything documented and handed off cleanly?
-
-All five questions, every time, no exceptions.
+Apply engineering, UX, and QA judgment to the affected behavior. Trace relevant
+callers and runtime data; consider accessibility and error states when UI changes.
+Verify actual behavior at the layer claimed. Do not force unrelated changes through
+every UI state or every document. A passing suite proves only what it exercises.
+Use a focused review, fix material defects, and defer unrelated improvements.
 
 ## What you never do
 
 - Choose the quickest implementation over the correct one.
 - Build a UI you wouldn't want to use yourself.
-- Declare work done without running the 5-lens self-audit and reporting its result.
-- Skip any rendered state — loading, empty, error, or partial.
+- Declare work complete without satisfying the requested acceptance and authorized delivery.
+- Omit relevant rendered states when changing a user workflow.
 - Ignore accessibility.
-- Ignore the browser console.
+- Ignore relevant browser errors when verifying a changed browser workflow.
 - Write tests that only cover the happy path.
 - Treat a passing test suite as proof the product is ready.
 - Assume a displayed value reads from the source you think it reads from without tracing the actual runtime path.
 - Fix something without checking what it might have broken adjacent to it.
 - Execute a requirement you believe is wrong without first flagging it and proposing an alternative.
-- Ship code with stale comments, an outdated CHANGELOG, or undocumented breaking changes.
+- Ship changed behavior with misleading affected documentation or undocumented breaking changes.
 - Reopen a closed architectural decision without surfacing it to the human director first.
 - Merge with failing required checks or publish without the owner's authorization and candidate evidence.
 - Pick an open decision (spec §13 or a native-line D-decision) silently — write the ADR.
 
 ---
 
-*End of project instructions. Read the spec next.*
+*Read the relevant spec section when the task affects product behavior or architecture.*

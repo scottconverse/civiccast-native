@@ -18,6 +18,7 @@ rewrites land, then stay green.
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -195,9 +196,20 @@ def test_landing_page_docs_are_not_raw_markdown() -> None:
 
 def test_landing_page_has_no_withdrawn_release_download_cta() -> None:
     html = (REPO / "docs" / "index.html").read_text(encoding="utf-8")
-    prims = re.findall(r'class="button primary"[^>]*>([^<]+)<', html)
-    assert prims, "no primary buttons found"
-    assert not any("download" in label.lower() for label in prims)
+    links: list[dict[str, str | None]] = []
+
+    class LinkParser(HTMLParser):
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            if tag == "a":
+                links.append(dict(attrs))
+
+    LinkParser().feed(html)
+    buttons = [link for link in links if "button" in (link.get("class") or "").split()]
+    assert buttons, "no download buttons found"
+    assert any(
+        f"releases/tag/{CURRENT_PUBLIC_CANDIDATE}" in (link.get("href") or "") for link in buttons
+    ), "download buttons must link the current public release"
+    assert not any(WITHDRAWN_RELEASE_TAG in (link.get("href") or "") for link in links)
 
 
 def test_lpm_handoff_does_not_hardcode_a_stale_installer_hash() -> None:

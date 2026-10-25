@@ -1,0 +1,234 @@
+# CivicCast portable handoff — October 24, 2026
+
+Read this file and the root `AGENTS.md` / `CLAUDE.md` before continuing. This is
+the current handoff, replacing dependence on the previous coordinator's local
+chat and drive. Historical release records retain their original evidence scope.
+
+## Get the complete handoff
+
+Repository: <https://github.com/scottconverse/civiccast-native>
+
+This handoff and the checker fix are on **`fix/beta20-portable-handoff`**, based on
+published main commit `121465506a7314f02ad7572337b46a83fa3f6e51`. They are being
+delivered as a branch, not represented as already merged into `main`.
+Do not start from the Beta20 tag expecting the latest instructions or package source.
+
+PowerShell, on the destination machine (choose a short writable source directory):
+
+```powershell
+$env:GIT_LFS_SKIP_SMUDGE = '1'
+$env:GIT_LFS_SKIP_PUSH = '1'
+git clone --single-branch --branch fix/beta20-portable-handoff https://github.com/scottconverse/civiccast-native.git civiccast-native
+Set-Location civiccast-native
+git status --short --branch
+git log -1 --oneline
+```
+
+No `git lfs pull`, `fetch`, or `push`; no LFS transfers or spending through
+October 2026. The current tree has no LFS-tracked files; historical revisions may.
+The handoff branch deliberately has no PR yet: creating a PR launches broad
+application CI. Scott requested a push and portable handoff, not another CI cycle
+or merge. Check current remote state before later integration.
+
+## Current result and exact identities
+
+- **Beta20 is already public:** [release and assets](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20).
+  GitHub labels it a prerelease because it is a beta; it is not a draft.
+- Current installer is the documentation revision built from
+  `2e19612467fda894d63e499580e4d7b5f029f5f2`, signed
+  [build 39810481727](https://github.com/scottconverse/civiccast-native/actions/runs/39810481727).
+  Setup SHA-256: `6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d`.
+  Existing evidence records a valid Scott Converse signature and installed Help/manual acceptance.
+  See [Beta20 verification](../releases/v1.0.0-beta.20-verification.md).
+- Original release tag remains at `a17449189a39af6474d914137eab020169f91023`.
+  The tag's automatic source ZIP is **not** the documentation-revision source.
+  Do not move the tag or rebuild an installer to reconcile these identities.
+- [PR263](https://github.com/scottconverse/civiccast-native/pull/263) merged the final
+  prior CI corrections at `086f1b967766aaea31a5a4296ce6f96771e2d72f`.
+  Its recorded rollup was 21 successes / 3 inapplicable skips / 0 failures.
+  That historical pass does not claim later CI is green.
+- The approved station-manager landing page and Scott's biography are live at
+  <https://scottconverse.github.io/civiccast-native/>.
+  [PR264](https://github.com/scottconverse/civiccast-native/pull/264) merged at
+  `121465506a7314f02ad7572337b46a83fa3f6e51`;
+  [Pages run 39989225060](https://github.com/scottconverse/civiccast-native/actions/runs/39989225060)
+  succeeded. Live HTTP 200, headline, biography/LinkedIn, loaded images and working
+  walkthrough were checked, with no browser JavaScript errors. Six local tabs and
+  390/768/1440-width layouts passed. The walkthrough is explicitly an illustration,
+  not a real station demo. No customer testimonial or production-station claim was invented.
+
+## Checker correction included in this branch
+
+Only `scripts/verify_native_runtime_closure.py` and
+`tests/native/test_closure_verifier.py` change checker behavior.
+
+The last passing Windows run used GitHub image `20261007.264.1`; the failing run
+used `20261021.278.1`. Product runtime, dependency lock, checker and workflow were
+unchanged between those runs. The rejected file was Windows Terminal's root
+`resources.pri`, observed as a known non-executable mapping. Six other closure
+checks passed, including plugin origin and the caption embed/decode round trip.
+This is a data-resource classification false positive, not evidence of a missing
+media DLL. The precise Windows API that mapped the file was not captured.
+
+The correction recognizes the stable Microsoft Windows Terminal x64 package
+identity (numeric version, publisher `8wekyb3d8bbwe`) and **only root
+`resources.pri`**. The path stays visible in the report. Executable and unknown
+protection mappings, DLLs, wrong publishers, different packages and subdirectories
+still fail. Canonical-path and file-identity safeguards are retained.
+
+Existing verification, October 23, reused without rerunning unchanged code:
+
+```text
+.venv\Scripts\python.exe -m pytest tests/native/test_closure_verifier.py -q --no-cov
+153 passed in 6.38s
+ruff check: passed
+ruff format: applied; changed files reviewed
+git diff --check: passed
+```
+
+This is local checker-logic evidence, not a new hosted Windows pass or installed
+product test. No installer rebuild is required for this change.
+
+Historical Windows runs:
+[passing 39923178286](https://github.com/scottconverse/civiccast-native/actions/runs/39923178286)
+and [failure 39987938776](https://github.com/scottconverse/civiccast-native/actions/runs/39987938776).
+The failed prerequisite caused later Windows suites to skip; missing JUnit reports
+are consequences, not separate product defects. Other broad PR264 runs were cancelled
+to avoid unchanged full-suite/manual work; cancellation is not a pass.
+
+## Remaining work, not authorized as part of this handoff push
+
+1. Integrate this branch through the repository's normal PR process when requested.
+   The corrected checker has not been exercised on the updated hosted Windows image.
+   Use the existing affected Windows job when integration requires it, not repeated
+   full suites or a new installer. Do not claim repository-wide CI is green.
+2. The Python audit reported `brotli 1.2.0 / PYSEC-2026-4322`, pulled in through
+   `crawl4ai 0.9.2`. See [run 39987938274](https://github.com/scottconverse/civiccast-native/actions/runs/39987938274)
+   and main security run `39989225752`. Severity, reachability and inclusion in the
+   released installer were **not established** in this session. The finding has not
+   been fixed or waived. Inspect the advisory and actual dependency use before a
+   bounded dependency correction; do not invent an allowlist exception.
+
+The next agent should take Scott's current assignment. Reading this handoff is not
+permission to restart old nine/twelve-goal lists, redesign the product, create a
+new release, or repair unrelated findings.
+
+## Accepted behavior and boundaries to preserve
+
+- Scott accepted the observed ~8.763-second caption sample delay and brief
+  previous-program carryover for Beta20. It is not a universal latency bound and
+  not a new release blocker.
+- Summary evidence covers a short transcript and cited narrative; no long-meeting
+  benchmark is claimed. Local AI model RAM requirements still apply.
+- Roku acceptance uses the repository's software/API mocks and BrightScript
+  validation. Scott explicitly prohibits physical-hardware testing requirements.
+- The previous host was a test server, with owner-authorized reset/stop/start
+  operations. Do not infer that a new machine is a test host without context.
+- Mutation testing was removed at Scott's request. Never restore it as a CI or
+  release requirement, or promote informational results into mandatory gates.
+- Serial work, one justified candidate, no automatic subagents or repeated audits.
+  Every additional check must address changed behavior, an unresolved requirement,
+  a concrete defect or required CI. Reuse unaffected evidence and artifacts.
+- No LFS transfers, new spending, host reboot or installer rebuild for this handoff.
+  Keep windows/helpers hidden. No automatic monitor or continuation is required.
+
+## Build, runtime and machine state
+
+See [BUILD-ASSETS.md](BUILD-ASSETS.md) for exact source locations, asset sizes,
+existing release downloads, the FFmpeg mirror and PyAV reuse recipe.
+Source checkout and checker development do not require copying the old machine's
+station data, models, installer, virtual machines, `.venv`, or agent tooling.
+
+The old untracked `.codex/` directory is deliberately not imported. It contains
+machine-specific Desktop paths, historical authorization/evidence files and
+wake/completion hooks for a previous assignment. These are not product build inputs.
+Current owner rules are portable in `AGENTS.md` and `CLAUDE.md`; do not recreate
+old hooks or depend on `C:/Dev/codex-hook-kit` to develop CivicCast.
+
+The previous workspace has older candidate/worktree directories. This handoff is
+for the current released native product and this branch; it does not certify or
+publish abandoned experiments from every historical worktree. The coordinator's
+incident drafts, token-accounting reports and browser mockup scratch files are
+not prerequisites. Relevant product status and evidence are linked above.
+
+No fresh-machine build was run for this handoff. Required binary sources are
+identified; availability of every third-party download and access to private
+signing credentials are not implied by a successful Git clone.
+
+
+## Integration and advisory investigation — October 24, 2026
+
+Scott authorized [PR265](https://github.com/scottconverse/civiccast-native/pull/265)
+and merge after applicable CI passes, followed by a Brotli investigation/report.
+No installer rebuild or new release is authorized. At preparation of this update,
+integration awaits corrected-head CI; PR265 records the subsequent merge result.
+Do not infer repository-wide green CI from a merge: informational scans have findings.
+
+- Initial PR head: `50b4e11d15f36aa50ba2bf02f9bd417d1e1ddf60`.
+  Windows closure/native job `121056228553` passed in run `40155601318`.
+  App-payload reproducibility run `40155601291` passed byte equality.
+- Informational randomized run `40155601353` exposed five deterministic stale
+  policy/doc assertions (seed `824704267`): native collection counts/floors,
+  removed historical coder-seat wording, and two old landing-page assumptions.
+  All five reproduced locally. The still-running unit workflow `40155601318`
+  was cancelled before pushing corrections; cancelled is not passed.
+- The integration correction updates collection expectations to 2082 pure /
+  2324 total / 2321 Windows non-integration tests, and raises JUnit floors to
+  2032 / 2271, preserving the existing 50-test margin. Role checks protect
+  current owner assignment; landing-page checks protect current release links,
+  reject withdrawn releases, retain prohibited-claim checks and require historical
+  citations if historical measurements return. Product/page content is unchanged.
+- Reuse the passed payload byte-equality proof for these test/doc/floor-only
+  corrections; they do not alter packaging. Await applicable CI on the corrected
+  PR head, including the downstream claims-evidence verifier, before merging.
+  Main rules require a PR but returned no named required checks or approving
+  review requirement. The security workflow and randomized suite are explicitly
+  non-required/informational; report their findings without making them new gates.
+- Focused local verification passed: 50 documentation/role tests and 21 native
+  workflow-policy tests (including live collection/floor checks), plus ruff lint,
+  formatting and git diff --check. The checker code remains unchanged; reuse its
+  153-test evidence and the hosted Windows proof above.
+- Previous local watchers ended. Next action at preparation: push the corrected
+  head, wait for applicable CI, and merge the exact authorized candidate.
+
+Brotli findings (dependency correction is not implemented):
+
+- PYSEC-2026-4322 / CVE-2026-111497 / GHSA-9v8h-qqgm-4m35 is one upstream
+  decoder memory-corruption issue, rated critical (CVSS 4.0 9.2), fixed in 1.2.1.
+  See [PyPA advisory](https://github.com/pypa/advisory-database/blob/main/vulns/brotli/PYSEC-2026-4322.yaml)
+  and [upstream fix release](https://github.com/google/brotli/releases/tag/v1.2.1).
+- Optional `agenda-js-import` -> crawl4ai 0.9.2 (`brotli>=1.1.0`) locks 1.2.0.
+  Installing that extra enables HTTPX's Brotli decoder automatically. CivicCast's
+  `js_portal` robots.txt fetch provides a concrete remote-response input path.
+  This is static reachability evidence, not an executed exploit or compromise.
+- Fix needed: require `brotli>=1.2.1` in that optional extra and refresh only its
+  affected lock/hashes; verify the selected version, advisory result and focused
+  agenda/HTTP tests. Crawl4ai 0.9.2 accepts 1.2.1, and a Python 3.12 Windows x64
+  wheel exists. Installed affected environments also need their decoder updated
+  and processes restarted. Do not add an allowlist waiver.
+- Exact released source `2e19612467fda894d63e499580e4d7b5f029f5f2` excludes Brotli
+  and crawl4ai from the native Python locks; packaging uses `--no-deps`.
+  Bounded HTTP ranges inspected the published app pack's ZIP directory:
+  1,152,522 bytes read, 9963 entries / 83 wheels, no Brotli/crawl4ai paths.
+  Full artifact checksum/signature verification and installed-environment
+  inspection were not performed; other embedded decoders are not ruled out.
+- Security run `40155601323` also reports filelock, pypdf, setuptools, virtualenv,
+  Zod, Vitest/mocker and Undici findings. Their reachability and artifact scope
+  were not investigated here. No dependency edits, waiver, installer rebuild,
+  release or LFS transfer was performed.
+
+### Claims-binding follow-up during integration
+
+Corrected head `8b3c90174aa584238e6ccc8aa9f58ab895502913` passed its Windows
+job in run `40158115701`. Its unit job reported 16 failures / 11712 passes:
+all failures derived from six workflow blob bindings left stale by the JUnit
+floor correction. Local checks reproduced those six mismatches. The downstream
+claims verifier rejected the failed producer; this is not green CI.
+
+The six registry workflow references are renewed after reviewing the floor/comment
+only delta; see the October 24 section of the existing current-source review
+note. No producer, registered node, control or enforcement is weakened, and no
+historical acceptance is renewed. All 125 claims-evidence policy tests passed locally after rebinding (67.49s).
+The next candidate must complete same-run CI.
+The previous finite merge watcher exited on these required failures without
+merging. No merge is currently armed while this follow-up is prepared.

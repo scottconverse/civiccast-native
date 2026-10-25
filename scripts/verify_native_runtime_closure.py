@@ -1944,6 +1944,10 @@ _OBSERVED_WSL_RESOURCE_COMPONENT = re.compile(
     r"^microsoftcorporationii\.windowssubsystemforlinux_\d+(?:\.\d+){3}_x64__8wekyb3d8bbwe$",
     re.IGNORECASE,
 )
+_OBSERVED_TERMINAL_RESOURCE_COMPONENT = re.compile(
+    r"^microsoft\.windowsterminal_\d+(?:\.\d+){3}_x64__8wekyb3d8bbwe$",
+    re.IGNORECASE,
+)
 
 
 def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
@@ -1954,7 +1958,9 @@ def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
     The additionally observed Microsoft package identities are accepted for
     ``AppxManifest.xml`` at the package root, and the observed
     WindowsFeedbackHub ``microsoft.system.package.metadata`` PRI resource index
-    is accepted with its specific package identity. All cases require canonical
+    is accepted with its specific package identity. Windows Terminal's root
+    resources.pri is also data-only (observed in CI run 39987938776).
+    All cases require canonical
     original and resolved paths under the real package root, reject traversal,
     and leave executable/unknown mappings and loaded/hardlinked files strict.
     """
@@ -2001,7 +2007,10 @@ def _is_reported_package_data_resource(path: Path, resolved: Path) -> bool:
             normalized_package in _OBSERVED_PACKAGE_MANIFEST_COMPONENTS
             and normalized_filename == "appxmanifest.xml"
         ) or (
-            _OBSERVED_WSL_RESOURCE_COMPONENT.fullmatch(package_name) is not None
+            (
+                _OBSERVED_WSL_RESOURCE_COMPONENT.fullmatch(package_name) is not None
+                or _OBSERVED_TERMINAL_RESOURCE_COMPONENT.fullmatch(package_name) is not None
+            )
             and normalized_filename == "resources.pri"
         )
     return False
@@ -2153,7 +2162,8 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             "covers only observed DesktopAppInstaller package resource indexes (PRI), "
             "the observed WindowsFeedbackHub microsoft.system.package.metadata PRI "
             "index, observed SecHealthUI/WindowsFeedbackHub root AppxManifest.xml "
-            "manifests, and the observed WSL resources.pri at the package root. It "
+            "manifests, and the observed WSL resources.pri and Windows Terminal "
+            "resources.pri at their package roots. It "
             "does not apply to executable or unknown-protection mappings, DLLs, or "
             "any other WindowsApps path:\n    " + shown
         )
