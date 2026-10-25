@@ -1,5 +1,34 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Current follow-up — targeted Brotli correction
+
+The checker integration below is complete: PR265 merged into main at
+`f9d380bebb15489762424f4f1293f4e6f050211a` after current-head unit tests,
+Windows probes and claims verification passed (test run `40161873024`).
+Earlier pending/failure notes below describe preparation, not the final result.
+
+Scott subsequently authorized the Brotli dependency fix through a PR and merge
+after required CI, with no installer rebuild or new release. Branch
+`fix/brotli-agenda-advisory` adds `brotli>=1.2.1` to `agenda-js-import` and updates
+the locked decoder from 1.2.0 to 1.2.1. Only the Brotli package record and root
+optional-dependency metadata change in `uv.lock`; crawl4ai remains 0.9.2 and all
+other package records are identical. Native payload requirements are unchanged.
+
+Passed local checks: `uv lock --check`; semantic comparison of all 200 locked
+package records; Python 3.12 Windows x64 wheel availability in the lock; 45
+`test_js_portal.py` tests (two real-crawl4ai checks skipped because that extra is
+absent locally); isolated Brotli 1.2.1/HTTPX 0.28.1 compressed-response decoding;
+and a focused `pip-audit --no-deps --disable-pip` scan of `brotli==1.2.1` reporting
+no known vulnerabilities. No waiver or unrelated dependency upgrade is included.
+
+Next action at preparation: open the targeted PR, await applicable CI including
+the current producer/claims proof, then merge the exact candidate. PR checks may
+build an app payload for reproducibility; no installer or release workflow is
+dispatched. Existing signed artifacts and the running station are untouched.
+Installed optional-extra environments need a separate package update and process
+restart; merging this source fix does not patch running environments. Earlier
+Brotli investigation and other security findings below remain historical evidence.
+
 Read this file and the root `AGENTS.md` / `CLAUDE.md` before continuing. This is
 the current handoff, replacing dependence on the previous coordinator's local
 chat and drive. Historical release records retain their original evidence scope.
