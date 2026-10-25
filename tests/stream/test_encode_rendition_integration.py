@@ -267,3 +267,34 @@ class TestEncodeRenditionIntegration:
         segments = list(playlist.parent.glob("*.ts"))
         assert len(segments) >= 1
         assert all(s.stat().st_size > 0 for s in segments)
+
+
+def test_trimmed_real_package_publishes_clipped_bilingual_captions(
+    tiny_mp4: Path, tmp_path: Path
+) -> None:
+    from civiccast.captions.models import CaptionCue
+    from civiccast.captions.vod import attach_reviewed_captions
+    from civiccast.stream.packager import pack_vod_asset
+
+    package = pack_vod_asset(
+        tiny_mp4, tmp_path / "package", trim_in_seconds=0.333, trim_out_seconds=0.9
+    )
+    cues = [
+        CaptionCue(cue_id=name, start_seconds=start, end_seconds=end, text=name, confidence=0.95)
+        for name, start, end in [
+            ("removed head", 0, 0.2),
+            ("opening", 0.3, 0.5),
+            ("ending", 0.8, 1.0),
+            ("removed tail", 0.95, 1.0),
+        ]
+    ]
+    before = [cue.model_copy() for cue in cues]
+    attached = attach_reviewed_captions(package.output_dir, cues, spanish_cues=cues)
+    for sidecar in [attached.sidecar_path, attached.spanish_sidecar_path]:
+        assert sidecar is not None
+        text = sidecar.read_text()
+        assert "00:00:00.000 --> 00:00:00.167" in text
+        assert "00:00:00.467 --> 00:00:00.567" in text
+        assert "removed" not in text
+    assert cues == before
+    assert attached.cue_count == attached.spanish_cue_count == 2

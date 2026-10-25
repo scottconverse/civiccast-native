@@ -6,6 +6,8 @@ import {
   getPublishPreflight,
   getStaffIdentity,
   listPublishAssets,
+  listChannels,
+  stopYouTubeOutput,
   retryPublishSurface,
 } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
@@ -474,7 +476,7 @@ interface AssetPanelProps {
   canPublish: boolean
   error: Error | null
   onApprove: (assetId: string, payload: PublishApprovalRequest) => void
-  onRetrySurface: (assetId: string, surfaceId: string) => void
+  onRetrySurface: (assetId: string, surfaceId: string, channelId?: string) => void
 }
 
 function AssetPanel({
@@ -485,6 +487,14 @@ function AssetPanel({
   onApprove,
   onRetrySurface,
 }: AssetPanelProps) {
+  const queryClient = useQueryClient()
+  const [youtubeChannelId, setYoutubeChannelId] = useState('')
+  const [showYouTubeChannels, setShowYouTubeChannels] = useState(false)
+  const channels = useQuery({ queryKey: ['publish-youtube-channels'], queryFn: () => listChannels(), enabled: showYouTubeChannels, retry: false })
+  const stopOutput = useMutation({
+    mutationFn: () => stopYouTubeOutput(asset.asset_id),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['publish-assets'] }) },
+  })
   const preflightQuery = useQuery({
     queryKey: ['publish-preflight', asset.asset_id],
     queryFn: () => getPublishPreflight(asset.asset_id),
@@ -589,7 +599,8 @@ function AssetPanel({
     (approvedSurfaceIds.length > 0 || overrides.length > 0) &&
     !overrideMissingJustification &&
     blockedSelectedSurface == null &&
-    notReadySelectedSurfaces.length === 0
+    notReadySelectedSurfaces.length === 0 &&
+    (!approvedSurfaceIds.includes('youtube-live') || youtubeChannelId.length > 0)
   const errorDetail =
     error instanceof ApiError && error.detail ? error.detail : error?.message
   const surfaceLabelById = useMemo(
@@ -615,6 +626,7 @@ function AssetPanel({
   )
 
   function setSurfaceChecked(surfaceId: string, checked: boolean) {
+    if (surfaceId === 'youtube-live' && checked) setShowYouTubeChannels(true)
     setSelected((current) => {
       const next = new Set(
         Array.from(current).filter((candidate) => currentSurfaceIds.has(candidate)),
@@ -646,6 +658,7 @@ function AssetPanel({
       operator_id: 'operator-dashboard',
       operator_display_name: 'Operator dashboard',
       approved_surface_ids: approvedSurfaceIds,
+      ...(approvedSurfaceIds.includes('youtube-live') ? { youtube_channel_id: youtubeChannelId } : {}),
       overrides,
     })
   }
@@ -703,10 +716,26 @@ function AssetPanel({
             onOverrideText={(surfaceId, value) =>
               setOverrideText((current) => ({ ...current, [surfaceId]: value }))
             }
-            onRetrySurface={(surfaceId) => onRetrySurface(asset.asset_id, surfaceId)}
+            onRetrySurface={(surfaceId) => onRetrySurface(asset.asset_id, surfaceId, youtubeChannelId || undefined)}
           />
         ))}
       </div>
+      {asset.surfaces.some((surface) => surface.id === 'youtube-live') && (
+        <div className="mt-3 text-sm">
+          <button type="button" onClick={() => setShowYouTubeChannels(true)}>Choose YouTube source channel</button>
+          {showYouTubeChannels && <label className="block">Channel sent to YouTube Live
+            <select value={youtubeChannelId} onChange={(event) => setYoutubeChannelId(event.target.value)}>
+              <option value="">Choose a channel</option>
+              {(channels.data ?? []).map((channel) => <option key={channel.channel_id} value={channel.channel_id}>{channel.slug}</option>)}
+            </select>
+          </label>}
+          {channels.isError && <p role="alert">Channels could not be loaded. Retry opening the channel selector.</p>}
+          <p>Start the selected channel first. Creating an event is not live delivery; YouTube must confirm receipt.</p>
+          {asset.surfaces.some((surface) => surface.id === 'youtube-live' && ['configured', 'starting', 'live'].includes(surface.delivery_state ?? '')) &&
+            <button type="button" disabled={!canPublish || stopOutput.isPending} onClick={() => stopOutput.mutate()}>Stop YouTube output</button>}
+          {stopOutput.isError && <p role="alert">YouTube output could not be stopped. Check YouTube Studio.</p>}
+        </div>
+      )}
       <PreflightPanel preflightQuery={preflightQuery} />
       {approvableSurfaceIds.length > 0 && asset.surfaces.some((s) => s.kind === 'canonical') && (
         // Candidate #17 tester finding 5: "nothing tells the volunteer that
@@ -793,7 +822,7 @@ function AssetPanel({
       {confirmingPublish && (
         <ConfirmDialog
           title={`Publish "${asset.title}" to residents?`}
-          body={`${publishingSurfaceIds.length} selected surface${publishingSurfaceIds.length === 1 ? '' : 's'} publish${publishingSurfaceIds.length === 1 ? 'es' : ''} for real: ${publishingSurfaceLabels.join(', ')}. ${
+          body={`${publishingSurfaceIds.length} selected surface${publishingSurfaceIds.length === 1 ? '' : 's'} will be attempted: ${publishingSurfaceLabels.join(', ')}. ${
             publishingSurfaceIds.includes('portal')
               ? 'The portal surface becomes publicly visible to residents immediately and starts offline caption transcription.'
               : 'The portal surface is not part of this approval.'
@@ -890,6 +919,7 @@ export function PublishDashboardScreen() {
     queryKey: ['publish-assets'],
     queryFn: listPublishAssets,
     retry: false,
+    refetchInterval: 5000,
   })
   const approveMutation = useMutation({
     mutationFn: ({
@@ -907,11 +937,14 @@ export function PublishDashboardScreen() {
     mutationFn: ({
       assetId,
       surfaceId,
+      channelId,
     }: {
       assetId: string
       surfaceId: string
+      channelId?: string
     }) =>
       retryPublishSurface(assetId, surfaceId, {
+        ...(channelId ? { youtube_channel_id: channelId } : {}),
         operator_id: 'operator-dashboard',
         operator_display_name: 'Operator dashboard',
       }),
@@ -1033,8 +1066,8 @@ export function PublishDashboardScreen() {
               onApprove={(assetId, payload) =>
                 approveMutation.mutate({ assetId, payload })
               }
-              onRetrySurface={(assetId, surfaceId) =>
-                retryMutation.mutate({ assetId, surfaceId })
+              onRetrySurface={(assetId, surfaceId, channelId) =>
+                retryMutation.mutate({ assetId, surfaceId, channelId })
               }
             />
           ))}

@@ -4230,6 +4230,15 @@ Retry one v0.7 publish surface.
 - Request body: `PublishRetryRequest`
 - Responses: 200 `PublishAssetStatus`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Asset or surface not found; 409 Publish preflight blocked; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `POST /api/staff/publish/assets/{asset_id}/youtube/stop`
+
+Stop Youtube Output.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `asset_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `Record<string, string>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/recording/input-presets`
 
 List detected and configured SDI/HDMI recording inputs.
@@ -8281,6 +8290,7 @@ rule (S13 §5.1).
 - `operator_display_name` (required): `string`
 - `operator_id` (required): `string`
 - `overrides` (optional): `Array<PublishSurfaceOverride>`
+- `youtube_channel_id` (optional): `string | null`
 
 ### `PublishAssetStatus`
 
@@ -8356,6 +8366,7 @@ rule (S13 §5.1).
 
 - `operator_display_name` (required): `string`
 - `operator_id` (required): `string`
+- `youtube_channel_id` (optional): `string | null`
 
 ### `PublishSurfaceOverride`
 
@@ -8365,7 +8376,9 @@ rule (S13 §5.1).
 ### `PublishSurfaceStatus`
 
 - `approval` (optional): `'pending' | 'approved' | 'overridden'`
+- `channel_id` (optional): `string | null`
 - `completed_at` (optional): `string | null`
+- `delivery_state` (optional): `string | null`
 - `health` (optional): `'ok' | 'warning' | 'error' | 'unknown'`
 - `id` (required): `string`
 - `kind` (required): `'canonical' | 'archive' | 'reach' | 'record' | 'audience'`

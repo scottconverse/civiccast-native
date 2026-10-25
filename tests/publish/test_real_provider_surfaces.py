@@ -96,7 +96,7 @@ class TestFullMediaPublishing:
         assert youtube.uploaded_paths == [media]
         states = {surface.id: surface.state for surface in record.surfaces}
         assert states["internet-archive"] == "succeeded"
-        assert states["youtube-vod"] == "succeeded"
+        assert states["youtube-vod"] == "unverified"
 
     def test_payload_fallback_without_media_or_path_support(self) -> None:
         record = approve_publish(
@@ -123,7 +123,7 @@ class TestProviderFailureIsolation:
         surfaces = {surface.id: surface for surface in record.surfaces}
         assert surfaces["internet-archive"].state == "failed"
         assert "archive.org unreachable" in (surfaces["internet-archive"].next_step or "")
-        assert surfaces["youtube-vod"].state == "succeeded", (
+        assert surfaces["youtube-vod"].state == "unverified", (
             "one provider failure must not take down the other surfaces"
         )
 
@@ -192,7 +192,7 @@ class TestRealNasSurfaces:
         assert surfaces["local-nas-rsync"].state == "failed"
         assert surfaces["local-nas-zfs"].state == "failed"
         assert "NAS mount unreachable" in (surfaces["local-nas-rsync"].next_step or "")
-        assert surfaces["youtube-vod"].state == "succeeded"
+        assert surfaces["youtube-vod"].state == "unverified"
 
     def test_one_publish_run_makes_exactly_one_snapshot(self, tmp_path: Path) -> None:
         nas = LocalNasArchiveClient(LocalNasSettings(archive_root=tmp_path))

@@ -65,6 +65,7 @@ export interface PublishSurfaceOverride {
 }
 
 export interface PublishApprovalRequest {
+  youtube_channel_id?: string
   operator_id: string
   operator_display_name: string
   approved_surface_ids: string[]
@@ -72,11 +73,14 @@ export interface PublishApprovalRequest {
 }
 
 export interface PublishRetryRequest {
+  youtube_channel_id?: string
   operator_id: string
   operator_display_name: string
 }
 
 export interface PublishSurfaceStatus {
+  delivery_state?: string | null
+  channel_id?: string | null
   id: string
   label: string
   kind: PublishSurfaceKind

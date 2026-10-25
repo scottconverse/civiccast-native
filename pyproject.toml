@@ -59,7 +59,7 @@ dependencies = [
   # (civiccast/agenda/pdf_import.py, product-hole fix). Pure-Python, ships
   # inline types (py.typed), no mypy override needed. Raised 2026-10-07 to
   # clear PDF parsing/text-extraction resource exhaustion in uploaded agendas.
-  "pypdf>=6.21.1",
+  "pypdf>=6.21.2",
   "keyring==25.7.0",
   # Floor raised 2026-08-06 for PYSEC-2026-3552 / CVE-2026-69247 (Bleichenbacher
   # oracle in PKCS#7 EnvelopedData decryption, fixed in 50.0.0). We don't use
@@ -178,6 +178,7 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["civiccast"]
+
 exclude = [
   "/civiccast/apps/**",
   "**/*.cover",
@@ -278,6 +279,14 @@ dev = [
 # Day 0 ships zero members; Sprint 0.1 lands the first one (civiccast/installer
 # or civiccast/platform, whichever comes first).
 # ---------------------------------------------------------------------------
+
+[tool.uv]
+# Security floors for transitive dependencies; preserve their owning extras/groups.
+constraint-dependencies = [
+  "filelock>=4.2.1",
+  "setuptools>=84.1.0",
+  "virtualenv>=21.14.10",
+]
 
 [tool.uv.workspace]
 members = []

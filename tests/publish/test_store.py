@@ -130,3 +130,23 @@ def test_postgres_publish_store_missing_run_returns_none(session_factory) -> Non
     store = PostgresPublishStore(session_factory)
 
     assert store.get_run("missing") is None
+
+
+def test_async_surface_update_does_not_overwrite_concurrent_publication(session_factory):
+    store = PostgresPublishStore(session_factory)
+    original = _record("meeting")
+    store.upsert_run(original)
+    newer = original.model_copy(
+        update={
+            "surfaces": [
+                original.surfaces[0].model_copy(update={"message": "New archive verification"})
+            ]
+        }
+    )
+    store.upsert_run(newer)
+    assert not store.replace_surfaces("meeting", original.surfaces, [])
+    assert store.get_run("meeting") == newer
+    updated = [newer.surfaces[0].model_copy(update={"message": "Confirmed"})]
+    assert store.replace_surfaces("meeting", newer.surfaces, updated)
+    saved = store.get_run("meeting")
+    assert saved.surfaces == updated and saved.audit_events == newer.audit_events

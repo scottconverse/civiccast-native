@@ -159,7 +159,7 @@ describe('HomeScreen when the channel is on air without an HLS web output', () =
     expect((await screen.findByTestId('player-src')).textContent).toBe(
       'http://127.0.0.1:8000/media/live/public/playlist.m3u8',
     )
-    expect(screen.getByText('Slate is on air.')).toBeTruthy()
+    expect(screen.getByText('Live video is on air. Program information follows the playback position.')).toBeTruthy()
     expect(screen.getByText('On air')).toBeTruthy()
   })
 })

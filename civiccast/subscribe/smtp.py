@@ -16,7 +16,6 @@ socket.
 
 from __future__ import annotations
 
-import os
 import smtplib
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -26,6 +25,7 @@ from email.policy import SMTP, Policy
 from email.utils import make_msgid
 from typing import Any
 
+from civiccast.platform.provider_settings import setting
 from civiccast.subscribe.delivery import notification_body
 from civiccast.subscribe.models import NotificationPayload
 
@@ -90,8 +90,10 @@ class SmtpSettings:
 
     @classmethod
     def from_env(cls) -> SmtpSettings:
-        host = os.environ.get("CIVICCAST_SMTP_HOST", "").strip()
-        from_address = os.environ.get("CIVICCAST_SMTP_FROM", "").strip()
+        host = setting("subscriber-notifications", "smtp_host", "CIVICCAST_SMTP_HOST", "").strip()
+        from_address = setting(
+            "subscriber-notifications", "smtp_from", "CIVICCAST_SMTP_FROM", ""
+        ).strip()
         missing = [
             name
             for name, value in (
@@ -105,19 +107,36 @@ class SmtpSettings:
                 "CIVICCAST_PROVIDER_MAIL=real requires "
                 f"{', '.join(missing)} to be set (see docs/ops/cdn-and-providers.md)."
             )
-        port_raw = os.environ.get("CIVICCAST_SMTP_PORT", "").strip()
+        port_raw = setting(
+            "subscriber-notifications", "smtp_port", "CIVICCAST_SMTP_PORT", ""
+        ).strip()
         try:
             port = int(port_raw) if port_raw else 587
         except ValueError as exc:
             raise ValueError(f"CIVICCAST_SMTP_PORT must be an integer; got {port_raw!r}.") from exc
-        username = os.environ.get("CIVICCAST_SMTP_USERNAME", "").strip() or None
-        password = os.environ.get("CIVICCAST_SMTP_PASSWORD", "").strip() or None
+        username = (
+            setting(
+                "subscriber-notifications", "smtp_username", "CIVICCAST_SMTP_USERNAME", ""
+            ).strip()
+            or None
+        )
+        password = (
+            setting(
+                "subscriber-notifications", "smtp_password", "CIVICCAST_SMTP_PASSWORD", ""
+            ).strip()
+            or None
+        )
         if (username is None) != (password is None):
             raise ValueError(
                 "CIVICCAST_SMTP_USERNAME and CIVICCAST_SMTP_PASSWORD must be "
                 "set together (or both left unset for an unauthenticated relay)."
             )
-        use_starttls = os.environ.get("CIVICCAST_SMTP_STARTTLS", "1").strip() != "0"
+        use_starttls = (
+            setting(
+                "subscriber-notifications", "smtp_starttls", "CIVICCAST_SMTP_STARTTLS", "1"
+            ).strip()
+            != "0"
+        )
         return cls(
             host=host,
             from_address=from_address,

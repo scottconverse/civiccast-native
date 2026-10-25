@@ -4091,3 +4091,7 @@ export function stopRecordingJob(jobId: string): Promise<RecordingJob> {
     { method: 'POST' },
   )
 }
+
+export function stopYouTubeOutput(assetId: string): Promise<{ state: string }> {
+  return request(`/api/staff/publish/assets/${encodeURIComponent(assetId)}/youtube/stop`, { method: 'POST' })
+}

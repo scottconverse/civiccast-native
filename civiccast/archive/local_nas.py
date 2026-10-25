@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from civiccast.archive.models import ArchiveProof
+from civiccast.platform.provider_settings import setting
 
 _CHUNK_BYTES = 1024 * 1024
 
@@ -48,7 +49,7 @@ class LocalNasSettings:
 
     @classmethod
     def from_env(cls) -> LocalNasSettings:
-        raw = os.environ.get("CIVICCAST_NAS_ARCHIVE_PATH", "").strip()
+        raw = setting("local-nas", "archive_path", "CIVICCAST_NAS_ARCHIVE_PATH", "").strip()
         if not raw:
             raise ValueError(
                 "CIVICCAST_PROVIDER_LOCAL_NAS=real requires CIVICCAST_NAS_ARCHIVE_PATH "

@@ -151,63 +151,37 @@ def _save_credentials(provider_id: str, values: dict[str, str]) -> None:
     )
 
 
-def test_internet_archive_setup_stored_credentials_do_not_grant_readiness_without_adapter_env(
+def test_internet_archive_setup_credentials_configure_adapter_but_still_need_live_proof(
     provider_state: Path,
 ) -> None:
-    """(a) Complete Setup-stored IA credentials, zero adapter env: the real
-    loader (``CIVICCAST_IA_ACCESS_KEY``/``CIVICCAST_IA_SECRET_KEY``) has
-    nothing to read, so this must stay non-ready and refuse proof."""
-
-    from civiccast.installer.models import ProviderProofRecordRequest
-    from civiccast.installer.service import build_provider_readiness_report, record_provider_proof
+    from civiccast.installer.service import build_provider_readiness_report
+    from civiccast.platform.providers import default_registry
 
     _save_credentials(
         "internet-archive", {"access_key": "stored-access-key", "secret_key": "stored-secret-key"}
     )
-
-    report = build_provider_readiness_report()
-    item = _item(report, "internet-archive")
-    assert item.status != "needs_live_proof", item.status
-    assert item.status != "ready", item.status
-
-    with pytest.raises(ValueError):
-        record_provider_proof(
-            ProviderProofRecordRequest(
-                provider_id="internet_archive",
-                evidence_reference="fake-proof-object-key",
-                redaction_reviewed=True,
-            )
-        )
-
-
-def test_youtube_setup_stored_credentials_do_not_grant_readiness_without_adapter_env(
-    provider_state: Path,
-) -> None:
-    """(b) Complete Setup-stored YouTube credentials, zero adapter env: the
-    real loader (``CIVICCAST_YOUTUBE_CLIENT_ID``/``_CLIENT_SECRET``/
-    ``_REFRESH_TOKEN``) has nothing to read, so this must stay non-ready and
-    refuse proof."""
-
-    from civiccast.installer.models import ProviderProofRecordRequest
-    from civiccast.installer.service import build_provider_readiness_report, record_provider_proof
-
-    _save_credentials(
-        "youtube", {"client_id": "stored-client-id", "client_secret": "stored-client-secret"}
+    assert _item(build_provider_readiness_report(), "internet-archive").status == "needs_live_proof"
+    assert (
+        default_registry().resolve("internet_archive")._settings.secret_key == "stored-secret-key"
     )
 
-    report = build_provider_readiness_report()
-    item = _item(report, "youtube")
-    assert item.status != "needs_live_proof", item.status
-    assert item.status != "ready", item.status
 
-    with pytest.raises(ValueError):
-        record_provider_proof(
-            ProviderProofRecordRequest(
-                provider_id="youtube_live",
-                evidence_reference="fake-proof-object-key",
-                redaction_reviewed=True,
-            )
-        )
+def test_youtube_setup_credentials_configure_adapter_but_still_need_live_proof(
+    provider_state: Path,
+) -> None:
+    from civiccast.installer.service import build_provider_readiness_report
+    from civiccast.platform.providers import default_registry
+
+    _save_credentials(
+        "youtube",
+        {
+            "client_id": "stored-client-id",
+            "client_secret": "stored-secret",
+            "refresh_token": "stored-refresh",
+        },
+    )
+    assert _item(build_provider_readiness_report(), "youtube").status == "needs_live_proof"
+    assert default_registry().resolve("youtube")._settings.refresh_token == "stored-refresh"
 
 
 def test_youtube_readiness_rejects_setup_stored_credentials_without_refresh_token(
@@ -218,11 +192,25 @@ def test_youtube_readiness_rejects_setup_stored_credentials_without_refresh_toke
     must stay non-ready and refuse proof even though two of three real
     credentials genuinely exist."""
 
+    # Legacy saved setups can lack the field newly required by Setup.
+    import json
+
     from civiccast.installer.models import ProviderProofRecordRequest
     from civiccast.installer.service import build_provider_readiness_report, record_provider_proof
 
-    _save_credentials(
-        "youtube", {"client_id": "stored-client-id", "client_secret": "stored-client-secret"}
+    (provider_state / "provider-credentials.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "youtube": {
+                        "fields": {
+                            "client_id": "stored-client-id",
+                            "client_secret": "stored-client-secret",
+                        }
+                    }
+                }
+            }
+        )
     )
     monkeypatch.setenv("CIVICCAST_YOUTUBE_CLIENT_ID", "stored-client-id")
     monkeypatch.setenv("CIVICCAST_YOUTUBE_CLIENT_SECRET", "stored-client-secret")

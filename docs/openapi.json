@@ -29088,6 +29088,72 @@
         ]
       }
     },
+    "/api/staff/publish/assets/{asset_id}/youtube/stop": {
+      "post": {
+        "tags": [
+          "staff",
+          "publish"
+        ],
+        "summary": "Stop Youtube Output",
+        "operationId": "stop_youtube_output_api_staff_publish_assets__asset_id__youtube_stop_post",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Stop Youtube Output Api Staff Publish Assets  Asset Id  Youtube Stop Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/publish/assets/{asset_id}/preflight": {
       "get": {
         "tags": [
@@ -55243,6 +55309,19 @@
             "minLength": 1,
             "title": "Operator Display Name"
           },
+          "youtube_channel_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Channel Id"
+          },
           "approved_surface_ids": {
             "anyOf": [
               {
@@ -55707,6 +55786,19 @@
             "maxLength": 200,
             "minLength": 1,
             "title": "Operator Display Name"
+          },
+          "youtube_channel_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Channel Id"
           }
         },
         "additionalProperties": false,
@@ -55744,6 +55836,28 @@
       },
       "PublishSurfaceStatus": {
         "properties": {
+          "delivery_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery State"
+          },
+          "channel_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Id"
+          },
           "id": {
             "type": "string",
             "maxLength": 80,

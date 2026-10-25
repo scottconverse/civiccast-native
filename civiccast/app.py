@@ -794,6 +794,9 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         app.state.lifespan_started = False
+        youtube_output = getattr(app.state, "youtube_live_output", None)
+        if youtube_output is not None:
+            youtube_output.close()
         # Durable storage can be prepared or rebound while this lifespan is
         # active. Stop the current service, not the boot-time instance captured
         # before the first request.
@@ -2419,7 +2422,10 @@ def create_app() -> FastAPI:
     # so they can never disagree about a surface's real-provider readiness.
     # Registration is side-effect-free (civiccast.platform.providers docstring);
     # this never touches the network or a credential store on its own.
-    app.state.provider_registry = default_registry()
+    from civiccast.syndicate.live_wiring import build_youtube_output
+
+    app.state.youtube_live_output = build_youtube_output(app)
+    app.state.provider_registry = default_registry(youtube_output=app.state.youtube_live_output)
     # Surge switch is off unless CIVICCAST_LIVE_SURGE_THRESHOLD is set AND durable
     # storage is ready (it needs an egress store to resolve live dirs). The
     # durable-storage branch below replaces this when both hold.
