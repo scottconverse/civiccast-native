@@ -297,6 +297,10 @@ test.describe('publish dashboard', () => {
   test('sends approved portal, IA, both NAS paths, and YouTube reach surfaces', async ({ page }) => {
     let postedBody: unknown
     await mockDashboard(page)
+    await page.route('**/api/staff/cable/channels', (route) => route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify([{ channel_id: 'government', slug: 'Government' }]),
+    }))
     await page.route('**/api/staff/publish/assets/council-2026-05-08/approve', async (route) => {
       postedBody = route.request().postDataJSON()
       await route.fulfill({
@@ -331,6 +335,8 @@ test.describe('publish dashboard', () => {
     }
     await expect(card.getByTestId('required-surfaces-unselected')).toHaveCount(0)
 
+    await expect(card.getByRole('button', { name: 'Approve and Publish selected' })).toBeDisabled()
+    await card.getByLabel('Channel sent to YouTube Live').selectOption('government')
     await card.getByRole('button', { name: 'Approve and Publish selected' }).click()
     const dialog = page.getByRole('alertdialog')
     for (const label of [
@@ -346,6 +352,7 @@ test.describe('publish dashboard', () => {
     await dialog.getByRole('button', { name: 'Approve and Publish' }).click()
     await expect.poll(() => postedBody).toBeTruthy()
     expect(postedBody).toMatchObject({
+      youtube_channel_id: 'government',
       operator_id: 'operator-dashboard',
       operator_display_name: 'Operator dashboard',
     })

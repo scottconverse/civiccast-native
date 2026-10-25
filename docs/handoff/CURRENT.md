@@ -74,14 +74,28 @@ later requires an owner-authorized installed application/runtime update from cor
 locks (including caption environment filelock where present). Nothing was installed into,
 restarted or rebuilt for the endurance station. Source CI does not prove its remediation.
 
-- Next: finish focused restart/setup results, commit/push one candidate, open PR, then
-  follow CI using GitHub's existing watch facility. PR267 is open (no merge authorized).
-  Initial candidate `4b90b888375b7a20eb92c3c7f0e69c47aa4a60b0`; one final cleanup/quota
-  correction is being pushed. CI watch session98103, started October25 ~13:54 Denver,
-  watches PR267 every30s and exits when checks finish; Ctrl-C cancels only this watch.
-  ci-test run40228250962 is the initial run (a new push supersedes it automatically).
-  Local check sessions/logs live under the original chat's `work/` scratch directory;
-  all local check processes are terminal; no owned background process remains.
+- Delivery: PR267 https://github.com/scottconverse/civiccast-native/pull/267 is open
+  for review; current head `c782c01489b2b5fb708a3fc1674861eaedf98cf1`.
+  All implementation commits carry DCO sign-off. No merge authorized.
+- CI on c782c014: all four security scans, lint/types, operator build, docs render,
+  public accessibility, agenda integration, publish soak and policy gates passed.
+  Operator accessibility: 269 passed, one publish test omitted the new required
+  source channel. Corrected fixture to select government and assert the POST channel;
+  focused real-browser rerun passes.
+  Both Windows jobs failed before testing/payload staging because global uv
+  constraints injected unhashed ranges into hash-required installs. Reproduced the
+  exact error locally; moved security floors into captions-runtime/dev dependency
+  groups instead. Runtime hash-required dry-run now resolves all eight pinned
+  packages; no package installed. All 200 resolved versions are unchanged by this
+  configuration correction, so prior audit evidence remains valid. Native lock/
+  closure regression71 passed again. No gate, threshold or suppression changed.
+- Next: push these concrete CI corrections, follow the new current-head CI results,
+  and update PR evidence. Prior CI watch session63380 still observes PR267 and will
+  need reattaching if it exits during the push/head transition. Watch logs remain in
+  original chat `work/`; Ctrl-C cancels only the owned watch, not GitHub jobs.
+- Real authorized YouTube destination acceptance remains incomplete; no OAuth
+  credential location response yet. The native goal stays active/incomplete.
+  No owned local FFmpeg sender/receiver or browser/server check remains.
 - Boundaries: no station touch, LFS transfer, installer, release, merge, paid service,
   account creation, F4–F7/N-series work or automatic delegation. Historical records below
   are superseded only for this explicitly authorized F1–F3 assignment.

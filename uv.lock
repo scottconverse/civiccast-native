@@ -6,13 +6,6 @@ resolution-markers = [
     "python_full_version < '3.15'",
 ]
 
-[manifest]
-constraints = [
-    { name = "filelock", specifier = ">=4.2.1" },
-    { name = "setuptools", specifier = ">=84.1.0" },
-    { name = "virtualenv", specifier = ">=21.14.10" },
-]
-
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -756,6 +749,8 @@ captions-runtime = [
     { name = "cactus-needle" },
     { name = "ctranslate2" },
     { name = "faster-whisper" },
+    { name = "filelock" },
+    { name = "setuptools" },
 ]
 cloudflare-r2 = [
     { name = "boto3" },
@@ -775,6 +770,7 @@ dev = [
     { name = "botocore" },
     { name = "build" },
     { name = "detect-test-pollution" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "jiwer" },
@@ -791,10 +787,12 @@ dev = [
     { name = "pyyaml" },
     { name = "ruff" },
     { name = "sacrebleu" },
+    { name = "setuptools" },
     { name = "testcontainers" },
     { name = "types-defusedxml" },
     { name = "types-psutil" },
     { name = "types-reportlab" },
+    { name = "virtualenv" },
 ]
 
 [package.metadata]
@@ -813,6 +811,7 @@ requires-dist = [
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", specifier = ">=0.115.0,<0.137.0" },
     { name = "faster-whisper", marker = "extra == 'captions-runtime'", specifier = ">=1.2.1,<2" },
+    { name = "filelock", marker = "extra == 'captions-runtime'", specifier = ">=4.2.1" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "keyring", specifier = "==25.7.0" },
     { name = "nvidia-ml-py", specifier = ">=12.560.0" },
@@ -825,6 +824,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=311" },
     { name = "reportlab", specifier = "==4.5.1" },
+    { name = "setuptools", marker = "extra == 'captions-runtime'", specifier = ">=84.1.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "starlette", specifier = ">=0.46.0,<1.4.0" },
     { name = "typer", specifier = ">=0.12.5" },
@@ -841,6 +841,7 @@ dev = [
     { name = "botocore", specifier = ">=1.35" },
     { name = "build", specifier = ">=1.5.0" },
     { name = "detect-test-pollution", specifier = ">=1.2.0" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hypothesis", specifier = ">=6.112.0" },
     { name = "jiwer", specifier = ">=4.0.0" },
@@ -857,10 +858,12 @@ dev = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", specifier = ">=0.6.0" },
     { name = "sacrebleu", specifier = ">=2.6.0" },
+    { name = "setuptools", specifier = ">=84.1.0" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.7,<4.15" },
     { name = "types-defusedxml", specifier = ">=0.7.0.20260504" },
     { name = "types-psutil", specifier = ">=6.1.0.20240901" },
     { name = "types-reportlab", specifier = ">=4.5.0.20260509" },
+    { name = "virtualenv", specifier = ">=21.14.10" },
 ]
 
 [[package]]

@@ -100,6 +100,9 @@ s3-cdn = [
   "urllib3>=2.8.0",
 ]
 captions-runtime = [
+  # Runtime security floors, scoped here so hash-locked native installs stay isolated.
+  "filelock>=4.2.1",
+  "setuptools>=84.1.0",
   "faster-whisper>=1.2.1,<2",
   "ctranslate2==4.8.1",
   "cactus-needle==3.1.0",
@@ -217,6 +220,10 @@ artifacts = [
 
 [dependency-groups]
 dev = [
+  # Security floors for the pre-commit/virtualenv toolchain.
+  "filelock>=4.2.1",
+  "setuptools>=84.1.0",
+  "virtualenv>=21.14.10",
   "ruff>=0.6.0",
   "mypy>=1.11.0",
   "pytest>=8.3.0",
@@ -279,14 +286,6 @@ dev = [
 # Day 0 ships zero members; Sprint 0.1 lands the first one (civiccast/installer
 # or civiccast/platform, whichever comes first).
 # ---------------------------------------------------------------------------
-
-[tool.uv]
-# Security floors for transitive dependencies; preserve their owning extras/groups.
-constraint-dependencies = [
-  "filelock>=4.2.1",
-  "setuptools>=84.1.0",
-  "virtualenv>=21.14.10",
-]
 
 [tool.uv.workspace]
 members = []
