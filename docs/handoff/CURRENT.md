@@ -89,10 +89,33 @@ restarted or rebuilt for the endurance station. Source CI does not prove its rem
   packages; no package installed. All 200 resolved versions are unchanged by this
   configuration correction, so prior audit evidence remains valid. Native lock/
   closure regression71 passed again. No gate, threshold or suppression changed.
-- Next: push these concrete CI corrections, follow the new current-head CI results,
-  and update PR evidence. Prior CI watch session63380 still observes PR267 and will
-  need reattaching if it exits during the push/head transition. Watch logs remain in
-  original chat `work/`; Ctrl-C cancels only the owned watch, not GitHub jobs.
+- Current delivery head: `b303359c0b726876e219feb26ae4a900534ceae7`, PR267 open.
+  Current CI: ci-test40228919784; security40228919743; lint40228919832;
+  docs40228919843; Windows app reproducibility40228919751; a11y40228919769.
+  Superseded c782c014 unit workflow was cancelled after the source correction.
+  Owned GitHub watch session6379 now observes PR267 every30s and exits when checks
+  finish; log `work/f1-f3-ci-watch-b303359c.log` in original chat. Older duplicate
+  watch63380 was stopped with Ctrl-C (watch only, not GitHub jobs). Keep following
+  current-head CI and fix concrete failures; do not infer an automatic continuation.
+- F1 verified: delivered trim/repackage implementation retained and combined real
+  sample passed. F3 targeted remediation verified by current-head security scans;
+  no installed-environment update was performed. F2 software implementation and
+  simulator checks pass; real destination acceptance remains blocked below.
+- CI on b303359c is terminal: 20 checks passed, including Windows probes
+  (2321 native tests,35 installer/filesystem and56 media cases, no skips) and
+  app reproducibility. Required unit run40228919784 completed with11757 passed,
+  105 skipped,5 deselected and exactly the same two fixture failures found in the
+  informational randomized run (11761 passed,106 skipped,2 failed). Claims verifier
+  rejected the failed producer as required; no binding drift is present.
+- Corrected those two auth/installer fixtures to supply/expect the newly required
+  refresh token; preserved403/200 role checks and both secret-redaction assertions,
+  and removed duplicate environment setup. Reproduced before fixing; both focused
+  cases now pass, and affected Ruff checks pass. Application/dependency code and
+  package versions are unchanged. No extra gate or unrelated repair was introduced.
+- Next: push this test-only correction, follow current-head CI through the existing
+  GitHub watch with fail-fast notification, and deliver the review-ready PR when
+  required checks pass. The old watcher6379 and wait172 are terminal; wait163 was
+  stopped earlier to inspect the informational failure. No watcher currently owned.
 - Real authorized YouTube destination acceptance remains incomplete; no OAuth
   credential location response yet. The native goal stays active/incomplete.
   No owned local FFmpeg sender/receiver or browser/server check remains.
