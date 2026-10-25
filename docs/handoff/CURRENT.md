@@ -216,3 +216,19 @@ Brotli findings (dependency correction is not implemented):
   Zod, Vitest/mocker and Undici findings. Their reachability and artifact scope
   were not investigated here. No dependency edits, waiver, installer rebuild,
   release or LFS transfer was performed.
+
+### Claims-binding follow-up during integration
+
+Corrected head `8b3c90174aa584238e6ccc8aa9f58ab895502913` passed its Windows
+job in run `40158115701`. Its unit job reported 16 failures / 11712 passes:
+all failures derived from six workflow blob bindings left stale by the JUnit
+floor correction. Local checks reproduced those six mismatches. The downstream
+claims verifier rejected the failed producer; this is not green CI.
+
+The six registry workflow references are renewed after reviewing the floor/comment
+only delta; see the October 24 section of the existing current-source review
+note. No producer, registered node, control or enforcement is weakened, and no
+historical acceptance is renewed. All 125 claims-evidence policy tests passed locally after rebinding (67.49s).
+The next candidate must complete same-run CI.
+The previous finite merge watcher exited on these required failures without
+merging. No merge is currently armed while this follow-up is prepared.

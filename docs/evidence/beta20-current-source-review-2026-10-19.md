@@ -1,5 +1,33 @@
 # Beta 20 current-source review tripwire renewal
 
+
+## October 24 checker-integration workflow binding
+
+PR265's collection-floor correction changed only comments and the two native
+JUnit minimums: pure 2019 -> 2032 and Windows 2261 -> 2271. Live collection is
+2082 pure / 2324 total / 2321 Windows non-integration, retaining the existing
+50-test margin. The reviewed diff is `50b4e11..8b3c901` for
+`.github/workflows/ci-test.yml`.
+
+The six workflow source tripwires now bind Git blob
+`b6713dea345b6cef8e2e62677807dd336813938f`, replacing
+`a3462ce42bd0de358a693e2080d5e31a2c06bed2`. Producer jobs, metadata, registered
+nodes, controls, result wiring and verifier enforcement are unchanged. No code,
+test, fixture or historical evidence binding is renewed by this update.
+
+Run `40158115701` passed the real Windows closure/native job but its unit job
+failed because these six workflow bindings had not been updated. That failure
+and its downstream claims failure are not passes. Local registry-drift checks
+reproduced the six mismatches before rebinding. Completed same-run CI is still
+required; local policy tests use their documented synthetic artifact fixtures
+and do not establish real producer acceptance. No installed, hardware, pre-login,
+release or signing claim is changed.
+
+Focused verification after rebinding: all 125 tests in
+`tests/policy/test_claims_evidence.py` passed in 67.49 seconds. This includes
+real-registry drift checks and deliberately failing binding/control fixtures;
+it is not a completed hosted producer result. `git diff --check` passed.
+
 ## October 20 final-candidate CI reconciliation
 
 Signed source `34e213fec46fa69245822dc29ebb269d251e29a3` retains build run
