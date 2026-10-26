@@ -1,16 +1,21 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N3 / predecessor delivery - October 26, 2026
+## N1-N3 combined delivery - October 26, 2026
 
-- Parent owns roadmap/merge. PR268 frozen e615fc82abf2da0cd8ea0563f30a2edfe98fec80;
-  N1 DCO8f98d6f3173a9f12b9815e20ac765096d2a14633 committed, reviewed, unpushed.
-  N2 DCO59b7e77a7071d6be7df051921e8e5625d106772a committed/reviewed, unpushed.
-  Active child feat/n3-caption-workbench based N2. Reviewed N1-N3 separate DCO
-  commits will share one follow-on PR after PR268 merge; do not push before it. F1-F3 merged; F5,N4-N8 pending (N7 set preserved below).
-- Sole CI waiter2108 follows PR268 run40277731000, started06:05 UTC October26.
-  Windows121424188792 PASSED12m39s, including real native F4/F7 and full native;
-  optional integration passed34s. Unit121424188386 pytest remains live. No merge
-  until applicable required CI green. Cancel watcher only with Ctrl+C in2108.
+- Parent owns roadmap/merge. PR268 merged07:03:52UTC, main5764afbcbdf757aa5b5ad6f91187283346ab2e94.
+  Frozen e615fc82 CI run40277731000 SUCCESS; waiter2108 exited0. Final rollup
+  21 SUCCESS/3 skipped release-only checks; all terminal. F4 abort isolation/native
+  supersede+Windows, F6 honest preview withdrawal and F7 decoded boundary delivered.
+  Historical original filesrc transient provenance remains unknown, not a new gate.
+- Reviewed DCO commits N1 8f98d6f3, N2 59b7e77a, N3 2dc66e85 share one follow-on
+  PR on feat/n3-caption-workbench, incorporating merged main and e615 diagnostics.
+  No product conflict; CURRENT was the sole merge conflict, retaining both ledgers.
+  Existing focused evidence below remains valid; no broad rerun for merge alone.
+- N4 partial implementation preserved in named stash 'N4 embed and scheduled
+  YouTube in progress before N1-N3 combined delivery', restore only on its child
+  feat/n4-embed-scheduled-youtube after incorporating this combined base. No live
+  local process or CI watcher. Next push combined PR, own one required CI waiter,
+  then restore N4. F1-F4/F6/F7 merged; F5,N4-N8 remain.
 - N2 implemented truthful first-recording progress from existing staff asset API,
   retry/refresh and direct Assets/Publish/resident links. Sources select current
   named channel profiles; stale selection falls back to a current profile.
@@ -49,9 +54,8 @@
   70pass4.98s; correction20pass/1external-PG-skip7.21s; durable provenance restart
   plus review routes18pass8.71s. Parent correction recheck complete; live IDs unchanged.
 - API/manual/help/PDF/DOCX generated; final render55017 and API53841 terminal0.
-  No local jobs live. Sole hosted waiter2108 consumed at this checkpoint: unit
-  still live, Windows passed. N3 ready for DCO commit; next N4 exact plan if CI
-  remains live. N1-N3 reviewed commits share one follow-on PR after PR268 merge.
+  No local jobs live. N3 DCO2dc66e85 committed after these focused checks;
+  required CI now runs once for the combined reviewed N1-N3 candidate.
 
 ## Historical PR268 diagnostic preparation - October 26, 2026
 
