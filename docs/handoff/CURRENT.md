@@ -2,6 +2,44 @@
 
 ## Current consolidated N4-N8/F5 source delivery - October 26, 2026
 
+- CURRENT frozenPR270head423393349f87148e7253f93691a9a70478cc120c pushed.
+  RequiredCI40317242166 terminal;93014/cell850 consumedexit1. Unit121552808870
+  SUCCESS34m8s incl Postgres/nativepure, Claims121567232117SUCCESS17s/integration
+  PASS. WholePRrollup22SUCCESS/3SKIP/1FAIL (only Windows121552808917 decoder
+  discovery;56othernative-mediaPASS). InformationalrandomizedalsoPASS. No other
+  defect toconsolidate; next push reviewed helper-onlycorrection and own one
+  requiredCIwaiter. Signed42339334kitbelow remainsvalid, no rebuild.
+- ExactWindows retainedartifact12648720319 (windows-native-junit,2.5MB) contains
+ 2.9MB outputTS/worker/graph/decoder receipt. Defaultmoviefilter reproducibly
+  exit-22 unspecifiedH264size/emptyformat. Largerprobe/timealoneFAIL; source
+  comparison identifies ffprobe explicit scan_all_pmts=1 missing frommovie.
+  Samebytes with that option decode OUTGOING2.367-4.367/queued6.433-10.154,
+  incoming10.888-12.521; actualswitch10.155, delayedstaleabsent. Existinghelper
+  now sets demuxoption only; unchanged boundary assertionsPASS onretainedTS,
+  Ruff/format/diffPASS, only existingnative-testhash renewed. No productdelta,
+  no new recording/build; reviewed test-onlycorrection ready forpush.
+  Original CIartifact immutable; local output.caption-decode.json now records
+  correctedhelperresult. %TEMP%/civiccast-retained-caption-default.json preserves
+  reproducedfailure; %TEMP%/civiccast-pr270-windows-42339334 contains retainedbytes.
+- Signing candidate40317362877 terminalSUCCESS;11307/cell851 consumedexit0.
+  Station1215532329962m59s/manual1215532336332m47s/app12155450232719m38sPASS;
+  assembled121562733091. Kit C:/CivicCastTester/kit-staging/423393349f87148e7253f93691a9a70478cc120c.
+  Setup261349744bytes, SHA2569b01304429a07220dd5f35b061a779fdc07744fb6d0ae45defec232eccb0375a.
+  DirectAuthentiCodeValidCNScottConverse/Microsofttimestamp; build log verifies
+  patchedlauncher12:01:40 and generateduninstallernstF8C0.tmp12:01:45 signatures.
+  These are packaging proofs, not installed acceptance. Candidate receipt and
+  signedpacks remain C:/CivicCastTester/candidates/423393349f87148e7253f93691a9a70478cc120c/candidate.
+- AutomaticGateA40320430842 terminalCANCELLED, RAM8675MB<16384MB. Cancellation
+  was late: ownedSandboxRemoteSession26180 launched12:10:17UTC; stopped only
+  verified ownedsandbox-lab/CivicCastSandboxTest.wsb client, forcecancelledrun,
+  confirmed noSandboxclient remains. Unknownvmwp27068 preserved. No claim of
+  prelaunch prevention or completed acceptance. Do not relaunch until16GBfree.
+  Existinglistener86662/PID14068 owned; source/CI continuation only meanwhile.
+  No stationchange/tags/publication/LFS/spend. F5 installed launcher/uninstaller
+  signature checks and isolated install/uninstall acceptance remain pending.
+
+### Historical prior candidate failure and correction receipts
+
 - PR270 correction includes reviewed DCO906fd0a2 Tauri conditional hook fix
   and bounded manual provisioning diagnostics, plus current-source tripwire
   renewal. Remote8d64ce26 required CI40310373196 terminalFAILURE; sole15349/cell806
@@ -34,7 +72,7 @@
   candidate reuses existing verifiedstation route, no tags/publication/LFS/spend.
   F5 installed launcher/uninstaller signatures and isolatedacceptance remain.
 
-### Historical prior candidate failure and correction receipts
+### Historical earlier PNG and fixture receipts
 
 -40302184786 terminal FAILURE, sole67973/cell747 consumedexit1. Unit121502756357
  58m22s:3failed/11798passed/106skipped/5deselected. Exact native collection now

@@ -842,7 +842,9 @@ def _decode_back_caption_text(ts: Path) -> str:
             "-f",
             "lavfi",
             "-i",
-            f"movie={movie}[out0+subcc]",
+            # Match ffprobe's MPEG-TS discovery: without scanning all PMTs a
+            # valid late-discovered video PID can lack codec parameters here.
+            f"movie={movie}:format_opts=scan_all_pmts=1[out0+subcc]",
             "-map",
             "0:1",
             "-f",

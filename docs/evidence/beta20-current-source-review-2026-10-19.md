@@ -1,4 +1,17 @@
 # Beta 20 current-source review tripwire renewal
+## October 26 retained caption stream PMT discovery correction
+
+Required Windows121552808917 retained the exact failing TS/worker/decoder log.
+Default movie-filter extraction reproduces exit-22 (unspecified video size,
+empty pixel format); larger probe/time bounds alone do not fix it. The same
+bytes decode with format_opts=scan_all_pmts=1, matching ffprobe's explicit
+MPEG-TS default (FFmpeg fftools/ffprobe.c open_input_file). Outgoing caption ends
+4.367s; queued old caption ends10.154s before actual switch10.155s; incoming
+caption10.888-12.521s is present and delayed stale speech absent. The inline
+native-test decoder now selects that demux option; boundary assertions and
+product bytes are unchanged. Only its existing source tripwire is renewed.
+Signed candidate40317362877/42339334 remains valid; no installer rebuild.
+
 ## October 26 static PNG and workflow floor tripwire renewal
 
 Required CI40310373196 Windows job121529748466 passed in13m30s, including
