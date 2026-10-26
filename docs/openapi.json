@@ -96,7 +96,7 @@
           "public"
         ],
         "summary": "Get embed snippet + manifest URL for a public asset",
-        "description": "Return the iframe snippet and metadata needed to embed an asset.\n\nPublic \u2014 no auth. The asset's `manifest_url` is already on a public CDN\nso there is no information leak in returning it. Stations that want\nprivate/unlisted assets must mark them so in the asset store; this\nendpoint refuses to serve them (404).",
+        "description": "Resolve a currently published, anonymously accessible recording by identity.",
         "operationId": "get_embed_api_public_embed__asset_id__get",
         "parameters": [
           {
@@ -120,8 +120,56 @@
               }
             }
           },
+          "403": {
+            "description": "Private or paywalled playback cannot be embedded"
+          },
           "404": {
-            "description": "Asset not found"
+            "description": "Asset not found or unpublished"
+          },
+          "503": {
+            "description": "Access policy is unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/embed/channel/{channel_id}": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "summary": "Get Channel Embed",
+        "operationId": "get_channel_embed_api_public_embed_channel__channel_id__get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelEmbedResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -21186,6 +21234,150 @@
         ]
       }
     },
+    "/api/staff/summaries/agendas/{agenda_id}/minutes": {
+      "post": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Draft agenda minutes from a cited summary or start a manual draft",
+        "operationId": "create_agenda_minutes_api_staff_summaries_agendas__agenda_id__minutes_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaMinutesCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryDraft"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/summaries/{summary_id}/minutes": {
+      "patch": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Edit sourced agenda discussion and human-entered motions/votes",
+        "operationId": "edit_agenda_minutes_api_staff_summaries__summary_id__minutes_patch",
+        "parameters": [
+          {
+            "name": "summary_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Summary Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaMinutesEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryDraft"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/ai-models": {
       "get": {
         "tags": [
@@ -24459,6 +24651,130 @@
         ]
       }
     },
+    "/api/staff/agenda-meetings": {
+      "get": {
+        "tags": [
+          "staff",
+          "agenda"
+        ],
+        "summary": "Agenda Meetings",
+        "operationId": "agenda_meetings_api_staff_agenda_meetings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgendaMeetingOption"
+                  },
+                  "type": "array",
+                  "title": "Response Agenda Meetings Api Staff Agenda Meetings Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agendas/{agenda_id}/items/{item_id}/mark-now": {
+      "post": {
+        "tags": [
+          "staff",
+          "agenda"
+        ],
+        "summary": "Mark Item Now",
+        "operationId": "mark_item_now_api_staff_agendas__agenda_id__items__item_id__mark_now_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/agendas": {
       "get": {
         "tags": [
@@ -25346,6 +25662,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Viewer access required"
           },
           "404": {
             "description": "No published agenda for this meeting asset"
@@ -34084,6 +34403,172 @@
         "title": "AgendaItemUpdate",
         "description": "Patch-an-item request body (absent keys unchanged).\n\n``item_id`` / ``agenda_id`` are set at creation and not editable here."
       },
+      "AgendaMeetingOption": {
+        "properties": {
+          "meeting_asset_id": {
+            "type": "string",
+            "title": "Meeting Asset Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source_recording_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Recording Job Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "can_mark_now": {
+            "type": "boolean",
+            "title": "Can Mark Now",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "meeting_asset_id",
+          "title",
+          "state"
+        ],
+        "title": "AgendaMeetingOption"
+      },
+      "AgendaMinutes": {
+        "properties": {
+          "agenda_id": {
+            "type": "string",
+            "title": "Agenda Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "source_summary_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Summary Id"
+          },
+          "source_summary_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Summary Fingerprint"
+          },
+          "transcript_fingerprint": {
+            "type": "string",
+            "title": "Transcript Fingerprint"
+          },
+          "playback_start_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playback Start Seconds"
+          },
+          "playback_end_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Playback End Seconds"
+          },
+          "content": {
+            "$ref": "#/components/schemas/MinutesContent"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/MinutesRevision"
+            },
+            "type": "array",
+            "title": "Revisions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "agenda_id",
+          "asset_id",
+          "transcript_fingerprint",
+          "content"
+        ],
+        "title": "AgendaMinutes"
+      },
+      "AgendaMinutesCreateRequest": {
+        "properties": {
+          "source_summary_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Summary Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AgendaMinutesCreateRequest"
+      },
+      "AgendaMinutesEditRequest": {
+        "properties": {
+          "expected_audit_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Expected Audit Fingerprint"
+          },
+          "content": {
+            "$ref": "#/components/schemas/MinutesContent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_audit_fingerprint",
+          "content"
+        ],
+        "title": "AgendaMinutesEditRequest"
+      },
       "AiDefaultSelection": {
         "properties": {
           "summary_model": {
@@ -40140,6 +40625,46 @@
         ],
         "title": "ChannelCommissioningSetup",
         "description": "Operator's Screen 9 channel choices."
+      },
+      "ChannelEmbedResponse": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "manifest_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Url"
+          },
+          "portal_url": {
+            "type": "string",
+            "title": "Portal Url"
+          },
+          "embed_html": {
+            "type": "string",
+            "title": "Embed Html"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel_id",
+          "title",
+          "manifest_url",
+          "portal_url",
+          "embed_html"
+        ],
+        "title": "ChannelEmbedResponse"
       },
       "ChannelLogEntry": {
         "properties": {
@@ -50753,6 +51278,20 @@
             "pattern": "^[a-z0-9][a-z0-9_-]*$",
             "title": "Meeting Asset Id"
           },
+          "source_recording_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Recording Job Id"
+          },
           "source_doc_url": {
             "anyOf": [
               {
@@ -50817,6 +51356,20 @@
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9_-]*$",
             "title": "Meeting Asset Id"
+          },
+          "source_recording_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Recording Job Id"
           },
           "source_doc_url": {
             "anyOf": [
@@ -50916,6 +51469,199 @@
           "role"
         ],
         "title": "MintInviteInput"
+      },
+      "MinutesContent": {
+        "properties": {
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/MinutesSection"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Sections"
+          },
+          "decisions_reviewed": {
+            "type": "boolean",
+            "title": "Decisions Reviewed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sections"
+        ],
+        "title": "MinutesContent"
+      },
+      "MinutesMotion": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "mover": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Mover"
+          },
+          "seconder": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Seconder",
+            "default": ""
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "withdrawn",
+              "no_vote"
+            ],
+            "title": "Outcome"
+          },
+          "votes": {
+            "items": {
+              "$ref": "#/components/schemas/MinutesVote"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Votes"
+          },
+          "transcript_ranges": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptRange"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Transcript Ranges"
+          },
+          "human_confirmed": {
+            "type": "boolean",
+            "title": "Human Confirmed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text",
+          "mover",
+          "outcome",
+          "transcript_ranges"
+        ],
+        "title": "MinutesMotion"
+      },
+      "MinutesRevision": {
+        "properties": {
+          "operator_id": {
+            "type": "string",
+            "title": "Operator Id"
+          },
+          "edited_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Edited At"
+          },
+          "previous_fingerprint": {
+            "type": "string",
+            "title": "Previous Fingerprint"
+          },
+          "content": {
+            "$ref": "#/components/schemas/MinutesContent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operator_id",
+          "edited_at",
+          "previous_fingerprint",
+          "content"
+        ],
+        "title": "MinutesRevision"
+      },
+      "MinutesSection": {
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Item Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "discussion": {
+            "type": "string",
+            "maxLength": 12000,
+            "title": "Discussion",
+            "default": ""
+          },
+          "transcript_ranges": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptRange"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Transcript Ranges"
+          },
+          "not_discussed": {
+            "type": "boolean",
+            "title": "Not Discussed",
+            "default": false
+          },
+          "motions": {
+            "items": {
+              "$ref": "#/components/schemas/MinutesMotion"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Motions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "item_id",
+          "title"
+        ],
+        "title": "MinutesSection"
+      },
+      "MinutesVote": {
+        "properties": {
+          "member": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Member"
+          },
+          "choice": {
+            "type": "string",
+            "enum": [
+              "yes",
+              "no",
+              "abstain",
+              "absent"
+            ],
+            "title": "Choice"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "member",
+          "choice"
+        ],
+        "title": "MinutesVote"
       },
       "MissingMediaAlertRow": {
         "properties": {
@@ -54910,7 +55656,7 @@
           "video_timecode_s": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"
@@ -55723,6 +56469,30 @@
       },
       "PublishApprovalRequest": {
         "properties": {
+          "youtube_scheduled_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled Start"
+          },
+          "youtube_scheduled_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled End"
+          },
           "operator_id": {
             "type": "string",
             "maxLength": 160,
@@ -56201,6 +56971,30 @@
       },
       "PublishRetryRequest": {
         "properties": {
+          "youtube_scheduled_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled Start"
+          },
+          "youtube_scheduled_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled End"
+          },
           "operator_id": {
             "type": "string",
             "maxLength": 160,
@@ -56283,6 +57077,52 @@
               }
             ],
             "title": "Channel Id"
+          },
+          "broadcast_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broadcast Id"
+          },
+          "stream_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stream Id"
+          },
+          "scheduled_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled Start"
+          },
+          "scheduled_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled End"
           },
           "id": {
             "type": "string",
@@ -56781,7 +57621,11 @@
               "type": "string",
               "enum": [
                 "en",
-                "es"
+                "es",
+                "zh-Hans",
+                "fil",
+                "vi",
+                "ar"
               ]
             },
             "type": "array",
@@ -64732,6 +65576,16 @@
               }
             ],
             "title": "Operator Message"
+          },
+          "agenda_minutes": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgendaMinutes"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,

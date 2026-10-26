@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
+from civiccast.paywall.router import get_paywall_service
 from civiccast.vod.models import AssetMetadata
 from civiccast.vod.router import get_store
 from civiccast.vod.store import InMemoryAssetStore
@@ -37,6 +39,9 @@ def store() -> InMemoryAssetStore:
 def client(store: InMemoryAssetStore) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_store] = lambda: store
+    policy = Mock()
+    policy.has_access.return_value = True
+    app.dependency_overrides[get_paywall_service] = lambda: policy
     with TestClient(app) as c:
         yield c
 
@@ -100,45 +105,41 @@ class TestEmbedEndpoint:
         assert body["embed_html"].startswith("<iframe")
         assert "</iframe>" in body["embed_html"]
 
-    def test_portal_url_contains_manifest_query_param(self, client: TestClient) -> None:
-        r = client.get("/api/public/embed/city-council-2026-05-08")
-        body = r.json()
-        assert "?manifest=" in body["portal_url"]
-        assert "playlist.m3u8" in body["portal_url"]
-
-    def test_portal_url_uses_root_path_not_per_asset_route(self, client: TestClient) -> None:
-        # The Sprint 0.2 portal SPA serves only /. Embedding to a /v/{asset_id}
-        # route would 404 in every iframe in the wild — guard against
-        # regression to that shape.
-        r = client.get("/api/public/embed/city-council-2026-05-08")
-        body = r.json()
-        portal_url = body["portal_url"]
-        # Strip the query string before checking the path.
-        path_part = portal_url.split("?", 1)[0]
-        assert path_part.endswith("/"), (
-            f"portal_url must point at the SPA root, got path={path_part!r}"
+    def test_player_url_uses_server_checked_identity(self, client: TestClient, monkeypatch):
+        monkeypatch.setenv("CIVICCAST_PORTAL_BASE", "https://other.example/")
+        body = client.get("/api/public/embed/city-council-2026-05-08").json()
+        assert (
+            body["portal_url"]
+            == "http://testserver/api/public/embed-player/asset/city-council-2026-05-08"
         )
-        assert "/v/" not in path_part, (
-            f"portal_url must not use the deferred /v/ route, got {path_part!r}"
-        )
+        assert "manifest=" not in body["embed_html"]
 
-    def test_portal_url_honors_civiccast_portal_base_env_var(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CIVICCAST_PORTAL_BASE", "https://portal.example.org")
-        r = client.get("/api/public/embed/city-council-2026-05-08")
-        body = r.json()
-        assert body["portal_url"].startswith("https://portal.example.org/?manifest=")
-
-    def test_portal_url_strips_trailing_slash_on_env_var(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CIVICCAST_PORTAL_BASE", "https://portal.example.org/")
-        r = client.get("/api/public/embed/city-council-2026-05-08")
-        body = r.json()
-        # Must not produce a double slash.
-        assert "//?" not in body["portal_url"]
-        assert body["portal_url"].startswith("https://portal.example.org/?manifest=")
+    def test_access_and_withdrawal_close_both_embed_routes(
+        self, client, store, tmp_path, monkeypatch
+    ):
+        (tmp_path / "index.html").write_text("<html>Built player</html>")
+        monkeypatch.setenv("CIVICCAST_PUBLIC_PORTAL_DIST", str(tmp_path))
+        metadata = "/api/public/embed/city-council-2026-05-08"
+        player = "/api/public/embed-player/asset/city-council-2026-05-08"
+        response = client.get(player)
+        assert response.status_code == 200
+        assert "x-frame-options" not in response.headers
+        assert "frame-ancestors http: https:" in response.headers["content-security-policy"]
+        assert response.headers["cache-control"] == "no-store"
+        policy = client.app.dependency_overrides[get_paywall_service]()
+        policy.has_access.return_value = False
+        for path in (metadata, player):
+            response = client.get(path)
+            assert response.status_code == 403 and response.headers["cache-control"] == "no-store"
+        policy.has_access.return_value = True
+        asset = store.get("city-council-2026-05-08")
+        store.put(asset.model_copy(update={"published_at": None}))
+        assert client.get(metadata).status_code == 404
+        assert client.get(player).status_code == 404
+        client.app.dependency_overrides[get_paywall_service] = lambda: None
+        store.put(asset)
+        assert client.get(metadata).status_code == 503
+        assert client.get(player).status_code == 503
 
     def test_default_dimensions_are_640x360(self, client: TestClient) -> None:
         r = client.get("/api/public/embed/city-council-2026-05-08")

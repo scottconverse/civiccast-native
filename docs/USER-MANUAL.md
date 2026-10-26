@@ -950,16 +950,11 @@ An agenda belongs to one recording. Each recording can have only one agenda. Age
 #### Create an agenda
 
 1. In the left menu, under **Review Records**, click **Agendas**.
-2. In the **Create new agenda** card, type an **Agenda ID (slug)** such as `council-2026-01`. Use only lowercase letters, digits, hyphens and underscores, starting with a letter or digit.
-3. Type the **Meeting asset ID**: the ID of the recording this agenda belongs to. Find it on the **Assets** screen, in small type under the recording's title. Type it exactly, in lowercase.
-4. If the agenda also exists as a document, type its web address in **Source doc URL (optional)**. Residents can read it next to the video.
-5. Click **Create agenda**.
+2. Choose the named **Meeting or recording**. Active captures include their date and recording state; completed recordings use their title. No asset code is needed.
+3. If the agenda also exists as a document, enter **Source doc URL (optional)**.
+4. Click **Create agenda**. The selected card shows the recording title and **draft** status. Choose an existing agenda with **Pick an agenda** if this recording already has one.
 
-You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: &lt;id&gt;". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
-
-> **Known issue (beta.11):** The IDs are made-up codes, and a wrong character (for example a capital letter) shows raw technical text instead of a plain message. There is no list of recordings to choose from. We could not confirm whether the station checks that the recording exists.
-
-> **Known issue (beta.11):** If you press **Create agenda** for a recording that already has an agenda, you see "An agenda already exists for (station_id='…', meeting_asset_id='…')." Select the existing one with **Pick an agenda**.
+An agenda created during capture follows that capture's finalized recording automatically. While the capture is active, add its items and use **Mark current item now** on the relevant row when discussion changes. This samples media actually written, including reconnect segments; it does not use the wall clock or start a recording. If media time is unavailable, retry after capture recovers or enter a reviewed time. Once capture stops, correct times manually with **Edit**.
 
 #### Add items by hand
 
@@ -968,7 +963,7 @@ You should see the new agenda selected. Its card shows the ID, a **draft** label
    - **Order**: the item's position in the list, as a whole number from 0 up.
    - **Number (label, optional)**: what residents see, such as `1.a`.
    - **Title**: the item's name.
-   - **Video timecode (seconds, optional)**: the moment in the video where the item starts, in whole seconds. For 1 hour 5 minutes, type 3900.
+   - **Source recording time** or **Packaged playback time**: enter `hh:mm:ss`, such as `01:05:00`. Whole seconds remain accepted. A blank time leaves the item without a seek link. For an agenda linked to a capture, use its original recording clock; CivicCast adjusts those markers to the immutable trim actually packaged. For an existing/direct recording agenda, use the public player's clock; those saved times are preserved.
    - **Doc anchor (optional)**: a place in the source document, such as `#item-1a`.
    - **Notes (optional)**: private to staff. The box says they are not shown to viewers.
 2. Click **Add item**.
@@ -1005,13 +1000,13 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 > **Known issue (beta.11):** If the station refuses to publish an empty agenda, the message ends with "Add at least one item (DC-1) before publishing." The "DC-1" is an internal code; ignore it.
 
-> **Known issue (beta.11):** The screen does not tell you that changes to items of an agenda that is **already published** go live as soon as you save. Only a PDF or external import reopens it as a draft. Edit a published agenda only when you are sure.
+Changes to an already published agenda are public as soon as they are saved; viewers see them when they load the page again. Unpublish first if a correction needs private review. PDF or external import reopens the agenda as a draft. Invalid times or times beyond the available video are refused with a message. If duration is not available yet, wait for recording finalization. An agenda may be prepared or published before video packaging, but residents cannot retrieve it until the recording has a published playback package and their current viewer access allows it.
 
 #### What residents see
 
 On the recording's watch page, residents see a card headed "Agenda" beside the video. It shows each item's number, title and time. Clicking an item that has a time jumps the video to it. An item with no time shows "—" and cannot be clicked. If you gave a **Source doc URL**, there is an "Agenda document" link, and if the address ends in `.pdf`, the document appears in a viewer. Residents never see your **Notes**. While the agenda is a draft, residents see nothing at all.
 
-> **Known issue (beta.11):** The operator screen does not say where residents see the agenda, and it only links to the public page when the station was built with a public portal address set. Open the recording on the resident portal ([Chapter 6](#ch-publishing)) to check how it looks.
+After capture finalizes, **View on public portal** opens the linked recording on the installed resident portal (or the configured portal address). Package and publish the recording through the existing Assets/Publish steps, then open the link to verify the chapter seeks. Draft agendas, unpublished recordings and restricted playback remain unavailable to unauthorized residents.
 
 ### Review programs sent in by the community (Contributors)
 
@@ -1295,6 +1290,10 @@ If it fails, the panel shows the reason (or "Finalization failed."). Fix the cau
 **End Live Stream** queues a return to scheduled output and closes this meeting's takeover. It keeps the channel running. To take the entire channel off the air, use **Stop** or **Finish current item, then stop** on Channels. Watch the outgoing feed to verify the handback.
 
 > **Known issue (beta.11):** the saving step looks for a recording file named after the session in the recording location (for example `council-live-room.mp4`). Nothing on this screen creates that file, and in testing we could not confirm which part of CivicCast does. If the panel stays on **Waiting** or fails, ask your IT person to check that the recording location is receiving the meeting recording. By default CivicCast gives up waiting for the file 30 minutes after **End Live Stream**, and the panel then reads "No recording file was found for this session (expected ...)". While CivicCast is still retrying by itself the tag reads "Retrying". **Retry finalization** appears only after CivicCast has given up. It is shown to every role, but only a Meeting operator can use it.
+
+### Channel confidence at a glance
+
+Open **Channels** to see every channel's current output state, source/program label, measured audio loudness and caption proof in the lineup cards. Readings refresh every 30 seconds. Samples older than two minutes are marked **Stale**; a missing measurement or failed request says **Not measured**, **Not verified** or **Unavailable**, rather than healthy. A program label with **last observed** is historical. Caption **Verified on** requires a recent passing decode-back proof; measured LUFS alone is not a loudness-compliance claim. Select a card for existing output controls, detailed proof and recovery information.
 
 ### Start a channel
 
@@ -1751,6 +1750,14 @@ CivicCast gives each person one or more roles. The role decides which buttons wo
 
 You should see a table with the columns Title, State, Status, Duration, Size, Codec and Published. The asset ID appears in small type under each title.
 
+#### Apply common metadata to selected recordings
+
+Records clerks, meeting operators and support administrators can check individual rows or use **Select visible assets**. Search and state filters do not clear a selection; the count includes hidden selections. **Clear selection** starts over.
+
+Check **Apply common description** and/or **Apply common meeting body**, enter the replacement value, then choose **Apply metadata to selected assets**. A checked blank field clears that value; an unchecked field stays unchanged. Title, trim, captions and retention are not changed by this form. Each selected record uses its observed version, so a concurrent edit can refuse that record without overwriting another operator's work.
+
+The result lists saved and failed recordings separately. Successful records leave the selection; failed records stay selected for review. Other successful saves are not rolled back. Refresh and review conflicts before applying again; there is no automatic retry. Sign-ins without the metadata-edit role do not see these controls, and the existing server permission gate still applies.
+
 The **State** and **Status** columns describe the same video in two ways.
 
 | State | What it means |
@@ -1818,11 +1825,11 @@ The preview has video playback controls. Use **Play selected trim** to inspect t
 
 > **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). To expose these markers to residents, use **Sync from chapters** on an agenda, review its times, and publish that agenda.
 
-> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and Spanish caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
+> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and selected translated caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 
-> **Note:** Caption review keeps timestamps from the original recording. Published English and Spanish captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
+> **Note:** Caption review keeps timestamps from the original recording. Published English and translated captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
 
 If saving fails with a message about another writer, someone else changed the video while you were editing. Close the editor, open the video again and redo your change. If the video is already on a schedule item that is committed to air, the save is refused with the "cannot be edited ... already published" message described under [Edit a video's public details](#ch-after-meeting).
 
@@ -1875,13 +1882,15 @@ See [Running the meeting](#ch-running-meeting) for the Channels screen.
 
 ### Offline captions: how a recording gets its captions
 
-Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, whether to include Spanish alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Publishing can queue captions automatically. For existing packaged recordings, open **Review queue > Recording caption backlog**, select up to ten recordings and click **Caption selected**. Each recording reports its own queue or packaging error; the existing serial worker processes the batch within the station’s current resource limits. Selecting a recording with an active job reuses that job. Inference completion means cues await human review, not that their words are accurate or approved.
+Supported recorded translations are **Spanish**, **Chinese (Simplified writing, zh-Hans)**, **Tagalog / Filipino**, **Vietnamese**, and **Arabic**. Existing Spanish settings and reviewed tracks remain. Chinese support does not claim every spoken variety or Traditional writing. Choose a reviewer who knows the selected language: model output is a draft, and every translated cue needs human review/editing before publication. English wording or timing changes require matching translation review again. Unsupported targets are refused rather than translated into Spanish.
+
+Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, which translations to include alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Publishing can queue captions automatically. For existing packaged recordings, open **Review queue > Recording caption backlog**, select up to ten recordings and click **Caption selected**. Each recording reports its own queue or packaging error; the existing serial worker processes the batch within the station’s current resource limits. Selecting a recording with an active job reuses that job. Inference completion means cues await human review, not that their words are accurate or approved.
 
 1. With recorded captions enabled, you approve publishing the recording. CivicCast queues a caption job for it first, even if the Portal row is not selected. If it cannot queue the job, publication reports the failure. A recording with no stored video file gets no caption job. When recorded captions are disabled, new caption jobs are not created and existing jobs pause until processing is enabled again.
 2. The job transcribes the audio into English cue lines. On the video's detail page, the **Offline caption jobs** card shows **Queued or transcribing…**. A full meeting can take several minutes, not seconds.
 3. When transcription ends, the card shows **Awaiting review**. The cues are now in the **Review queue**.
-4. You decide every English cue. If Spanish is selected, CivicCast also translates the reviewed English and queues the Spanish cues for review.
-5. With **all selected languages** required, the selected tracks attach after their review is finished. With **reviewed English** required, the English track can attach first; selected Spanish captions attach later after their own review. English-only jobs do not need a translator or Spanish review.
+4. You decide every English cue. For each selected language, CivicCast translates the reviewed English and queues those cues for their own review.
+5. With **all selected languages** required, the selected tracks attach after their review is finished. With **reviewed English** required, the English track can attach first; selected translations attach later after their own review. English-only jobs do not need a translator or translation review.
 
 > **Note:** Changing the completion setting never publishes unreviewed caption text. Disabling processing does not mark an uncaptioned recording as captioned.
 
@@ -1897,7 +1906,7 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 - Every selected Spanish cue was rejected. Open the Review queue, choose Spanish, and edit or approve cues. The Spanish track attaches once review is complete and at least one cue is approved or edited. Under **Attach English after its review**, reviewed English can already be available.
 - Spanish is selected but no translation model is available. The row says to install or repair it under "Settings > AI Models > Translation" and run 'civiccast doctor'. With **Wait for every selected language**, CivicCast retries with growing waits; after its attempts run out, the card shows **Failed** and a records clerk must click **Retry** after repair. With **Attach English after its review**, reviewed English attaches while the active job waits for Spanish. English-only jobs do not encounter this hold.
 
-Published English and Spanish captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps. Repackaging rebuilds existing tracks from reviewed source cues before replacing the old package; incomplete matching review or an unusable caption range leaves the previous package intact.
+Published English and translated captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps. Repackaging rebuilds existing tracks from reviewed source cues before replacing the old package; incomplete matching review or an unusable caption range leaves the previous package intact.
 
 ### Review and correct captions
 
@@ -1949,7 +1958,17 @@ If the audio is not available, the card says "Audio evidence is unavailable. App
 
 Everyone can read the queue and play audio. Only a records clerk can approve, edit or reject. For anyone else a yellow note says "Caption review actions require the records clerk role. The queue stays visible for read-only review." and the boxes and buttons are disabled.
 
-#### If it did not work
+#### Agenda-based draft minutes
+
+A records clerk can open the meeting agenda and expand **Draft meeting minutes** once its recording and reviewed English transcript are available. Choose a completed cited summary from that same recording, or choose the manual option when generation is unavailable. Creating minutes does not run a separate model for every agenda item. Untimed or uncited discussion needs clerk entry; an empty section is not a claim that nothing happened.
+
+Open the draft in Summary review. Each agenda section has editable discussion and transcript citations. Citation playback follows the packaged recording timeline, while stored evidence keeps its source-recording times. Add motions with the mover, optional seconder, outcome and individual member votes. Check the recording and citations, then explicitly confirm each motion and its votes. Editing a motion or vote clears that confirmation. Mark an item not discussed only after checking it, and confirm that all items were checked for motions and votes.
+
+Use **Save draft minutes** before approval. Approval stays unavailable while edits are unsaved or saving. Every save keeps the previous content, editor and time; approval is tied to the saved fingerprint. If another clerk edits the draft, reload and review the current version. Transcript corrections require rebuilding the draft against the current reviewed cues. These are editable drafts, not an automatic or certified parliamentary record.
+
+After human approval, the signed record export includes the agenda discussion, citations, confirmed motions and votes in the rendered minutes, plus structured minutes and edit history in its PDF attachment. Approved minutes are immutable. If a model fails or no suitable cited summary exists, use the manual option with the same reviewed transcript and human approval controls.
+
+### If it did not work
 
 | What you see | Cause and fix |
 | --- | --- |
@@ -2019,11 +2038,12 @@ If you open the page with a role that is not allowed, you see "This action requi
 
 ### Watch folders, retention rules and storage (Media Lifecycle Settings)
 
-This page holds three station-wide settings. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
+This page holds station-wide settings and cleanup review. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
 
 - **Watch folders.** A watch folder is a folder on the station's computer (a local disk, a USB drive or a network share) that CivicCast checks automatically and copies new videos from. Type the folder path in **Watch folder path** or click **Browse…**, then click **Add watch folder**. A new file is imported once it has stopped growing. The original stays where it is, and the new video appears in Assets as Validated. Click **Scan now** to check immediately, or **Remove** to stop watching (files already imported stay).
 - **Retention automation.** A rule sets a video's retention policy by its meeting body. Fill in **Rule name**, **Meeting body (exact match)** and **Retention policy**, then click **Add rule**. Then click **Apply rules now**.
 - **Storage budget.** A read-only view of how much disk the library uses, with a table by retention policy.
+- **Storage cleanup review.** Shows recordings already flagged by the retention worker, 50 per page (use **Previous cleanup page** and **Next cleanup page** to review the rest), with current source-file size, expiry and protection checks. Each recording is fetched directly, including older records outside the Assets list's first page. Legal hold, permanent retention, an extended/no expiry, active processing or unavailable current protection prevent an eligibility label. **Eligible for records-officer review** is a review candidate, not permission to delete. Open its recording link to review retention/holds through existing controls. Nothing is purged from this screen; obtain the station's normal records-officer disposition authorization. These checks refresh every 30 seconds, and **Refresh cleanup review** reloads the flag queue.
 
 Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ingest" times, or **Degraded** with the reason, for example a drive that was unplugged.
 
@@ -2032,6 +2052,16 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 > **Warning:** The **Browse…** and **Scan now** buttons need the setup_admin role, adding or removing a watch folder needs publish_operator or setup_admin, and retention buttons need records_clerk or setup_admin. The page shows every button to every role, and a wrong-role click returns an error message.
 
 > **For IT staff:** Watch folders, upload storage and the storage budget are set up in Part II (configuration and operations chapters). If the budget card says no budget is configured, the setting is an environment variable that only IT can change.
+
+### Agenda-based draft minutes
+
+A records clerk can open the meeting agenda and expand **Draft meeting minutes** once its recording and reviewed English transcript are available. Choose a completed cited summary from that same recording, or choose the manual option when generation is unavailable. Creating minutes does not run a separate model for every agenda item. Untimed or uncited discussion needs clerk entry; an empty section is not a claim that nothing happened.
+
+Open the draft in Summary review. Each agenda section has editable discussion and transcript citations. Citation playback follows the packaged recording timeline, while stored evidence keeps its source-recording times. Add motions with the mover, optional seconder, outcome and individual member votes. Check the recording and citations, then explicitly confirm each motion and its votes. Editing a motion or vote clears that confirmation. Mark an item not discussed only after checking it, and confirm that all items were checked for motions and votes.
+
+Use **Save draft minutes** before approval. Approval stays unavailable while edits are unsaved or saving. Every save keeps the previous content, editor and time; approval is tied to the saved fingerprint. If another clerk edits the draft, reload and review the current version. Transcript corrections require rebuilding the draft against the current reviewed cues. These are editable drafts, not an automatic or certified parliamentary record.
+
+After human approval, the signed record export includes the agenda discussion, citations, confirmed motions and votes in the rendered minutes, plus structured minutes and edit history in its PDF attachment. Approved minutes are immutable. If a model fails or no suitable cited summary exists, use the manual option with the same reviewed transcript and human approval controls.
 
 ### If it did not work
 
@@ -2101,6 +2131,43 @@ When you approve publishing, CivicCast does these things in this order:
 
 > **Warning:** If the station's federation setting is on, every approval that leaves the recording public on the portal also posts a public notice, "New CivicCast recording published: {title}.", to the outside servers that follow the station. (Federation is a setting that shares public notices with other servers on the internet.) The Publish screen does not mention this, and a notice that has gone out cannot be taken back. Ask your IT person whether federation is on.
 
+### Schedule a meeting on YouTube
+
+In **Publish**, use the meeting recording's card and choose **YouTube Live**.
+Select the channel whose on-air output should be sent. Enter **YouTube start** and
+**YouTube end** in your local time, then approve that surface. Leave both times
+blank to send now. This schedules the destination only; it does not schedule
+capture or start the local channel. The selected channel must have fresh web
+output when sending begins. The event title comes from the selected recording.
+
+**Scheduled** means the event is saved and waiting. **Sending** means the sender
+has started and YouTube confirmation is pending; only **Live** confirms receipt.
+Use **Update YouTube schedule** before sending begins to edit the same event.
+Ordinary retry and application restart retain its event identity. An expired
+schedule does not start. At the end, CivicCast stops this destination; **Stop
+YouTube output** also stops it early without stopping local playback. Failed
+updates retain the saved event for inspection and retry. Check YouTube Studio if
+remote cleanup fails. The app must be running for timed start and stop; startup
+rechecks the saved window. Real account activation and transmission remain a
+separate station rehearsal; simulator results are not external delivery proof.
+
+### Put a player on another website
+
+Open a published recording in **Assets**, or select a channel in **Channel Ops**,
+and choose **Copy website embed**. Paste the HTML into your website's embed block.
+If the browser cannot copy automatically, select the displayed HTML and copy it.
+The player fits the available width, uses keyboard-accessible playback/caption
+controls, and keeps the stream's available caption tracks. Live channels without
+web output show a standing-by message and refresh automatically.
+
+Only anonymously accessible playback can be embedded. The server refuses private
+or paywalled recordings and rechecks access and publication when the player
+refreshes. Withdrawal or a new restriction removes playback at the next refresh
+(about ten seconds). A missing access policy fails closed. IT must expose the
+station's public HTTPS address; a loopback-only address cannot play on a remote
+website. The dedicated player permits external framing; staff pages remain
+protected from framing.
+
 ### The publishing steps (surfaces)
 
 Each card has nine rows. Each row shows a status dot, a name, badges such as **Required** or an approval word, a line such as "archive / Succeeded", a message and a **Next step**. All nine surfaces below are implemented; optional surfaces still need their provider settings and prerequisites.
@@ -2110,7 +2177,7 @@ Each card has nine rows. Each row shows a status dot, a name, badges such as **R
 | Portal | Makes the recording public on the resident portal. Recorded-caption job behavior follows the source/package version and station setting described above. |
 | Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
 | Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
-| YouTube Live, YouTube VOD | Simulated until real credentials are configured. Follow [YouTube setup](#configuration-youtube) for OAuth and channel activation. For Live, start and select the intended CivicCast channel; Publish creates/binds the event and sends that channel's fresh local HLS output through a separate RTMPS process. The row distinguishes starting, destination-confirmed live, failed and stopped, and provides a viewer watch link. Use **Stop YouTube output** when finished. Real VOD upload requires a resolved recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. |
+| YouTube Live, YouTube VOD | Simulated until real credentials are configured. Follow [YouTube setup](#configuration-youtube) for OAuth and channel activation. For Live, start and select the intended CivicCast channel; Publish creates/binds the event and sends that channel's fresh local HLS output through a separate RTMPS process. The row distinguishes scheduled, starting, destination-confirmed live, failed and stopped, and provides a viewer watch link. Use **Stop YouTube output** when finished. Real VOD upload requires a resolved recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. |
 | Podcast episode | Optional. Converts the asset's local recording to an MP3, saves it as an episode, and adds an audio enclosure to the channel RSS feed. Publish a new recording to Portal first, then select or retry Podcast. A missing recording or conversion error appears as a retryable failure. IT must set a public station URL and provide FFmpeg. |
 | Subscriber notifications | Optional. When selected, CivicCast sends notices to confirmed subscribers through configured mail or webhook providers, records each delivery outcome and retries eligible failures. The row shows delivered, queued and failed counts. Mock providers are labeled simulated. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
@@ -2314,6 +2381,12 @@ The **Submit a program** form lower on Home lets a producer send a program to th
 - [When something looks wrong](#ch-something-wrong)
 
 <!-- SOURCES: inventory/screens/publish.md; playback.md; paywall.md; public-shell.md; public-home.md; public-recordings.md; public-schedule.md; public-watch.md; public-player-captions.md; public-agenda.md; public-paywall.md; public-subscribe.md; civiccast/publish/router.py:85-129,160-185,420-540; civiccast/publish/service.py:203-300 (build_initial_surfaces, default_approved_surface_ids), 530-600 (approve_publish rebuilds from build_initial_surfaces; unticked surfaces stay pending), 915-990 (_dashboard_state); civiccast/apps/portal-operator/src/screens/PublishDashboardScreen.tsx:200-225 (Simulated note); civiccast/app_platform/router.py:880-925 and civiccast/podcast/router.py:44-95 (only consumers of playback policy); grep of civiccast/apps/portal-public/src for playback-policy/preroll finds none; civiccast/paywall/router.py:225-258 (no-op email sender; no override in civiccast/), 483-565; paywall routes list (no /paywall/tiers or /paywall/checkout); civiccast/paywall/service.py:230-262 (enabled gates every asset); civiccast/apps/portal-public/src/PaywallGate.tsx:270-345; civiccast/subscribe/service.py:45-135, civiccast/subscribe/router.py:185-210 (rss_feed returns empty feed), civiccast/subscribe/delivery.py (LocalMailbox), civiccast/platform/providers.py:100-120 (mail default local); civiccast/schedule/router.py:140-215 (public list is published_at set; coming-up = published premieres); docs/manual/images/portal-*.png -->
+
+#### Large-text live caption display
+
+Open **Live captions** in the resident portal and choose the public channel. Share the page’s phone/browser link (for example `/#/captions?channel=public`). Adjust **Text size** from 24 to 72 pixels; channel selection and links work by keyboard.
+
+This is the channel’s automatic **English** live sidecar, not an approved official transcript. Live translation is unavailable. The first snapshot says **Latest available captions; waiting for new input**; only a later changed feed says it is receiving new captions. An empty/missing feed says captions are unavailable. After 30 seconds without a changed sidecar, the display clears its text and reports no new input. Silence can also produce that message. It retries automatically; changing channels immediately clears the previous channel’s text. Recorded translations remain selectable in the recording player after staff review.
 
 \newpage
 
@@ -4165,7 +4238,7 @@ Use a new output filename; the helper refuses to overwrite an existing file. It 
 
 Start the desired CivicCast channel and confirm its local program output, then open **Publish**, select that channel for **YouTube Live**, and start the optional YouTube output. The selected channel needs fresh local HLS output. CivicCast creates and binds the YouTube event, then sends that channel through a separate owned output process; the default event privacy is **unlisted**. Keep a first rehearsal away from a channel already serving a meeting.
 
-The returned `youtube.com/watch?v=…` address is the viewer link. **Starting** means the sender has started; **live** requires YouTube to report both an active stream and a live broadcast. **Simulated** means nothing was sent. The dashboard polls destination state periodically; setup success alone must never be described as a confirmed live stream. **Failed** leaves local portal publication available. When finished, choose **Stop YouTube output**, then check the event in Studio if remote cleanup needs attention. Stream keys and ingest addresses are not public viewer links.
+The returned `youtube.com/watch?v=…` address is the viewer link. **Scheduled** means the saved event is waiting for its start time; **Starting** means the sender has started; **live** requires YouTube to report both an active stream and a live broadcast. **Simulated** means nothing was sent. The dashboard polls destination state periodically; setup success alone must never be described as a confirmed live stream. **Failed** leaves local portal publication available. When finished, choose **Stop YouTube output**, then check the event in Studio if remote cleanup needs attention. Stream keys and ingest addresses are not public viewer links.
 
 If Google returns `liveStreamingNotEnabled`, check the selected channel's phone verification and activation countdown first. If its channel API returns no channels, check that the account has a YouTube channel and that OAuth authorized the intended identity. If refresh fails later, check testing-mode token expiry or revoked consent before replacing unrelated settings. An owner can accept completed setup separately from a later live rehearsal; record those as separate results rather than claiming the rehearsal happened.
 
@@ -6245,7 +6318,7 @@ This is the other half of the product. A meeting is captured, becomes a recordin
 | Portal | canonical | Only default-selected; it makes the record public when its manifest exists. |
 | Internet Archive, Local NAS | archive | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. Mock by default. A real IA/NAS provider uploads the full recording only when a local source file resolves; otherwise the service passes an asset/title payload, not the recording. Local NAS writes filesystem copies; it does not invoke rsync or ZFS. |
 | YouTube VOD | reach | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise its configured media-root path must exist. |
-| YouTube Live | reach | Mock by default. The real API adapter creates and binds a YouTube broadcast and stream, but the Publish surface does not connect CivicCast's live output to the returned RTMP ingest address. |
+| YouTube Live | reach | Mock by default. The real adapter schedules or starts the selected channel through a separate RTMPS sender; only destination confirmation proves live delivery. |
 | Cable package | record | optional; `not_configured` when unset |
 | Podcast | audience | Selected publishing converts a local recording into MP3, stores the episode, and adds its enclosure to the channel RSS feed. Missing media or encoding failure stays visible and retryable. |
 | Subscriber notifications | audience | Optional delivery to confirmed subscribers when selected and configured; outcomes and retries are recorded. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
@@ -8937,7 +9010,7 @@ Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "
 | Portal | The only default-selected surface; it makes the record public when its manifest exists. |
 | Internet Archive, Local NAS | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. A real provider uploads the full recording only when its local source file resolves; otherwise it receives an asset/title payload. Local NAS writes filesystem copies, not rsync or ZFS. |
 | YouTube VOD | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise the configured media-root path must exist. |
-| YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
+| YouTube Live | Mock by default. The real adapter schedules or starts the selected channel through a separate RTMPS sender; only destination confirmation proves live delivery. |
 | Cable package | Optional; `not_configured` when unset. |
 | Podcast | Optional Publish surface. Produces a local MP3 from a local recording, persists the episode, and exposes its enclosure in the channel RSS feed; failures can be retried. |
 | Subscriber notifications | Optional, selected publish surface with delivery receipts and retries; requires confirmed subscribers and configured providers. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |

@@ -302,7 +302,7 @@ sequenceDiagram
 | Portal | canonical | Only default-selected; it makes the record public when its manifest exists. |
 | Internet Archive, Local NAS | archive | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. Mock by default. A real IA/NAS provider uploads the full recording only when a local source file resolves; otherwise the service passes an asset/title payload, not the recording. Local NAS writes filesystem copies; it does not invoke rsync or ZFS. |
 | YouTube VOD | reach | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise its configured media-root path must exist. |
-| YouTube Live | reach | Mock by default. The real API adapter creates and binds a YouTube broadcast and stream, but the Publish surface does not connect CivicCast's live output to the returned RTMP ingest address. |
+| YouTube Live | reach | Mock by default. The real adapter schedules or starts the selected channel through a separate RTMPS sender; only destination confirmation proves live delivery. |
 | Cable package | record | optional; `not_configured` when unset |
 | Podcast | audience | Selected publishing converts a local recording into MP3, stores the episode, and adds its enclosure to the channel RSS feed. Missing media or encoding failure stays visible and retryable. |
 | Subscriber notifications | audience | Optional delivery to confirmed subscribers when selected and configured; outcomes and retries are recorded. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |

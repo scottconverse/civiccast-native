@@ -66,7 +66,7 @@ async function mockBackend(
 async function openAssets(page: import('@playwright/test').Page) {
   await page.goto('/')
   await page.getByRole('button', { name: 'Assets' }).click()
-  await expect(page.getByRole('heading', { name: 'Assets' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
 }
 
 test.describe('Assets/Library upload control', () => {

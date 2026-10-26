@@ -1,3 +1,4 @@
+import type { AgendaMinutesCreateRequest, AgendaMinutesEditRequest } from '../types/api.generated'
 import type { AssetMetadataUpdate, AssetRow } from '../types/asset'
 import type { NetworkSettings, NetworkSettingsResponse } from '../types/network'
 import type { RecordedCaptionSettings } from '../types/recordedCaptions'
@@ -4102,4 +4103,36 @@ export function queueCaptionBatch(assetIds: string[]): Promise<CaptionBatchResul
 }
 export function cancelOfflineCaptionJob(jobId: string): Promise<OfflineCaptionJobRecord> {
   return request(`/api/staff/captions/offline-jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' })
+}
+
+
+export interface AgendaMeetingOption {
+  meeting_asset_id: string
+  title: string
+  source_recording_job_id: string | null
+  state: string
+  duration_seconds: number | null
+  can_mark_now: boolean
+}
+
+export function listAgendaMeetings(): Promise<AgendaMeetingOption[]> {
+  return request<AgendaMeetingOption[]>('/api/staff/agenda-meetings')
+}
+
+export function markAgendaItemNow(agendaId: string, itemId: string): Promise<AgendaItem> {
+  return request<AgendaItem>(`${AGENDAS}/${encodeURIComponent(agendaId)}/items/${encodeURIComponent(itemId)}/mark-now`, { method: 'POST' })
+}
+
+
+export function listDispositionReviews(): Promise<import('../types/api.generated').DispositionReviewResponse[]> {
+  return request('/api/staff/records/disposition-queue')
+}
+
+
+export function createAgendaMinutes(agendaId: string, payload: AgendaMinutesCreateRequest): Promise<SummaryDraft> {
+  return request<SummaryDraft>(`/api/staff/summaries/agendas/${encodeURIComponent(agendaId)}/minutes`, { method: 'POST', body: payload })
+}
+
+export function editAgendaMinutes(summaryId: string, payload: AgendaMinutesEditRequest): Promise<SummaryDraft> {
+  return request<SummaryDraft>(`/api/staff/summaries/${encodeURIComponent(summaryId)}/minutes`, { method: 'PATCH', body: payload })
 }

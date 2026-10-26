@@ -396,7 +396,7 @@ Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "
 | Portal | The only default-selected surface; it makes the record public when its manifest exists. |
 | Internet Archive, Local NAS | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. A real provider uploads the full recording only when its local source file resolves; otherwise it receives an asset/title payload. Local NAS writes filesystem copies, not rsync or ZFS. |
 | YouTube VOD | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise the configured media-root path must exist. |
-| YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
+| YouTube Live | Mock by default. The real adapter schedules or starts the selected channel through a separate RTMPS sender; only destination confirmation proves live delivery. |
 | Cable package | Optional; `not_configured` when unset. |
 | Podcast | Optional Publish surface. Produces a local MP3 from a local recording, persists the episode, and exposes its enclosure in the channel RSS feed; failures can be retried. |
 | Subscriber notifications | Optional, selected publish surface with delivery receipts and retries; requires confirmed subscribers and configured providers. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |

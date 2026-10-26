@@ -309,3 +309,255 @@ class TestSummaryRouter:
         assert response.headers["content-type"].startswith("text/csv")
         assert "low_confidence" in response.text.splitlines()[0]
         assert "true" in response.text.lower()
+
+
+def test_agenda_minutes_review_correction_history_approval_export_and_manual_recovery(tmp_path):
+    import json
+    from contextlib import contextmanager
+    from io import BytesIO
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import pikepdf
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, inspect
+    from sqlalchemy.orm import Session
+
+    from civiccast.agenda.models import AgendaItem, MeetingAgenda
+    from civiccast.agenda.router import get_agenda_service, get_agenda_store
+    from civiccast.agenda.service import AgendaService
+    from civiccast.agenda.store import AgendaStore
+    from civiccast.auth.models import OperatorIdentity
+    from civiccast.captions.review import (
+        CaptionReviewDecision,
+        CaptionReviewEdit,
+        CaptionReviewItemCreate,
+        InMemoryCaptionReviewStore,
+    )
+    from civiccast.captions.router import get_caption_review_store
+    from civiccast.recording.router import get_recording_store
+    from civiccast.records.exporter import SignedRecordExporter
+    from civiccast.records.timestamp import DeterministicTimestampAuthority
+    from civiccast.summary.generate import SummaryGenerationPipeline
+    from civiccast.summary.store import PostgresSummaryStore
+
+    database = f"sqlite:///{(tmp_path / 'minutes.db').as_posix()}"
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database)
+    command.upgrade(config, "0096_agenda_recording_link")
+    engine = create_engine(
+        database,
+        connect_args={"check_same_thread": False},
+        execution_options={"schema_translate_map": {"civiccast": None}},
+    )
+    assert "agenda_minutes_json" not in {
+        c["name"] for c in inspect(engine).get_columns("summaries")
+    }
+    command.upgrade(config, "0097_agenda_minutes")
+
+    @contextmanager
+    def factory():
+        with Session(engine) as session:
+            yield session
+
+    agendas = AgendaStore(factory)
+    agendas.upsert_agenda(
+        MeetingAgenda(
+            agenda_id="agenda-1",
+            station_id="civiccast-station",
+            meeting_asset_id="placeholder",
+            source_recording_job_id="capture-1",
+        )
+    )
+    agendas.upsert_item(
+        AgendaItem(
+            item_id="budget", agenda_id="agenda-1", order=0, title="Budget", video_timecode_s=5
+        )
+    )
+    cues = [
+        CaptionCue(
+            cue_id="budget-discussion",
+            start_seconds=5,
+            end_seconds=12,
+            text="The council discussed the proposed budget.",
+            confidence=0.99,
+        ),
+        CaptionCue(
+            cue_id="budget-vote",
+            start_seconds=20,
+            end_seconds=24,
+            text="Avery moved to adopt the budget. Blake voted yes.",
+            confidence=0.99,
+        ),
+    ]
+    reviews = InMemoryCaptionReviewStore()
+    for cue in cues:
+        reviews.create(
+            CaptionReviewItemCreate(review_item_id=cue.cue_id, asset_id="meeting-1", cue=cue)
+        )
+        reviews.approve(cue.cue_id, CaptionReviewDecision())
+    model = DeterministicSummaryModel(
+        outputs=[
+            {
+                "narrative": "Budget discussion draft.",
+                "sourced_claims": [
+                    {
+                        "claim_id": "budget-draft",
+                        "text": "The council discussed the budget.",
+                        "claim_type": "narrative",
+                        "transcript_ranges": [
+                            {"cue_id": cues[0].cue_id, "start_seconds": 5, "end_seconds": 12}
+                        ],
+                    },
+                    {
+                        "claim_id": "budget-vote-draft",
+                        "text": cues[1].text,
+                        "claim_type": "quantitative",
+                        "transcript_ranges": [
+                            {"cue_id": cues[1].cue_id, "start_seconds": 20, "end_seconds": 24}
+                        ],
+                    },
+                ],
+            }
+        ]
+    )
+    generated = SummaryGenerationPipeline(model=model).generate(meeting_id="meeting-1", cues=cues)
+    store = PostgresSummaryStore(factory)
+    store.create_summary(generated)
+    app = create_app()
+    app.dependency_overrides[get_summary_store] = lambda: store
+    app.dependency_overrides[get_caption_review_store] = lambda: reviews
+    app.dependency_overrides[get_agenda_store] = lambda: agendas
+    app.dependency_overrides[get_agenda_service] = lambda: AgendaService(
+        agendas, playback_window_provider=lambda _: (2, 100)
+    )
+    app.dependency_overrides[get_recording_store] = lambda: SimpleNamespace(
+        get_job=lambda _: SimpleNamespace(asset_id="meeting-1")
+    )
+    with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as client:
+        made = client.post(
+            "/api/staff/summaries/agendas/agenda-1/minutes",
+            json={"source_summary_id": generated.summary_id},
+        )
+        assert made.status_code == 201, made.text
+        draft = made.json()
+        route = f"/api/staff/summaries/{draft['summary_id']}"
+        assert "player 3s" in draft["narrative"]
+        assert (
+            client.post(
+                route + "/approve", json={"expected_audit_fingerprint": draft["audit_fingerprint"]}
+            ).status_code
+            == 409
+        )
+        content = draft["agenda_minutes"]["content"]
+        content["sections"][0]["discussion"] = "The council discussed revisions before adoption."
+        content["sections"][0]["motions"] = [
+            {
+                "text": "Adopt the revised budget",
+                "mover": "Avery",
+                "seconder": "Blake",
+                "outcome": "passed",
+                "votes": [{"member": "Blake", "choice": "yes"}],
+                "human_confirmed": False,
+                "transcript_ranges": [
+                    {"cue_id": "budget-vote", "start_seconds": 20, "end_seconds": 24}
+                ],
+            }
+        ]
+        edited = client.patch(
+            route + "/minutes",
+            json={"expected_audit_fingerprint": draft["audit_fingerprint"], "content": content},
+        )
+        assert edited.status_code == 200, edited.text
+        current = edited.json()
+        assert (
+            client.post(
+                route + "/approve",
+                json={"expected_audit_fingerprint": current["audit_fingerprint"]},
+            ).status_code
+            == 409
+        )
+        content["sections"][0]["motions"][0]["human_confirmed"] = True
+        content["decisions_reviewed"] = True
+        confirmed = client.patch(
+            route + "/minutes",
+            json={"expected_audit_fingerprint": current["audit_fingerprint"], "content": content},
+        ).json()
+        assert (
+            client.post(
+                route + "/approve", json={"expected_audit_fingerprint": draft["audit_fingerprint"]}
+            ).status_code
+            == 409
+        )
+        restarted = PostgresSummaryStore(factory)
+        saved = restarted.get_summary(draft["summary_id"])
+        assert len(saved.agenda_minutes.revisions) == 2
+        assert (
+            saved.agenda_minutes.revisions[0]
+            .content.sections[0]
+            .discussion.startswith("The council discussed the budget.")
+        )
+        assert saved.agenda_minutes.revisions[1].operator_id
+        approved = client.post(
+            route + "/approve", json={"expected_audit_fingerprint": confirmed["audit_fingerprint"]}
+        )
+        assert approved.status_code == 200, approved.text
+        assert (
+            client.patch(
+                route + "/minutes",
+                json={
+                    "expected_audit_fingerprint": confirmed["audit_fingerprint"],
+                    "content": content,
+                },
+            ).status_code
+            == 409
+        )
+        record = SignedRecordExporter(
+            summary_store=restarted, timestamp_authority=DeterministicTimestampAuthority()
+        ).export(
+            summary_id=draft["summary_id"],
+            operator_identity=OperatorIdentity(
+                operator_id="clerk", operator_display_name="Records clerk", token_id="test"
+            ),
+        )
+        with pikepdf.open(BytesIO(record.pdf_bytes)) as pdf:
+            minutes_file = pdf.attachments["agenda-minutes.json"].get_file()
+            assert (
+                str(pdf.attachments["agenda-minutes.json"].obj["/EF"]["/F"]["/Subtype"])
+                == "/application/json"
+            )
+            embedded = json.loads(minutes_file.read_bytes())
+            assert embedded["content"]["sections"][0]["motions"][0]["votes"][0] == {
+                "member": "Blake",
+                "choice": "yes",
+            }
+            assert len(embedded["revisions"]) == 2
+            assert (
+                json.loads(pdf.attachments["approval.json"].get_file().read_bytes())["summary_id"]
+                == draft["summary_id"]
+            )
+        assert "Adopt the revised budget" in saved.narrative
+
+        # A failed/unavailable model is independent of the manual route.
+        def unavailable():
+            raise AssertionError("Manual minutes must not invoke a model")
+
+        app.dependency_overrides[get_summary_model] = unavailable
+        manual = client.post("/api/staff/summaries/agendas/agenda-1/minutes", json={})
+        assert manual.status_code == 201, manual.text
+        assert manual.json()["provenance"]["model_tag"] == "manual-no-model"
+        manual_route = "/api/staff/summaries/" + manual.json()["summary_id"]
+        reviews.edit("budget-discussion", CaptionReviewEdit(text="Corrected council discussion."))
+        stale_source = client.post(
+            "/api/staff/summaries/agendas/agenda-1/minutes",
+            json={"source_summary_id": generated.summary_id},
+        )
+        assert stale_source.status_code == 409
+        stale_minutes = client.post(
+            manual_route + "/approve",
+            json={"expected_audit_fingerprint": manual.json()["audit_fingerprint"]},
+        )
+        assert stale_minutes.status_code == 409
+        assert "transcript changed" in stale_minutes.json()["detail"]
+    engine.dispose()

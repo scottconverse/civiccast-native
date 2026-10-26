@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 import threading
@@ -42,7 +43,12 @@ from civiccast.recording.service import (
 )
 from civiccast.schedule.ingest import run_ffprobe, validate_ingest
 from civiccast.schedule.models import ASSET_STATE_RECORDED, Asset
-from civiccast.stream._ffmpeg import FfmpegProcessHandle, run_ffmpeg, start_ffmpeg
+from civiccast.stream._ffmpeg import (
+    FfmpegProcessHandle,
+    probe_media_duration_seconds,
+    run_ffmpeg,
+    start_ffmpeg,
+)
 from civiccast.vod.store import AssetAlreadyExistsError
 
 if TYPE_CHECKING:
@@ -264,6 +270,30 @@ class FfmpegScheduledCapturePipeline:
                     self._stall_streak.pop(job_id, None)
                 handle.terminate(grace_seconds=1.0)
                 raise RuntimeError(f"ffmpeg exited before recording started for job {job_id!r}.")
+
+    def recorded_position_seconds(self, job_id: str) -> float:
+        """Sample written media, including reconnect segments, with a five-second budget."""
+        with self._job_lock:
+            with self._lock:
+                active = self._require_active(job_id)
+                if active.handle is None or active.handle.poll() is not None:
+                    raise RuntimeError("Recording is not currently writing media.")
+                paths = [*active.segments, active.output_path]
+            deadline = time.monotonic() + 5.0
+            total = 0.0
+            for path in paths:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError(
+                        "Recording time is not available yet; retry or enter a reviewed time."
+                    )
+                duration = probe_media_duration_seconds(path, timeout_seconds=remaining)
+                if duration is None or not math.isfinite(duration) or duration <= 0:
+                    raise RuntimeError(
+                        "Recording time is not available yet; retry or enter a reviewed time."
+                    )
+                total += duration
+            return total
 
     def finalize(self, job_id: str) -> CaptureResult:
         return self.stop(job_id)

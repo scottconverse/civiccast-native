@@ -44,7 +44,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from datetime import time as wall_time
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -596,6 +596,19 @@ class RecordingService:
                 station_id=job.station_id,
             )
         return self._store.set_job_state(job_id, "recording", started_at=now)
+
+    def recorded_position_seconds(self, job_id: str) -> float:
+        """Expose the current captured-media position without changing capture state."""
+        job = self._require_job(job_id)
+        if job.state != "recording":
+            raise RecordingJobStateError("Mark now requires a recording that is currently running.")
+        pipeline = self._require_pipeline("mark agenda time")
+        position = getattr(pipeline, "recorded_position_seconds", None)
+        if not callable(position):
+            raise RuntimeError(
+                "This capture engine cannot report recording time; enter a reviewed time."
+            )
+        return cast(Callable[[str], float], position)(job_id)
 
     def finalize_job(self, job_id: str) -> RecordingJob:
         """Transition ``recording → finalizing → done`` (DC-4, DC-6).

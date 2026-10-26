@@ -842,7 +842,9 @@ def _decode_back_caption_text(ts: Path) -> str:
             "-f",
             "lavfi",
             "-i",
-            f"movie={movie}[out0+subcc]",
+            # Match ffprobe's MPEG-TS discovery: without scanning all PMTs a
+            # valid late-discovered video PID can lack codec parameters here.
+            f"movie={movie}:format_opts=scan_all_pmts=1[out0+subcc]",
             "-map",
             "0:1",
             "-f",
@@ -1938,9 +1940,8 @@ def _ffmpeg_frame_rgb24(ts: Path, out_raw: Path) -> bytes | None:
     suite. Deliberately does NOT pass ``-ss``: mpegtsmux stamps this product's TS with
     a large PTS base (observed start=3600s on a real captured file), and ffmpeg's
     ``-ss`` input-seek against that offset silently produced a zero-frame output on
-    this box -- grabbing frame 0 sidesteps that rather than fighting it, and the
-    graphics-overlay layers are on screen from the first frame (no fade-in), so frame 0
-    is exactly as valid a proof frame as any later one."""
+    this box -- grabbing frame 0 sidesteps that. Asynchronous image decoding may
+    finish after that first frame; use the last-frame helper for settled overlays."""
     import shutil
 
     if shutil.which("ffmpeg") is None:
@@ -2008,6 +2009,25 @@ def test_graphics_overlay_composites_station_bug_and_lower_third(tmp_path: Path)
         banner_height=50,
     )
 
+    # Force PNG admission beyond its decoder's 40ms default duration. The live
+    # base advances while the image decodes; repeat-after-eos cannot rescue a
+    # still discarded as already expired before it was ever queued.
+    overlay = replace(
+        overlay,
+        layers=tuple(
+            replace(
+                layer,
+                image_path="",
+                source_chain=(
+                    _E("filesrc", props={"location": layer.image_path}),
+                    _E("identity", props={"sleep-time": 200_000}),
+                    _E("decodebin"),
+                ),
+            )
+            for layer in overlay.layers
+        ),
+    )
+
     caps = f"video/x-raw,width={canvas_w},height={canvas_h},framerate=30/1"
     src = graphmod.SourceLeg(
         label="program",
@@ -2038,7 +2058,7 @@ def test_graphics_overlay_composites_station_bug_and_lower_third(tmp_path: Path)
     assert out_ts.exists() and out_ts.stat().st_size > 0, f"no TS produced; log:\n{logtext}"
     _assert_continuous(out_ts, logtext)
 
-    raw = _ffmpeg_frame_rgb24(out_ts, tmp_path / "frame.raw")
+    raw = _ffmpeg_last_frame_rgb24(out_ts, tmp_path / "frame.raw", width=canvas_w, height=canvas_h)
     if raw is None:
         pytest.skip("ffmpeg not installed -- skipping the decoded-pixel compositing proof")
     stride = canvas_w * 3

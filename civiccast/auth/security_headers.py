@@ -17,7 +17,8 @@ third-party script risk, and locking it down would require refactoring the
 frontend for no real security gain. ``worker-src blob:`` and
 ``media-src blob:`` are required for hls.js's worker-based transmuxer and
 MSE blob playback on the public portal. The public player-only preview permits
-same-origin framing for Live Room; other pages deny framing.
+same-origin framing for Live Room. The access-checked dedicated embed player
+permits external HTTP(S) sites to frame it; other pages deny framing.
 """
 
 from __future__ import annotations
@@ -56,6 +57,8 @@ async def security_headers_middleware(
 
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    if request.url.path.startswith(("/api/public/embed/", "/api/public/embed-player/")):
+        response.headers["Cache-Control"] = "no-store"
     # Live Room embeds the public player, never the operator console. Keep both
     # browser framing policies aligned and reject every cross-origin ancestor.
     # Conditional reloads update cached HTML headers too; keep its framing policy.
@@ -65,11 +68,23 @@ async def security_headers_middleware(
         and bool(request.query_params.get("manifest"))
         and response.status_code in {200, 304}
     )
-    frame_options = "SAMEORIGIN" if player_preview else "DENY"
+    external_player = (
+        request.method in {"GET", "HEAD"}
+        and request.url.path.startswith("/api/public/embed-player/")
+        and response.status_code == 200
+        and response.headers.get("content-type", "").startswith("text/html")
+    )
     csp = _CONTENT_SECURITY_POLICY
-    if player_preview:
-        csp = csp.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
-    response.headers.setdefault("X-Frame-Options", frame_options)
+    if external_player:
+        # Only this read-only player document accepts external ancestors.
+        csp = csp.replace("frame-ancestors 'none'", "frame-ancestors http: https:")
+        csp = csp.replace("connect-src 'self'", "connect-src 'self' https:")
+        csp = csp.replace("media-src 'self' blob:", "media-src 'self' blob: https:")
+        csp = csp.replace("img-src 'self' data:", "img-src 'self' data: https:")
+    else:
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN" if player_preview else "DENY")
+        if player_preview:
+            csp = csp.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Content-Security-Policy", csp)
     return response

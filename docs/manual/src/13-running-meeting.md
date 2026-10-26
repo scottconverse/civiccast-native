@@ -145,6 +145,10 @@ If it fails, the panel shows the reason (or "Finalization failed."). Fix the cau
 
 > **Known issue (beta.11):** the saving step looks for a recording file named after the session in the recording location (for example `council-live-room.mp4`). Nothing on this screen creates that file, and in testing we could not confirm which part of CivicCast does. If the panel stays on **Waiting** or fails, ask your IT person to check that the recording location is receiving the meeting recording. By default CivicCast gives up waiting for the file 30 minutes after **End Live Stream**, and the panel then reads "No recording file was found for this session (expected ...)". While CivicCast is still retrying by itself the tag reads "Retrying". **Retry finalization** appears only after CivicCast has given up. It is shown to every role, but only a Meeting operator can use it.
 
+## Channel confidence at a glance
+
+Open **Channels** to see every channel's current output state, source/program label, measured audio loudness and caption proof in the lineup cards. Readings refresh every 30 seconds. Samples older than two minutes are marked **Stale**; a missing measurement or failed request says **Not measured**, **Not verified** or **Unavailable**, rather than healthy. A program label with **last observed** is historical. Caption **Verified on** requires a recent passing decode-back proof; measured LUFS alone is not a loudness-compliance claim. Select a card for existing output controls, detailed proof and recovery information.
+
 ## Start a channel
 
 The **Channels** screen controls each channel's actual video feed.

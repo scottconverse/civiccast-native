@@ -246,3 +246,128 @@ def test_shutdown_reaps_all_senders_even_when_status_store_fails(output):
     output.manager.close()
     assert output.process.terminate.call_count == 2
     assert output.client.finish_live.call_count == 2
+
+
+def test_schedule_edit_restart_start_stop_and_expiry_keep_event_identity(output, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    import civiccast.syndicate.live_output as module
+
+    now = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    start, end = now + timedelta(hours=1), now + timedelta(hours=2)
+    proof = output.manager.start(
+        output.client,
+        asset_id="meeting",
+        title="Meeting",
+        channel_id="government",
+        scheduled_start=start,
+        scheduled_end=end,
+    )
+    assert proof.delivery_state == "scheduled"
+    assert (proof.broadcast_id, proof.stream_id) == ("broadcast", "stream")
+    output.source.assert_not_called()
+    output.launch.assert_not_called()
+    proof = output.manager.start(
+        output.client,
+        asset_id="meeting",
+        title="Edited meeting",
+        channel_id="government",
+        scheduled_start=start,
+        scheduled_end=end,
+    )
+    output.client.update_live.assert_called_once_with(
+        "broadcast", "stream", title="Edited meeting", scheduled_start=start, scheduled_end=end
+    )
+    assert output.client.configure_live.call_count == 1
+    # A restarted owner restores the saved receipt; it never configures another event.
+    output.manager.close()
+    output.manager._deliveries.clear()
+    output.manager.restore(output.client, asset_id="meeting", proof=proof)
+    output.manager.run_once()
+    output.launch.assert_not_called()
+    now = start
+    output.manager.run_once()
+    assert output.record.call_args.args[1].delivery_state == "live"
+    output.source.assert_called_once_with("government")
+    assert output.client.configure_live.call_count == 1
+    now = end
+    output.manager.run_once()
+    assert output.record.call_args.args[1].delivery_state == "stopped"
+    output.process.terminate.assert_called()
+    count = output.launch.call_count
+    output.manager._deliveries.clear()
+    output.manager.restore(output.client, asset_id="meeting", proof=proof)
+    output.manager.run_once()
+    assert output.record.call_args.args[1].delivery_state == "stopped"
+    assert output.launch.call_count == count
+
+
+def test_scheduled_source_failure_preserves_event_for_retry(output, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    import civiccast.syndicate.live_output as module
+
+    start = datetime.now(UTC) + timedelta(seconds=1)
+    end = start + timedelta(hours=1)
+    proof = output.manager.start(
+        output.client,
+        asset_id="meeting",
+        title="Meeting",
+        channel_id="government",
+        scheduled_start=start,
+        scheduled_end=end,
+    )
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return start
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    output.source.side_effect = ValueError("channel offline")
+    output.manager.run_once()
+    failed = output.record.call_args.args[1]
+    assert failed.delivery_state == "failed" and failed.broadcast_id == proof.broadcast_id
+    output.client.finish_live.assert_not_called()
+    output.launch.assert_not_called()
+
+
+def test_unpersistable_due_schedule_does_not_starve_other_destinations(output, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    import civiccast.syndicate.live_output as module
+
+    start = datetime.now(UTC) + timedelta(seconds=1)
+    for asset in ("withdrawn", "healthy"):
+        output.manager.start(
+            output.client,
+            asset_id=asset,
+            title=asset,
+            channel_id="government",
+            scheduled_start=start,
+            scheduled_end=start + timedelta(hours=1),
+        )
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return start
+
+    monkeypatch.setattr(module, "datetime", Clock)
+
+    def save(asset, proof):
+        if asset == "withdrawn":
+            raise RuntimeError("surface unavailable")
+
+    output.record.side_effect = save
+    output.manager.run_once()
+    assert output.manager._deliveries["withdrawn"].proof.delivery_state == "scheduled"
+    assert output.manager._deliveries["healthy"].proof.delivery_state == "live"
+    assert output.launch.call_count == 1

@@ -488,7 +488,17 @@ function AssetPanel({
   onRetrySurface,
 }: AssetPanelProps) {
   const queryClient = useQueryClient()
-  const [youtubeChannelId, setYoutubeChannelId] = useState('')
+  const youtubeSurface = asset.surfaces.find((surface) => surface.id === 'youtube-live')
+  const localInputTime = (value?: string | null) => value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''
+  const [youtubeStart, setYoutubeStart] = useState(() => localInputTime(youtubeSurface?.scheduled_start))
+  const [youtubeEnd, setYoutubeEnd] = useState(() => localInputTime(youtubeSurface?.scheduled_end))
+  const scheduleValid = (!youtubeStart && !youtubeEnd) || (Boolean(youtubeStart && youtubeEnd) && new Date(youtubeEnd) > new Date(youtubeStart) && new Date(youtubeEnd) > new Date())
+  const schedulePayload = () => ({ youtube_scheduled_start: youtubeStart ? new Date(youtubeStart).toISOString() : null, youtube_scheduled_end: youtubeEnd ? new Date(youtubeEnd).toISOString() : null })
+  const [youtubeChannelId, setYoutubeChannelId] = useState(youtubeSurface?.channel_id ?? '')
+  const updateSchedule = useMutation({
+    mutationFn: () => retryPublishSurface(asset.asset_id, 'youtube-live', { operator_id: 'operator-dashboard', operator_display_name: 'Operator dashboard', youtube_channel_id: youtubeChannelId || undefined, ...schedulePayload() }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ['publish-assets'] }) },
+  })
   const [showYouTubeChannels, setShowYouTubeChannels] = useState(false)
   const channels = useQuery({ queryKey: ['publish-youtube-channels'], queryFn: () => listChannels(), enabled: showYouTubeChannels, retry: false })
   const stopOutput = useMutation({
@@ -600,7 +610,7 @@ function AssetPanel({
     !overrideMissingJustification &&
     blockedSelectedSurface == null &&
     notReadySelectedSurfaces.length === 0 &&
-    (!approvedSurfaceIds.includes('youtube-live') || youtubeChannelId.length > 0)
+    (!approvedSurfaceIds.includes('youtube-live') || (youtubeChannelId.length > 0 && scheduleValid))
   const errorDetail =
     error instanceof ApiError && error.detail ? error.detail : error?.message
   const surfaceLabelById = useMemo(
@@ -654,11 +664,12 @@ function AssetPanel({
   }
 
   function submitApproval() {
+    if (approvedSurfaceIds.includes('youtube-live') && !scheduleValid) return
     onApprove(asset.asset_id, {
       operator_id: 'operator-dashboard',
       operator_display_name: 'Operator dashboard',
       approved_surface_ids: approvedSurfaceIds,
-      ...(approvedSurfaceIds.includes('youtube-live') ? { youtube_channel_id: youtubeChannelId } : {}),
+      ...(approvedSurfaceIds.includes('youtube-live') ? { youtube_channel_id: youtubeChannelId, ...schedulePayload() } : {}),
       overrides,
     })
   }
@@ -730,8 +741,22 @@ function AssetPanel({
             </select>
           </label>}
           {channels.isError && <p role="alert">Channels could not be loaded. Retry opening the channel selector.</p>}
-          <p>Start the selected channel first. Creating an event is not live delivery; YouTube must confirm receipt.</p>
-          {asset.surfaces.some((surface) => surface.id === 'youtube-live' && ['configured', 'starting', 'live'].includes(surface.delivery_state ?? '')) &&
+          <label className="block">YouTube start (local time; leave both times blank to send now)
+            <input type="datetime-local" value={youtubeStart} onChange={(event) => setYoutubeStart(event.target.value)} disabled={!canPublish} />
+          </label>
+          <label className="block">YouTube end (local time)
+            <input type="datetime-local" value={youtubeEnd} onChange={(event) => setYoutubeEnd(event.target.value)} disabled={!canPublish} />
+          </label>
+          {!scheduleValid && <p role="alert">Choose a start and a later end that is still in the future.</p>}
+          {youtubeSurface?.delivery_state === 'scheduled' && <>
+            <p>Scheduled: {fmtDate(youtubeSurface.scheduled_start ?? null)}. The selected channel must be on air at that time.</p>
+            <button type="button" disabled={!canPublish || !scheduleValid || updateSchedule.isPending} onClick={() => updateSchedule.mutate()}>Update YouTube schedule</button>
+          </>}
+          {youtubeSurface?.delivery_state === 'starting' && <p>Sending to YouTube; waiting for destination confirmation.</p>}
+          {youtubeSurface?.delivery_state === 'stopped' && <p>YouTube output stopped.</p>}
+          {updateSchedule.isError && <p role="alert">Schedule update failed. The saved event remains available; check YouTube Studio and retry.</p>}
+          <p>Start the selected channel before sending begins. Creating a scheduled event is not live delivery; YouTube must confirm receipt.</p>
+          {asset.surfaces.some((surface) => surface.id === 'youtube-live' && (['scheduled', 'configured', 'starting', 'live'].includes(surface.delivery_state ?? '') || (surface.delivery_state === 'failed' && Boolean(surface.broadcast_id)))) &&
             <button type="button" disabled={!canPublish || stopOutput.isPending} onClick={() => stopOutput.mutate()}>Stop YouTube output</button>}
           {stopOutput.isError && <p role="alert">YouTube output could not be stopped. Check YouTube Studio.</p>}
         </div>

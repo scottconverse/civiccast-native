@@ -686,3 +686,57 @@ class TestPublishAtomicity:
         got = store.get_agenda("ag-1")
         assert got is not None
         assert got.status == "draft"
+
+
+def test_source_recording_trim_projection_preserves_legacy_playback_markers(store, tmp_path):
+    """Source markers use the immutable F1 window; existing player stamps do not."""
+    import json
+
+    from civiccast.captions.vod import package_source_range
+
+    (tmp_path / "playback-timeline.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_start_seconds": 12.5,
+                "source_end_seconds": 100.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    svc = AgendaService(store, playback_window_provider=lambda _: package_source_range(tmp_path))
+    source = _agenda().model_copy(update={"source_recording_job_id": "capture-job"})
+    store.upsert_agenda(source)
+    for order, point in enumerate([0, 10, 30, 120]):
+        store.upsert_item(_item(f"source-{order}", order=order, timecode=point))
+    assert svc.public_view("civiccast-station", source.meeting_asset_id) is None
+    svc.publish(source.agenda_id)
+    view = svc.public_view("civiccast-station", source.meeting_asset_id)
+    assert [(item.item_id, item.video_timecode_s) for item in view.items] == [
+        ("source-1", 0.0),
+        ("source-2", 17.5),
+    ]
+    store.upsert_item(_item("source-2", order=2, timecode=35))
+    assert (
+        svc.public_view("civiccast-station", source.meeting_asset_id).items[1].video_timecode_s
+        == 22.5
+    )
+    legacy = _agenda("legacy", status="published", meeting_asset_id="direct-playback")
+    store.upsert_agenda(legacy)
+    store.upsert_item(_item("legacy-item", agenda_id="legacy", order=0, timecode=30))
+    assert svc.public_view("civiccast-station", "direct-playback").items[0].video_timecode_s == 30
+    # Existing Sync receives packaged player chapters; keep the source basis on import.
+    synced = _agenda("synced", meeting_asset_id="other-source").model_copy(
+        update={"source_recording_job_id": "other-job"}
+    )
+    store.upsert_agenda(synced)
+    sync = AgendaService(
+        store,
+        asset_chapter_provider=lambda _: [Chapter(t=22.5, name="Imported")],
+        playback_window_provider=lambda _: package_source_range(tmp_path),
+    )
+    assert sync.sync_from_chapters("synced").added_items[0].video_timecode_s == 35
+    sync.publish("synced")
+    assert sync.public_view("civiccast-station", "other-source").items[0].video_timecode_s == 22.5
+    unavailable = AgendaService(store, playback_window_provider=lambda _: None)
+    assert unavailable.public_view("civiccast-station", source.meeting_asset_id) is None

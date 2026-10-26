@@ -17,7 +17,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from civiccast.summary.fingerprint import sha256_fingerprint
-from civiccast.summary.models import OperatorApproval, SourcedClaim, SummaryDraft
+from civiccast.summary.minutes import edited_minutes, require_minutes_approval
+from civiccast.summary.models import MinutesContent, OperatorApproval, SourcedClaim, SummaryDraft
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 
@@ -39,6 +40,14 @@ class SummaryStore(Protocol):
         summary_id: str,
         *,
         narrative: str,
+        expected_audit_fingerprint: str,
+    ) -> SummaryDraft: ...
+    def edit_minutes(
+        self,
+        summary_id: str,
+        *,
+        content: MinutesContent,
+        operator_id: str,
         expected_audit_fingerprint: str,
     ) -> SummaryDraft: ...
     def approve_summary(
@@ -89,6 +98,10 @@ class InMemorySummaryStore:
                 raise SummaryStoreConflictError(
                     f"Summary {summary_id!r} changed or is no longer pending review. Reload before editing."
                 )
+            if summary.agenda_minutes is not None:
+                raise SummaryStoreConflictError(
+                    "Edit agenda minutes through the structured minutes editor."
+                )
             if summary.narrative == narrative:
                 return summary
             updated = summary.model_copy(
@@ -97,6 +110,22 @@ class InMemorySummaryStore:
                     "audit_fingerprint": _edited_audit_fingerprint(summary, narrative),
                 }
             )
+            self._summaries[summary_id] = updated
+            return updated
+
+    def edit_minutes(
+        self,
+        summary_id: str,
+        *,
+        content: MinutesContent,
+        operator_id: str,
+        expected_audit_fingerprint: str,
+    ) -> SummaryDraft:
+        with self._lock:
+            summary = self._summaries.get(summary_id)
+            _require_editable_minutes(summary, expected_audit_fingerprint)
+            assert summary is not None
+            updated = edited_minutes(summary, content, operator_id)
             self._summaries[summary_id] = updated
             return updated
 
@@ -115,6 +144,7 @@ class InMemorySummaryStore:
                     f"Summary {approval.summary_id!r} changed or is no longer pending review. "
                     "Reload and review it before approving."
                 )
+            _require_confirmed_minutes(summary)
             approved = summary.model_copy(update={"status": "approved"})
             self._summaries[approval.summary_id] = approved
             self._approvals[approval.summary_id] = approval
@@ -143,9 +173,9 @@ class PostgresSummaryStore:
                     text(
                         f"INSERT INTO {table}summaries "  # nosec B608
                         "(summary_id, meeting_id, status, narrative, provenance_json, "
-                        "audit_fingerprint, operator_message, created_at) "
+                        "audit_fingerprint, operator_message, created_at, agenda_minutes_json) "
                         "VALUES (:summary_id, :meeting_id, :status, :narrative, "
-                        ":provenance_json, :audit_fingerprint, :operator_message, :created_at)"
+                        ":provenance_json, :audit_fingerprint, :operator_message, :created_at, :agenda_minutes_json)"
                     ),
                     {
                         "summary_id": summary.summary_id,
@@ -155,7 +185,14 @@ class PostgresSummaryStore:
                         "provenance_json": summary.provenance.model_dump_json(),
                         "audit_fingerprint": summary.audit_fingerprint,
                         "operator_message": summary.operator_message,
-                        "created_at": datetime.now(UTC),
+                        "created_at": (
+                            datetime.now(UTC).isoformat()
+                            if session.get_bind().dialect.name == "sqlite"
+                            else datetime.now(UTC)
+                        ),
+                        "agenda_minutes_json": summary.agenda_minutes.model_dump_json()
+                        if summary.agenda_minutes
+                        else None,
                     },
                 )
                 for claim in summary.sourced_claims:
@@ -197,7 +234,7 @@ class PostgresSummaryStore:
             rows = session.execute(
                 text(
                     f"SELECT summary_id, meeting_id, status, narrative, provenance_json, "  # nosec B608
-                    f"audit_fingerprint, operator_message FROM {table}summaries "
+                    f"audit_fingerprint, operator_message, agenda_minutes_json FROM {table}summaries "
                     "WHERE status IN ('pending_review', 'approved', 'refused') "
                     "ORDER BY created_at ASC, summary_id ASC"
                 )
@@ -241,6 +278,10 @@ class PostgresSummaryStore:
                 raise SummaryStoreConflictError(
                     f"Summary {summary_id!r} changed or is no longer pending review. Reload before editing."
                 )
+            if summary.agenda_minutes is not None:
+                raise SummaryStoreConflictError(
+                    "Edit agenda minutes through the structured minutes editor."
+                )
             if summary.narrative == narrative:
                 return summary
             updated_fingerprint = _edited_audit_fingerprint(summary, narrative)
@@ -272,11 +313,53 @@ class PostgresSummaryStore:
                 raise SummaryStoreNotFoundError(summary_id)
             return updated
 
+    def edit_minutes(
+        self,
+        summary_id: str,
+        *,
+        content: MinutesContent,
+        operator_id: str,
+        expected_audit_fingerprint: str,
+    ) -> SummaryDraft:
+        with self._session_factory() as session:
+            table = self._table_prefix(session)
+            summary = self._load_summary(session, summary_id)
+            _require_editable_minutes(summary, expected_audit_fingerprint)
+            assert summary is not None
+            updated = edited_minutes(summary, content, operator_id)
+            assert updated.agenda_minutes is not None
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    text(
+                        f"UPDATE {table}summaries SET narrative=:narrative, agenda_minutes_json=:minutes, "  # nosec B608
+                        "audit_fingerprint=:fingerprint WHERE summary_id=:summary_id "
+                        "AND status='pending_review' AND audit_fingerprint=:expected"
+                    ),
+                    {
+                        "narrative": updated.narrative,
+                        "minutes": updated.agenda_minutes.model_dump_json(),
+                        "fingerprint": updated.audit_fingerprint,
+                        "summary_id": summary_id,
+                        "expected": expected_audit_fingerprint,
+                    },
+                ),
+            )
+            if result.rowcount != 1:
+                session.rollback()
+                raise SummaryStoreConflictError("Minutes changed; reload before editing.")
+            session.commit()
+            return updated
+
     def approve_summary(
         self, approval: OperatorApproval, *, expected_audit_fingerprint: str
     ) -> SummaryDraft:
         with self._session_factory() as session:
             table = self._table_prefix(session)
+            summary = self._load_summary(session, approval.summary_id)
+            if summary is None:
+                raise SummaryStoreNotFoundError(approval.summary_id)
+            _require_confirmed_minutes(summary)
             result = cast(
                 CursorResult[Any],
                 session.execute(
@@ -366,7 +449,7 @@ class PostgresSummaryStore:
         row = session.execute(
             text(
                 f"SELECT summary_id, meeting_id, status, narrative, provenance_json, "  # nosec B608
-                f"audit_fingerprint, operator_message FROM {table}summaries "
+                f"audit_fingerprint, operator_message, agenda_minutes_json FROM {table}summaries "
                 "WHERE summary_id = :summary_id"
             ),
             {"summary_id": summary_id},
@@ -407,6 +490,9 @@ class PostgresSummaryStore:
                 "provenance": json.loads(row_any.provenance_json),
                 "audit_fingerprint": row_any.audit_fingerprint,
                 "operator_message": row_any.operator_message,
+                "agenda_minutes": json.loads(row_any.agenda_minutes_json)
+                if row_any.agenda_minutes_json
+                else None,
             }
         )
 
@@ -422,3 +508,24 @@ def _edited_audit_fingerprint(summary: SummaryDraft, narrative: str) -> str:
     return sha256_fingerprint(
         {"previous_audit_fingerprint": summary.audit_fingerprint, "narrative": narrative}
     )
+
+
+def _require_editable_minutes(summary: SummaryDraft | None, expected: str) -> None:
+    if summary is None:
+        raise SummaryStoreNotFoundError("Minutes not found")
+    if (
+        summary.status != "pending_review"
+        or summary.audit_fingerprint != expected
+        or summary.agenda_minutes is None
+    ):
+        raise SummaryStoreConflictError(
+            "Minutes changed or are no longer pending; reload before editing."
+        )
+
+
+def _require_confirmed_minutes(summary: SummaryDraft) -> None:
+    if summary.agenda_minutes is not None:
+        try:
+            require_minutes_approval(summary.agenda_minutes)
+        except ValueError as exc:
+            raise SummaryStoreConflictError(str(exc)) from exc

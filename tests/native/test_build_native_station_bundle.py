@@ -591,6 +591,34 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
     ):
         assert (output_dir / f"{component}.ccpack").is_file()
 
+    reused_dir = tmp_path / "reused-station"
+    reused = builder.reuse_station_bundle(
+        output_dir,
+        output_dir=reused_dir,
+        public_key=_dev_key().public_key(),
+        signing_key_id="development-test-key",
+        product_version="1.0.0-rc15",
+        channel="beta",
+    )
+    assert set(reused["packs"]) == set(result["packs"])
+    assert (reused_dir / builder.STATION_INDEX_FILENAME).read_bytes() == (
+        output_dir / builder.STATION_INDEX_FILENAME
+    ).read_bytes()
+    for component in result["packs"]:
+        assert (reused_dir / f"{component}.ccpack").samefile(output_dir / f"{component}.ccpack")
+    from civiccast.installer.native_distribution import NativeDistributionError
+
+    with pytest.raises(NativeDistributionError, match="product version"):
+        builder.reuse_station_bundle(
+            output_dir,
+            output_dir=tmp_path / "wrong-version",
+            public_key=_dev_key().public_key(),
+            signing_key_id="development-test-key",
+            product_version="wrong-version",
+            channel="beta",
+        )
+    assert not (tmp_path / "wrong-version").exists()
+
     # The identity split this publisher exists to produce: the INDEX and the
     # per-version `core` placeholder carry the real product version, every
     # MODEL pack carries the stable `station-models-1` identity so the same

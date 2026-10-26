@@ -137,15 +137,36 @@ class YouTubeClient:
         return str(token)
 
     def publish_live(
-        self, *, asset_id: str, title: str | None = None, channel_id: str | None = None
+        self,
+        *,
+        asset_id: str,
+        title: str | None = None,
+        channel_id: str | None = None,
+        scheduled_start: datetime | None = None,
+        scheduled_end: datetime | None = None,
+        broadcast_id: str | None = None,
+        stream_id: str | None = None,
     ) -> YouTubePublishProof:
         if self._live_output is None or not channel_id:
             raise RuntimeError("Choose an on-air channel for YouTube Live in Publish.")
         return self._live_output.start(
-            self, asset_id=asset_id, title=title or asset_id, channel_id=channel_id
+            self,
+            asset_id=asset_id,
+            title=title or asset_id,
+            channel_id=channel_id,
+            scheduled_start=scheduled_start,
+            scheduled_end=scheduled_end,
+            broadcast_id=broadcast_id,
+            stream_id=stream_id,
         )
 
-    def configure_live(self, *, title: str) -> tuple[str, str, str]:
+    def configure_live(
+        self,
+        *,
+        title: str,
+        scheduled_start: datetime | None = None,
+        scheduled_end: datetime | None = None,
+    ) -> tuple[str, str, str]:
         with self._client(live=True) as client:
             token = self._access_token(client)
             auth = {"Authorization": f"Bearer {token}"}
@@ -158,9 +179,14 @@ class YouTubeClient:
                     json={
                         "snippet": {
                             "title": title[:100],
-                            "scheduledStartTime": datetime.now(UTC)
+                            "scheduledStartTime": (scheduled_start or datetime.now(UTC))
                             .isoformat()
                             .replace("+00:00", "Z"),
+                            **(
+                                {"scheduledEndTime": scheduled_end.isoformat()}
+                                if scheduled_end
+                                else {}
+                            ),
                         },
                         "contentDetails": {"enableAutoStart": True, "enableAutoStop": True},
                         "status": {
@@ -215,6 +241,71 @@ class YouTubeClient:
                     "YouTube event setup failed. Check channel authorization and YouTube Studio."
                 ) from None
         return broadcast_id, stream_id, f"{address.rstrip('/')}/{stream_name}"
+
+    def update_live(
+        self,
+        broadcast_id: str,
+        stream_id: str,
+        *,
+        title: str,
+        scheduled_start: datetime | None,
+        scheduled_end: datetime | None,
+    ) -> None:
+        """Edit the existing event without replacing its identity or privacy settings."""
+        with self._client(live=True) as client:
+            auth = {"Authorization": f"Bearer {self._access_token(client)}"}
+            response = client.get(
+                f"{_API_BASE}/liveBroadcasts",
+                params={"id": broadcast_id, "part": "snippet"},
+                headers=auth,
+            )
+            response.raise_for_status()
+            snippet = response.json()["items"][0]["snippet"]
+            snippet = {
+                key: snippet[key]
+                for key in (
+                    "title",
+                    "description",
+                    "categoryId",
+                    "scheduledStartTime",
+                    "scheduledEndTime",
+                )
+                if key in snippet
+            }
+            snippet.update(
+                title=title[:100],
+                scheduledStartTime=(scheduled_start or datetime.now(UTC)).isoformat(),
+            )
+            if scheduled_end:
+                snippet["scheduledEndTime"] = scheduled_end.isoformat()
+            else:
+                snippet.pop("scheduledEndTime", None)
+            response = client.put(
+                f"{_API_BASE}/liveBroadcasts",
+                params={"part": "snippet"},
+                headers=auth,
+                json={"id": broadcast_id, "snippet": snippet},
+            )
+            response.raise_for_status()
+
+    def live_ingest(self, stream_id: str) -> str:
+        """Retrieve the private ingest address only when launching the destination."""
+        with self._client(live=True) as client:
+            response = client.get(
+                f"{_API_BASE}/liveStreams",
+                params={"id": stream_id, "part": "cdn"},
+                headers={"Authorization": f"Bearer {self._access_token(client)}"},
+            )
+            response.raise_for_status()
+            ingestion = response.json()["items"][0]["cdn"]["ingestionInfo"]
+            address = str(ingestion.get("rtmpsIngestionAddress", ""))
+            if (
+                urlsplit(address).scheme != "rtmps"
+                or not (urlsplit(address).hostname or "").endswith(".youtube.com")
+                or not ingestion.get("streamName")
+            ):
+                raise RuntimeError("YouTube did not return a supported secure ingest address.")
+            return f"{address.rstrip('/')}/{ingestion['streamName']}"
 
     def live_status(self, broadcast_id: str, stream_id: str) -> tuple[str, str]:
         with self._client(live=True) as client:

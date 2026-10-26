@@ -25,6 +25,7 @@ vi.mock('../api/client', () => ({
   getCtvFeed: vi.fn(),
   getEgressConfig: vi.fn(),
   getEgressHealth: vi.fn(),
+  getCaptionStatus: vi.fn().mockResolvedValue({ caption_status: "not-verified", latest: null }),
   getEgressState: vi.fn(),
   getGraphicsOverlay: vi.fn(),
   listEgressChannels: vi.fn(),
@@ -69,6 +70,7 @@ import {
   getCtvFeed,
   getEgressConfig,
   getEgressHealth,
+  getCaptionStatus,
   getEgressState,
   getGraphicsOverlay,
   getStaffIdentity,
@@ -87,6 +89,7 @@ import {
 } from './egress-start'
 import {
   ChannelOpsScreen,
+  ChannelConfidence,
   EgressControlPanel,
   GraphicsOverlayPanel,
   HeadendDeliveryPanel,
@@ -1062,5 +1065,32 @@ describe('ChannelOpsScreen configuration check failure (m7)', () => {
     await waitFor(() =>
       expect((screen.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false),
     )
+  })
+})
+
+
+describe('all-channel confidence', () => {
+  it('distinguishes fresh measurements from stale and unavailable channels', async () => {
+    const now = new Date().toISOString()
+    const old = new Date(Date.now() - 180_000).toISOString()
+    vi.mocked(getEgressState).mockImplementation(async (id) => ({ channel_id: id,
+      state: 'ON_AIR', current_source_label: id === 'fresh' ? 'Council meeting' : 'Old program', updated_at: now }))
+    vi.mocked(getEgressHealth).mockImplementation(async (id) => {
+      if (id === 'missing') throw new Error('offline')
+      return [{ channel_id: id, sampled_at: id === 'fresh' ? now : old, state: 'ON_AIR',
+        sink_connected: {}, dropped_frames: 0, seconds_on_air: 10, last_loudness_lufs: -23 }]
+    })
+    vi.mocked(getCaptionStatus).mockImplementation(async (id) => ({ channel_id: id, caption_status: 'on',
+      latest: { sampled_at: id === 'fresh' ? now : old, status: 'PASS' } as NonNullable<Awaited<ReturnType<typeof getCaptionStatus>>['latest']> }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const { findByText, getByLabelText } = render(<QueryClientProvider client={client}>
+      <ChannelConfidence channelId="fresh" /><ChannelConfidence channelId="stale" /><ChannelConfidence channelId="missing" />
+    </QueryClientProvider>)
+    expect(await findByText('Audio: -23.0 LUFS measured')).toBeTruthy()
+    expect(getByLabelText('Confidence for fresh').textContent).toContain('Program: Council meeting')
+    expect(getByLabelText('Confidence for fresh').textContent).toContain('Captions: Verified on')
+    await waitFor(() => expect(getByLabelText('Confidence for stale').textContent).toContain('Audio: Stale'))
+    expect(getByLabelText('Confidence for stale').textContent).toContain('Captions: Stale')
+    await waitFor(() => expect(getByLabelText('Confidence for missing').textContent).toContain('Output: Unavailable'))
   })
 })

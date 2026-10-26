@@ -50,3 +50,18 @@ export function isPlausibleHttpUrl(value: string | null | undefined): boolean {
   if (trimmed.length === 0) return true
   return /^https?:\/\/\S+$/i.test(trimmed)
 }
+
+
+/** Accept a source-video HH:MM:SS stamp, preserving existing numeric seconds. */
+export function parseAgendaTime(value: string): { ok: boolean; value: number | null } {
+  const text = value.trim()
+  if (!text) return { ok: true, value: null }
+  if (/^\d+$/.test(text)) {
+    const seconds = Number(text)
+    return { ok: Number.isSafeInteger(seconds), value: seconds }
+  }
+  const parts = /^(\d+):([0-5]\d):([0-5]\d)$/.exec(text)
+  if (!parts) return { ok: false, value: null }
+  const seconds = Number(parts[1]) * 3600 + Number(parts[2]) * 60 + Number(parts[3])
+  return { ok: Number.isSafeInteger(seconds), value: seconds }
+}

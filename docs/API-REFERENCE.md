@@ -160,7 +160,7 @@ Public read: published meeting agenda for one meeting asset.
 - Access: public
 - Parameters: `meeting_asset_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `PublicMeetingAgenda`; 404 No published agenda for this meeting asset; 503 Durable storage is not ready yet.
+- Responses: 200 `PublicMeetingAgenda`; 403 Viewer access required; 404 No published agenda for this meeting asset; 503 Durable storage is not ready yet.
 
 ### `POST /api/public/app/analytics/events`
 
@@ -486,6 +486,15 @@ Read viewer-safe current egress channel status.
 - Request body: none
 - Responses: 200 `PublicEgressNowResponse`; 404 Egress channel is not on air; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/public/embed/channel/{channel_id}`
+
+Get Channel Embed.
+
+- Access: public
+- Parameters: `channel_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `ChannelEmbedResponse`
+
 ### `GET /api/public/embed/{asset_id}`
 
 Get embed snippet + manifest URL for a public asset.
@@ -493,7 +502,7 @@ Get embed snippet + manifest URL for a public asset.
 - Access: public
 - Parameters: `asset_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `AssetEmbedResponse`; 404 Asset not found
+- Responses: 200 `AssetEmbedResponse`; 403 Private or paywalled playback cannot be embedded; 404 Asset not found or unpublished; 503 Access policy is unavailable
 
 ### `GET /api/public/live/current`
 
@@ -810,6 +819,15 @@ Read ActivityPub federation status and policy.
 - Request body: none
 - Responses: 200 `ActivityPubStatusResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/agenda-meetings`
+
+Agenda Meetings.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<AgendaMeetingOption>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/agenda-sources/js-portal/posture`
 
 Report whether the optional js_portal (crawl4ai/Playwright) runtime is installed.
@@ -926,6 +944,15 @@ Patch an agenda item (absent keys unchanged).
 - Parameters: `agenda_id` (path, required): `string`; `item_id` (path, required): `string`
 - Request body: `AgendaItemUpdate`
 - Responses: 200 `AgendaItem`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda item not found; 409 Another item already occupies (agenda_id, order); 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
+
+### `POST /api/staff/agendas/{agenda_id}/items/{item_id}/mark-now`
+
+Mark Item Now.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `item_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `AgendaItem`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `POST /api/staff/agendas/{agenda_id}/sync-from-chapters`
 
@@ -4563,6 +4590,15 @@ Dispatch a simulated subscription notification for local proof.
 - Request body: `NotificationPayload`
 - Responses: 200 `NotificationDispatchResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 A real mail or webhook provider is configured; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/summaries/agendas/{agenda_id}/minutes`
+
+Draft agenda minutes from a cited summary or start a manual draft.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `agenda_id` (path, required): `string`
+- Request body: `AgendaMinutesCreateRequest`
+- Responses: 201 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/summaries/generate`
 
 Generate a sourced summary draft from committed transcript cues.
@@ -4643,6 +4679,15 @@ Approve a sourced summary for signed-record export.
 - Parameters: `summary_id` (path, required): `string`
 - Request body: `SummaryApprovalRequest`
 - Responses: 200 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Summary not found; 409 Summary changed or is no longer pending; reload before approving; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PATCH /api/staff/summaries/{summary_id}/minutes`
+
+Edit sourced agenda discussion and human-entered motions/votes.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `summary_id` (path, required): `string`
+- Request body: `AgendaMinutesEditRequest`
+- Responses: 200 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/system-resources`
 
@@ -4994,6 +5039,36 @@ Read CivicCast local federation metadata.
 - `order` (optional): `number | null`
 - `title` (optional): `string | null`
 - `video_timecode_s` (optional): `number | null`
+
+### `AgendaMeetingOption`
+
+- `can_mark_now` (optional): `boolean`
+- `duration_seconds` (optional): `number | null`
+- `meeting_asset_id` (required): `string`
+- `source_recording_job_id` (optional): `string | null`
+- `state` (required): `string`
+- `title` (required): `string`
+
+### `AgendaMinutes`
+
+- `agenda_id` (required): `string`
+- `asset_id` (required): `string`
+- `content` (required): `MinutesContent`
+- `playback_end_seconds` (optional): `number | null`
+- `playback_start_seconds` (optional): `number | null`
+- `revisions` (optional): `Array<MinutesRevision>`
+- `source_summary_fingerprint` (optional): `string | null`
+- `source_summary_id` (optional): `string | null`
+- `transcript_fingerprint` (required): `string`
+
+### `AgendaMinutesCreateRequest`
+
+- `source_summary_id` (optional): `string | null`
+
+### `AgendaMinutesEditRequest`
+
+- `content` (required): `MinutesContent`
+- `expected_audit_fingerprint` (required): `string`
 
 ### `AiDefaultSelection`
 
@@ -5898,6 +5973,14 @@ Read CivicCast local federation metadata.
 - `output_format` (required): `'720p30' | '1080i60' | '1080p30' | 'SD480i60'`
 - `sdi_device` (optional): `string | null`
 - `watch_folder_path` (optional): `string | null`
+
+### `ChannelEmbedResponse`
+
+- `channel_id` (required): `string`
+- `embed_html` (required): `string`
+- `manifest_url` (required): `string | null`
+- `portal_url` (required): `string`
+- `title` (required): `string`
 
 ### `ChannelLogEntry`
 
@@ -7553,6 +7636,7 @@ rule (S13 §5.1).
 - `created_at` (optional): `string`
 - `meeting_asset_id` (required): `string`
 - `source_doc_url` (optional): `string | null`
+- `source_recording_job_id` (optional): `string | null`
 - `station_id` (required): `string`
 - `status` (optional): `'draft' | 'published'`
 - `updated_at` (optional): `string`
@@ -7562,6 +7646,7 @@ rule (S13 §5.1).
 - `agenda_id` (required): `string`
 - `meeting_asset_id` (required): `string`
 - `source_doc_url` (optional): `string | null`
+- `source_recording_job_id` (optional): `string | null`
 - `station_id` (required): `string`
 
 ### `MeetingAgendaUpdate`
@@ -7577,6 +7662,42 @@ rule (S13 §5.1).
 
 - `guest_display_name` (required): `string`
 - `role` (required): `'council_member' | 'presenter' | 'public_comment'`
+
+### `MinutesContent`
+
+- `decisions_reviewed` (optional): `boolean`
+- `sections` (required): `Array<MinutesSection>`
+
+### `MinutesMotion`
+
+- `human_confirmed` (optional): `boolean`
+- `mover` (required): `string`
+- `outcome` (required): `'passed' | 'failed' | 'withdrawn' | 'no_vote'`
+- `seconder` (optional): `string`
+- `text` (required): `string`
+- `transcript_ranges` (required): `Array<TranscriptRange>`
+- `votes` (optional): `Array<MinutesVote>`
+
+### `MinutesRevision`
+
+- `content` (required): `MinutesContent`
+- `edited_at` (required): `string`
+- `operator_id` (required): `string`
+- `previous_fingerprint` (required): `string`
+
+### `MinutesSection`
+
+- `discussion` (optional): `string`
+- `item_id` (required): `string`
+- `motions` (optional): `Array<MinutesMotion>`
+- `not_discussed` (optional): `boolean`
+- `title` (required): `string`
+- `transcript_ranges` (optional): `Array<TranscriptRange>`
+
+### `MinutesVote`
+
+- `choice` (required): `'yes' | 'no' | 'abstain' | 'absent'`
+- `member` (required): `string`
 
 ### `MissingMediaAlertRow`
 
@@ -8354,6 +8475,8 @@ rule (S13 §5.1).
 - `operator_id` (required): `string`
 - `overrides` (optional): `Array<PublishSurfaceOverride>`
 - `youtube_channel_id` (optional): `string | null`
+- `youtube_scheduled_end` (optional): `string | null`
+- `youtube_scheduled_start` (optional): `string | null`
 
 ### `PublishAssetStatus`
 
@@ -8430,6 +8553,8 @@ rule (S13 §5.1).
 - `operator_display_name` (required): `string`
 - `operator_id` (required): `string`
 - `youtube_channel_id` (optional): `string | null`
+- `youtube_scheduled_end` (optional): `string | null`
+- `youtube_scheduled_start` (optional): `string | null`
 
 ### `PublishSurfaceOverride`
 
@@ -8439,6 +8564,7 @@ rule (S13 §5.1).
 ### `PublishSurfaceStatus`
 
 - `approval` (optional): `'pending' | 'approved' | 'overridden'`
+- `broadcast_id` (optional): `string | null`
 - `channel_id` (optional): `string | null`
 - `completed_at` (optional): `string | null`
 - `delivery_state` (optional): `string | null`
@@ -8454,8 +8580,11 @@ rule (S13 §5.1).
 - `path` (optional): `string | null`
 - `required` (optional): `boolean`
 - `retry_count` (optional): `number`
+- `scheduled_end` (optional): `string | null`
+- `scheduled_start` (optional): `string | null`
 - `simulated` (optional): `boolean`
 - `state` (required): `'blocked' | 'not_configured' | 'coming_soon' | 'pending' | 'running' | 'succeeded' | 'partial' | 'unverified' | 'failed' | 'overridden'`
+- `stream_id` (optional): `string | null`
 - `url` (optional): `string | null`
 - `verification_hash` (optional): `string | null`
 
@@ -8514,7 +8643,7 @@ rule (S13 §5.1).
 
 - `completion_requirement` (optional): `'all_selected_languages' | 'english_reviewed'`
 - `enabled` (optional): `boolean`
-- `languages` (optional): `Array<'en' | 'es'>`
+- `languages` (optional): `Array<'en' | 'es' | 'zh-Hans' | 'fil' | 'vi' | 'ar'>`
 - `vocabulary` (optional): `CustomVocabulary`
 
 ### `RecordingInputPreset`
@@ -9712,6 +9841,7 @@ rule (S13 §5.1).
 
 ### `SummaryDraft`
 
+- `agenda_minutes` (optional): `AgendaMinutes | null`
 - `audit_fingerprint` (required): `string`
 - `meeting_id` (required): `string`
 - `narrative` (required): `string`

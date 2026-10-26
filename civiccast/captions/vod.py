@@ -81,6 +81,7 @@ from civiccast.captions.runtime import CaptionRuntime
 from civiccast.captions.stabilize import CaptionStabilizer
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
 from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker
+from civiccast.recorded_languages import RECORDED_TRANSLATION_LANGUAGES
 from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpeg
 from civiccast.stream.config import ABR_LADDER, HLS_SEGMENT_DURATION, SLATE_RENDITION
 from civiccast.stream.packager import RenditionOutput, VodPackageResult
@@ -231,6 +232,7 @@ class AttachedCaptions:
     spanish_sidecar_path: Path | None = None
     #: Spanish reviewed cues published to the secondary track.
     spanish_cue_count: int = 0
+    translated_sidecar_paths: dict[str, Path] = field(default_factory=dict)
 
 
 def published_caption_sidecar(package_dir: Path) -> Path:
@@ -533,19 +535,15 @@ def resolve_vod_package(package_dir: Path) -> VodPackageResult:
     )
 
 
-def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[CaptionCue]:
-    """Clip and rebase copies using the range actually encoded in this package.
-
-    Older preview packages keep that range in a sibling packaging receipt.
-    Never infer it from mutable asset metadata or alter source review records.
-    """
+def package_source_range(package_dir: Path) -> tuple[float, float | None]:
+    """Read the immutable source interval actually encoded into an F1 package."""
     timeline = package_dir / "playback-timeline.json"
     legacy = not timeline.exists()
     if legacy:
         digest = hashlib.sha256(package_dir.name.encode()).hexdigest()[:20]
         timeline = package_dir.parent / f".civiccast-preview-{digest}.json"
         if not timeline.exists():
-            return cues
+            return 0.0, None
     try:
         data = json.loads(timeline.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -572,6 +570,17 @@ def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[
             raise ValueError("invalid source range")
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise OfflineCaptionPackageError(f"Cannot read packaged playback timeline: {exc}") from exc
+
+    return float(start), None if end is None else float(end)
+
+
+def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[CaptionCue]:
+    """Clip and rebase copies using the range actually encoded in this package.
+
+    Older preview packages keep that range in a sibling packaging receipt.
+    Never infer it from mutable asset metadata or alter source review records.
+    """
+    start, end = package_source_range(package_dir)
 
     mapped: list[CaptionCue] = []
     for cue in cues:
@@ -600,6 +609,7 @@ def attach_reviewed_captions(
     language: str = OFFLINE_CAPTION_LANGUAGE,
     name: str = OFFLINE_CAPTION_LANGUAGE_NAME,
     spanish_cues: list[CaptionCue] | None = None,
+    translated_cues: dict[str, list[CaptionCue]] | None = None,
     segment_duration: int = HLS_SEGMENT_DURATION,
 ) -> AttachedCaptions:
     """Publish reviewed cues onto an asset's packaged VOD output.
@@ -643,22 +653,28 @@ def attach_reviewed_captions(
         raise ValueError("At least one reviewed cue is required to publish a caption track.")
     package = resolve_vod_package(package_dir)
     cues = caption_cues_for_package(package_dir, cues)
+    translations = dict(translated_cues or {})
     if spanish_cues:
-        spanish_cues = caption_cues_for_package(package_dir, spanish_cues)
+        translations["es"] = spanish_cues
+    for code in translations:
+        if code not in RECORDED_TRANSLATION_LANGUAGES:
+            raise ValueError(f"Unsupported recorded caption language: {code}")
+    mapped_translations = {
+        code: caption_cues_for_package(package_dir, translated)
+        for code, translated in translations.items()
+        if translated
+    }
     tracks = [CaptionHlsTrack(cues=cues, language=language, name=name)]
-    if spanish_cues:
-        tracks.append(
-            CaptionHlsTrack(
-                cues=spanish_cues,
-                language=SPANISH_CAPTION_LANGUAGE,
-                name=SPANISH_CAPTION_LANGUAGE_NAME,
-                # English remains the default selection; Spanish is a peer
-                # the resident chooses. autoselect stays on so a player set
-                # to a Spanish OS locale can pick it up automatically.
-                default=False,
-                autoselect=True,
-            )
+    tracks.extend(
+        CaptionHlsTrack(
+            cues=translated,
+            language=code,
+            name=RECORDED_TRANSLATION_LANGUAGES[code],
+            default=False,
+            autoselect=True,
         )
+        for code, translated in mapped_translations.items()
+    )
     hls_outputs = attach_caption_tracks_to_package(
         package,
         tracks,
@@ -668,16 +684,18 @@ def attach_reviewed_captions(
     # Same atomic write the live sidecar uses: a resident or a clerk never
     # reads a half-written WebVTT file.
     LiveWebVttPublisher(sidecar_path).publish(cues)
-    spanish_sidecar_path: Path | None = None
-    if spanish_cues:
-        spanish_sidecar_path = published_spanish_caption_sidecar(package.output_dir)
-        LiveWebVttPublisher(spanish_sidecar_path).publish(spanish_cues)
+    translated_paths: dict[str, Path] = {}
+    for code, translated in mapped_translations.items():
+        path = package.output_dir / "captions" / f"captions.{code}.vtt"
+        LiveWebVttPublisher(path).publish(translated)
+        translated_paths[code] = path
     return AttachedCaptions(
         hls_outputs=hls_outputs,
         sidecar_path=sidecar_path,
         cue_count=len(cues),
-        spanish_sidecar_path=spanish_sidecar_path,
-        spanish_cue_count=len(spanish_cues) if spanish_cues else 0,
+        spanish_sidecar_path=translated_paths.get("es"),
+        spanish_cue_count=len(mapped_translations.get("es", [])),
+        translated_sidecar_paths=translated_paths,
     )
 
 
@@ -732,21 +750,22 @@ def reattach_packaged_captions(
         raise OfflineCaptionPackageError(
             "Complete English caption review before repackaging a captioned recording."
         )
-    spanish_cues: list[CaptionCue] | None = None
-    if published_spanish_caption_sidecar(original_package).is_file():
+    translations: dict[str, list[CaptionCue]] = {}
+    for code, label in RECORDED_TRANSLATION_LANGUAGES.items():
+        if not (original_package / "captions" / f"captions.{code}.vtt").is_file():
+            continue
         expected_ids = {
-            recorded_translation_cue_id(review_store, asset_id, cue, SPANISH_CAPTION_LANGUAGE)
-            for cue in english.cues
+            recorded_translation_cue_id(review_store, asset_id, cue, code) for cue in english.cues
         }
-        spanish = reviewed_caption_cues(
-            review_store, asset_id, language=SPANISH_CAPTION_LANGUAGE, cue_ids=expected_ids
+        reviewed = reviewed_caption_cues(
+            review_store, asset_id, language=code, cue_ids=expected_ids
         )
-        if not spanish.review_complete or spanish.total != len(expected_ids) or not spanish.cues:
+        if not reviewed.review_complete or reviewed.total != len(expected_ids) or not reviewed.cues:
             raise OfflineCaptionPackageError(
-                "Complete the matching Spanish caption review before repackaging."
+                f"Complete the matching {label} caption review before repackaging."
             )
-        spanish_cues = spanish.cues
-    return attach_reviewed_captions(replacement_package, english.cues, spanish_cues=spanish_cues)
+        translations[code] = reviewed.cues
+    return attach_reviewed_captions(replacement_package, english.cues, translated_cues=translations)
 
 
 def queue_translated_captions(

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from civiccast.captions import CaptionCue
 from civiccast.summary.extract import extract_quantitative_facts
 from civiccast.summary.fingerprint import sha256_fingerprint
+from civiccast.summary.minutes import transcript_fingerprint
 from civiccast.summary.models import ModelProvenance, SourcedClaim, SummaryDraft
 from civiccast.summary.ollama import OllamaSummaryModel
 from civiccast.summary.validate import SourcedClaimValidator, UnsupportedSummaryClaimError
@@ -113,6 +114,7 @@ class SummaryGenerationPipeline:
                 SourcedClaimValidator(cues).validate_claims(claims)
                 return self._draft(
                     meeting_id=meeting_id,
+                    cues=cues,
                     status="pending_review",
                     narrative=str(output["narrative"]),
                     sourced_claims=claims,
@@ -124,6 +126,7 @@ class SummaryGenerationPipeline:
 
         return self._draft(
             meeting_id=meeting_id,
+            cues=cues,
             status="refused",
             narrative="",
             sourced_claims=[],
@@ -140,6 +143,7 @@ class SummaryGenerationPipeline:
         self,
         *,
         meeting_id: str,
+        cues: list[CaptionCue],
         status: str,
         narrative: str,
         sourced_claims: list[SourcedClaim],
@@ -163,7 +167,10 @@ class SummaryGenerationPipeline:
             ollama_version=getattr(model_provenance, "ollama_version", None),
             prompt_version=prompt_version,
             extraction_version=EXTRACTION_VERSION,
-            runtime_parameters={"temperature": 0},
+            runtime_parameters={
+                "temperature": 0,
+                "source_transcript_fingerprint": transcript_fingerprint(cues),
+            },
             generated_at=datetime.now(UTC),
         )
         summary_id = f"summary-{uuid4().hex}"

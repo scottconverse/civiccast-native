@@ -5,35 +5,23 @@
 from __future__ import annotations
 
 import os
-from typing import cast
-from urllib.parse import quote, urljoin
+from pathlib import Path
+from typing import Any, Literal, cast
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
+from civiccast.egress.router import get_egress_store
+from civiccast.live.router import get_current_live_session, get_live_session_store
+from civiccast.live.surge_service import get_surge_switch_service
+from civiccast.paywall.router import _station_id, get_paywall_service
+from civiccast.paywall.service import PaywallService
 from civiccast.platform.stores import resolve_app_store
 from civiccast.vod.embed import build_embed_html
 from civiccast.vod.models import AssetEmbedResponse, public_manifest_reference
 from civiccast.vod.store import AssetStore
-
-
-def _portal_base(request: Request) -> str:
-    """Return the public portal SPA origin used in embed URLs.
-
-    Defaults to the API request's own base URL — correct for single-host
-    deployments where API and portal are served from the same origin.
-    Operators with the portal on a separate origin (the recommended
-    production posture) set ``CIVICCAST_PORTAL_BASE`` to the public URL
-    of the portal SPA, e.g. ``https://portal.your-station.org``.
-
-    The Sprint 0.2 portal SPA serves a single page at ``/``; the embed
-    URL therefore points at ``{portal_base}/?manifest=<url>``, NOT a
-    per-asset path. Per-asset routing lands at rung 0.3 with the
-    schedule module.
-    """
-    explicit = os.environ.get("CIVICCAST_PORTAL_BASE")
-    if explicit:
-        return explicit.rstrip("/")
-    return str(request.base_url).rstrip("/")
 
 
 def get_store(request: Request) -> AssetStore:
@@ -49,21 +37,18 @@ router = APIRouter(prefix="/api/public", tags=["public"])
     response_model=AssetEmbedResponse,
     summary="Get embed snippet + manifest URL for a public asset",
     responses={
-        404: {"description": "Asset not found"},
+        403: {"description": "Private or paywalled playback cannot be embedded"},
+        404: {"description": "Asset not found or unpublished"},
+        503: {"description": "Access policy is unavailable"},
     },
 )
 def get_embed(
     asset_id: str,
     request: Request,
     store: AssetStore = Depends(get_store),
+    paywall: PaywallService | None = Depends(get_paywall_service),
 ) -> AssetEmbedResponse:
-    """Return the iframe snippet and metadata needed to embed an asset.
-
-    Public — no auth. The asset's `manifest_url` is already on a public CDN
-    so there is no information leak in returning it. Stations that want
-    private/unlisted assets must mark them so in the asset store; this
-    endpoint refuses to serve them (404).
-    """
+    """Resolve a currently published, anonymously accessible recording by identity."""
     asset = store.get(asset_id)
     if asset is None or asset.published_at is None:
         raise HTTPException(
@@ -71,15 +56,9 @@ def get_embed(
             detail=f"Asset not found: {asset_id}",
         )
 
-    # The portal SPA at civiccast/apps/portal-public consumes a manifest
-    # via the ?manifest=<url> query string on its single root route. The
-    # per-asset URL shape (/v/{asset_id}) is reserved for rung 0.3 when the
-    # SPA grows real routing.
+    _require_embed_access(paywall, "asset", asset_id)
     manifest_reference = public_manifest_reference(asset.asset_id, asset.manifest_url)
-    portal_manifest = manifest_reference
-    if manifest_reference.startswith("/"):
-        portal_manifest = urljoin(str(request.base_url), manifest_reference.lstrip("/"))
-    portal_url = f"{_portal_base(request)}/?manifest={quote(portal_manifest, safe=':/?&=')}"
+    portal_url = f"{str(request.base_url).rstrip('/')}/api/public/embed-player/asset/{quote(asset_id, safe='')}"
 
     embed_html = build_embed_html(
         portal_url=portal_url,
@@ -94,3 +73,79 @@ def get_embed(
         portal_url=portal_url,  # type: ignore[arg-type]
         embed_html=embed_html,
     )
+
+
+class ChannelEmbedResponse(BaseModel):
+    channel_id: str
+    title: str
+    manifest_url: str | None
+    portal_url: str
+    embed_html: str
+
+
+def _require_embed_access(paywall: PaywallService | None, kind: str, identity: str) -> None:
+    if paywall is None:
+        raise HTTPException(
+            503, "Playback access policy is unavailable. Retry after station storage recovers."
+        )
+    if not paywall.has_access(
+        _station_id(), None, "asset" if kind == "asset" else "series", identity
+    ):
+        raise HTTPException(
+            403, "Restricted playback cannot be embedded. Open the station portal to sign in."
+        )
+
+
+@router.get("/embed/channel/{channel_id}", response_model=ChannelEmbedResponse)
+def get_channel_embed(
+    channel_id: str,
+    request: Request,
+    paywall: PaywallService | None = Depends(get_paywall_service),
+    egress_store: Any = Depends(get_egress_store),
+    live_session_store: Any = Depends(get_live_session_store),
+    surge: Any = Depends(get_surge_switch_service),
+) -> ChannelEmbedResponse:
+    _require_embed_access(paywall, "channel", channel_id)
+    if egress_store is None or egress_store.get_config(channel_id) is None:
+        raise HTTPException(404, "Channel not found.")
+    live = get_current_live_session(
+        request,
+        channel_id=channel_id,
+        manifest_url=None,
+        live_session_store=live_session_store,
+        egress_store=egress_store,
+        surge=surge,
+    )
+    portal_url = f"{str(request.base_url).rstrip('/')}/api/public/embed-player/channel/{quote(channel_id, safe='')}"
+    title = live.title or "Live channel"
+    return ChannelEmbedResponse(
+        channel_id=channel_id,
+        title=title,
+        manifest_url=live.manifest_url,
+        portal_url=portal_url,
+        embed_html=build_embed_html(portal_url=portal_url, title=title),
+    )
+
+
+@router.get("/embed-player/{kind}/{identity}", response_class=FileResponse, include_in_schema=False)
+def embed_player_page(
+    kind: Literal["asset", "channel"],
+    identity: str,
+    store: AssetStore = Depends(get_store),
+    paywall: PaywallService | None = Depends(get_paywall_service),
+    egress_store: Any = Depends(get_egress_store),
+) -> FileResponse:
+    _require_embed_access(paywall, kind, identity)
+    if kind == "asset":
+        asset = store.get(identity)
+        if asset is None or asset.published_at is None:
+            raise HTTPException(404, "Recording not found.")
+    elif egress_store is None or egress_store.get_config(identity) is None:
+        raise HTTPException(404, "Channel not found.")
+    root = os.environ.get("CIVICCAST_PUBLIC_PORTAL_DIST")
+    index = Path(root) / "index.html" if root else None
+    if index is None or not index.is_file():
+        raise HTTPException(
+            503, "The resident player is unavailable. Repair the station portal bundle."
+        )
+    return FileResponse(index, media_type="text/html", headers={"Cache-Control": "no-store"})

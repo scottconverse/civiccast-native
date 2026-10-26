@@ -66,7 +66,7 @@ def test_single_head() -> None:
     """
     script = ScriptDirectory.from_config(_cfg("sqlite://"))
     heads = list(script.get_heads())
-    assert heads == ["0095_caption_job_cancellation"], f"expected exactly one head, found {heads!r}"
+    assert heads == ["0097_agenda_minutes"], f"expected exactly one head, found {heads!r}"
     assert script.get_revision(_REVISION) is not None, f"{_REVISION!r} must still be reachable"
 
 

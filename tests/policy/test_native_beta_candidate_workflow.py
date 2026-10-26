@@ -243,6 +243,10 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
         '"native-cuda-runtime"' in trust_bridge
     )
 
+    assert "--sign-installed-executables" in bootstrap
+    assert bootstrap.index("if ($LASTEXITCODE -ne 0)") < bootstrap.index("$setup = Get-ChildItem")
+    installed_signing = steps["Build the native bootstrap with the release trust root"]["env"]
+    assert installed_signing["AZURE_CLIENT_SECRET"] == "${{ secrets.AZURE_CLIENT_SECRET }}"
     sign = steps["Sign the native bootstrap (Azure Artifact Signing)"]
     assert sign["uses"] == "azure/artifact-signing-action@v2"
     assert sign["with"]["azure-client-secret"] == "${{ secrets.AZURE_CLIENT_SECRET }}"
@@ -667,11 +671,12 @@ def _assert_self_hosted_dotnet_sdk_provisioning(job: dict[str, object]) -> None:
     step_names = [step["name"] for step in job["steps"]]
     steps = {step["name"]: step for step in job["steps"]}
     provision_name = "Provision a pinned .NET SDK for the signing action (self-hosted only)"
-    smoke_name = "Smoke the installed GStreamer closure through the product worker"
     sign_name = "Sign the native bootstrap (Azure Artifact Signing)"
 
     assert provision_name in step_names
-    assert step_names.index(smoke_name) < step_names.index(provision_name)
+    assert step_names.index(provision_name) < step_names.index(
+        "Build the native bootstrap with the release trust root"
+    )
     assert step_names.index(provision_name) < step_names.index(sign_name)
 
     provision = steps[provision_name]
@@ -1449,3 +1454,24 @@ def test_prune_script_refuses_a_current_sha_that_is_not_a_sha(tmp_path: Path) ->
 
     assert completed.returncode != 0
     assert (root / ("a" * 40)).is_dir(), "a refused prune must delete nothing"
+
+
+def test_local_station_reuse_skips_acquisition_and_keeps_existing_verification() -> None:
+    _, workflow = _workflow()
+    job = workflow["jobs"]["build-native-station-bundle"]
+    steps = {step["name"]: step for step in job["steps"]}
+    assert job["env"]["REUSE_STATION_DIR"] == "${{ inputs.reuse_station_dir || '' }}"
+    for name in [
+        "Provision the pinned Ollama model exports (summary + translation)",
+        "Provision the pinned captions-floor bundle root",
+        "Provision the pinned Whistle model and engine root",
+        "Free the raw provisioned model roots before upload",
+    ]:
+        assert steps[name]["if"] == "env.REUSE_STATION_DIR == ''"
+    assert "--reuse-station-dir" in steps["Build and sign the native station bundle"]["run"]
+    assert "@reuseArgs" in steps["Build and sign the native station bundle"]["run"]
+    assert (
+        "reuse_station_dir requires a self-hosted complete candidate build"
+        in steps["Resolve build target and local candidate root"]["run"]
+    )
+    assert "if" not in steps["Verify the signed station bundle and write checksums"]

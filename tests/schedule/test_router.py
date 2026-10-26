@@ -20,11 +20,13 @@ facts being live — until they are, every test in this file fails with
 from __future__ import annotations
 
 from collections.abc import Iterator
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
+from civiccast.paywall.router import get_paywall_service
 from civiccast.schedule.router import get_asset_store
 from civiccast.vod.models import AssetMetadata
 from civiccast.vod.store import InMemoryAssetStore
@@ -65,6 +67,10 @@ def client(store: InMemoryAssetStore) -> Iterator[TestClient]:
     from civiccast.vod.router import get_store
 
     app.dependency_overrides[get_store] = lambda: store
+    # The embed contract fails closed when access policy is unavailable.
+    policy = Mock()
+    policy.has_access.return_value = True
+    app.dependency_overrides[get_paywall_service] = lambda: policy
     with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as c:
         yield c
 

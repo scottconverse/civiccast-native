@@ -308,6 +308,25 @@ first failure:
    sizes before checking the selected consumer-evidence route.
 4. **Authenticode signature** -- `Get-AuthenticodeSignature` on `setup.exe`
    must report `Status: Valid` (see `CODE_SIGNING_POLICY.md`).
+   The native candidate builder now uses `--sign-installed-executables`: it
+   signs the launcher after the Tauri bundle-type patch, then signs NSIS's final
+   generated uninstaller through `!uninstfinalize` before embedding it. Both use
+   the existing ArtifactSigning 0.1.8 module and Azure profile; the outer setup
+   is signed afterward by the existing action. Callback failure aborts packaging.
+   Credentials are inherited environment values, never generated NSIS arguments.
+   On the self-hosted lane, `reuse_station_dir` may point to an existing complete
+   same-version signed `station/` directory. This skips model/floor/Whistle
+   acquisition and repacking. The existing index and pack validators check the
+   trusted key, channel, product/stable-model identities, payload hashes and
+   pinned contracts before same-volume hardlink staging; mismatches fail closed.
+   The default provisioning path remains unchanged. Keep the original kit intact
+   outside the candidate prune roots. No large artifact upload is needed when
+   both self-hosted upload flags are false.
+   Signing the outer setup alone does not prove its installed contents. On the
+   final authorized candidate, verify the installed launcher and uninstaller
+   each retain a Valid, timestamped Scott Converse signature, then complete the
+   applicable isolated install/uninstall acceptance. Source checks do not supply
+   that installed-file evidence.
 5. **Consumer evidence** -- workflow mode downloads all three Gate A lane
    verdicts and requires them to PASS for `--artifact-source-sha` (which
    defaults to `--source-sha`). Direct mode verifies every bound Sandbox

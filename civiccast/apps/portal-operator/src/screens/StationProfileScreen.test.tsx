@@ -268,6 +268,18 @@ describe('StationProfileScreen', () => {
     )
   })
 
+  it('selects finite recorded languages while preserving existing Spanish', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const { findByLabelText, findByRole } = renderScreen()
+    for (const label of ['Chinese (Simplified)', 'Tagalog / Filipino', 'Vietnamese', 'Arabic']) {
+      fireEvent.click(await findByLabelText(`${label} captions`))
+    }
+    fireEvent.click(await findByRole('button', { name: 'Save recorded-caption settings' }))
+    await waitFor(() => expect(vi.mocked(saveRecordedCaptionSettings)).toHaveBeenCalledWith(
+      expect.objectContaining({ languages: ['en', 'es', 'zh-Hans', 'fil', 'vi', 'ar'] }),
+    ))
+  })
+
   it('lets a setup admin select English-first completion', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
     const { findByLabelText, findByRole } = renderScreen()

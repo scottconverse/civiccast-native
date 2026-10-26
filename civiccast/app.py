@@ -787,6 +787,10 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.schema_status_checked_monotonic = time.monotonic()
     _maybe_start_finalization_worker(app)
     _maybe_start_background_supervisors(app)
+    if app.state.supervisor_mode not in _SUPERVISOR_MODE_FROZEN:
+        from civiccast.syndicate.live_wiring import restore_youtube_schedules
+
+        restore_youtube_schedules(app)
     try:
         backup_service = getattr(app.state, "station_backup_service", None)
         if backup_service is not None and app.state.supervisor_mode not in _SUPERVISOR_MODE_FROZEN:
@@ -3509,10 +3513,25 @@ def _wire_durable_stores(app: FastAPI) -> None:
         return AgendaStore(_session_factory)
 
     def _resolve_agenda_service() -> AgendaService:
+        from civiccast.captions.vod import package_source_range
+        from civiccast.stream.media_router import _package_dir_for_asset
+
         asset_store = PostgresAssetStore(_session_factory)
+
+        def playback_window(asset_id: str) -> tuple[float, float | None] | None:
+            with _session_factory() as session:
+                try:
+                    package = _package_dir_for_asset(asset_id, session)
+                except HTTPException as exc:
+                    if exc.status_code == 404:
+                        return None
+                    raise
+            return package_source_range(package)
+
         return AgendaService(
             AgendaStore(_session_factory),
             asset_chapter_provider=_make_agenda_chapter_provider(asset_store),
+            playback_window_provider=playback_window,
         )
 
     app.dependency_overrides[get_agenda_store] = _resolve_agenda_store

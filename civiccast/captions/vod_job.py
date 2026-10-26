@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal, Protocol, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -69,6 +69,7 @@ from civiccast.captions.vod import (
     transcribe_asset_captions,
 )
 from civiccast.captions.webvtt import render_webvtt
+from civiccast.recorded_languages import RECORDED_TRANSLATION_LANGUAGES
 from civiccast.translate.models import TranslationTarget
 from civiccast.translate.service import TranslationProvider
 
@@ -246,6 +247,10 @@ class OfflineCaptionJobRecord(BaseModel):
     last_error: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class _TranslationCaptionArguments(TypedDict, total=False):
+    translated_cues: dict[str, list[CaptionCue]]
 
 
 class OfflineCaptionJobStore(Protocol):
@@ -866,31 +871,36 @@ class OfflineCaptionJobWorker:
         # English is approved. Required mode keeps the historical atomic
         # two-track attach; english_reviewed may publish English while the
         # selected Spanish pass continues in this active job.
-        spanish_cues: list[CaptionCue] | None = None
-        if self._settings.spanish_enabled:
+        translations: dict[str, list[CaptionCue]] = {}
+        for target_language in self._settings.languages:
+            if target_language == "en":
+                continue
+            label = RECORDED_TRANSLATION_LANGUAGES[target_language]
             if self._translation_provider_factory is None:
                 if self._settings.completion_requirement == "english_reviewed":
                     return self._publish_english_while_spanish_waits(
                         row,
                         english.cues,
                         now=now,
-                        reason=MISSING_TRANSLATOR_REMEDIATION,
+                        reason=MISSING_TRANSLATOR_REMEDIATION.replace("Spanish", label),
                     )
                 return self._record_failure(
                     row,
                     now=now,
-                    error=MISSING_TRANSLATOR_REMEDIATION,
+                    error=MISSING_TRANSLATOR_REMEDIATION.replace("Spanish", label),
                     stage="caption translation",
                 )
             try:
-                spanish = self._resolve_spanish_review(row.asset_id, english.cues)
+                spanish = self._resolve_spanish_review(
+                    row.asset_id, english.cues, target_language=target_language
+                )
             except Exception as exc:
                 if self._settings.completion_requirement == "english_reviewed":
                     return self._publish_english_while_spanish_waits(
                         row,
                         english.cues,
                         now=now,
-                        reason=f"Spanish translation is waiting to retry: {exc}",
+                        reason=f"{label} translation is waiting to retry: {exc}",
                     )
                 return self._record_failure(
                     row, now=now, error=str(exc), stage="caption translation"
@@ -901,7 +911,7 @@ class OfflineCaptionJobWorker:
                         row,
                         english.cues,
                         now=now,
-                        reason=SPANISH_REVIEW_PENDING_REMEDIATION,
+                        reason=SPANISH_REVIEW_PENDING_REMEDIATION.replace("Spanish", label),
                     )
                 return self._poll_again(row, now=now)
             if not spanish.cues:
@@ -910,24 +920,32 @@ class OfflineCaptionJobWorker:
                         row,
                         english.cues,
                         now=now,
-                        reason=ALL_SPANISH_REJECTED_REMEDIATION,
+                        reason=ALL_SPANISH_REJECTED_REMEDIATION.replace("Spanish", label),
                     )
                 return self._hold_for_review(
                     row,
                     now=now,
-                    reason=ALL_SPANISH_REJECTED_REMEDIATION,
+                    reason=ALL_SPANISH_REJECTED_REMEDIATION.replace("Spanish", label),
                     log_message=(
                         "Every Spanish caption cue for asset %s was rejected; holding the "
                         "recording rather than publishing it in English only."
                     ),
                 )
-            spanish_cues = spanish.cues
+            translations[target_language] = spanish.cues
 
         if self._cancelled(row.job_id):
             return self._store.get(row.job_id) or row
         try:
+            translation_arguments: _TranslationCaptionArguments = {}
+            if any(code != "es" for code in translations):
+                translation_arguments["translated_cues"] = {
+                    code: cues for code, cues in translations.items() if code != "es"
+                }
             attached = attach_reviewed_captions(
-                Path(row.package_dir), english.cues, spanish_cues=spanish_cues
+                Path(row.package_dir),
+                english.cues,
+                spanish_cues=translations.get("es"),
+                **translation_arguments,
             )
         except Exception as exc:
             return self._record_failure(row, now=now, error=str(exc), stage="caption attach")
@@ -1093,6 +1111,8 @@ class OfflineCaptionJobWorker:
         self,
         asset_id: str,
         english_cues: list[CaptionCue],
+        *,
+        target_language: str = "es",
     ) -> ReviewedCaptions | None:
         """Ensure EVERY approved English cue has a Spanish row, then gate on review.
 
@@ -1150,7 +1170,6 @@ class OfflineCaptionJobWorker:
         unnoticed.
         """
 
-        target_language = self._settings.spanish_target_language
         expected_ids = {
             recorded_translation_cue_id(self._review_store, asset_id, cue, target_language): cue
             for cue in english_cues
@@ -1168,7 +1187,10 @@ class OfflineCaptionJobWorker:
                     asset_id=asset_id,
                     cues=missing,
                     provider=self._translation_provider_instance(),
-                    target=TranslationTarget(target_language=target_language),
+                    target=TranslationTarget(
+                        target_language=target_language,
+                        target_name=RECORDED_TRANSLATION_LANGUAGES[target_language],
+                    ),
                 )
             except Exception as exc:
                 # A mid-batch failure is the reviewer's reproduction: rows
@@ -1203,7 +1225,9 @@ class OfflineCaptionJobWorker:
                 )
                 if cause is not None:
                     detail = f"{detail} (Underlying error: {cause})"
-                raise OfflineCaptionTranslationError(detail) from cause
+                raise OfflineCaptionTranslationError(
+                    detail.replace("Spanish", RECORDED_TRANSLATION_LANGUAGES[target_language])
+                ) from cause
         return_scope = set(expected_ids)
         spanish = reviewed_caption_cues(
             self._review_store,

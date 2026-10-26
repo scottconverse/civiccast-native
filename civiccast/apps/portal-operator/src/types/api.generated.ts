@@ -161,6 +161,36 @@ export interface AgendaItemUpdate {
   confidence?: number | null
 }
 
+export interface AgendaMeetingOption {
+  meeting_asset_id: string
+  title: string
+  source_recording_job_id?: string | null
+  state: string
+  duration_seconds?: number | null
+  can_mark_now?: boolean
+}
+
+export interface AgendaMinutes {
+  agenda_id: string
+  asset_id: string
+  source_summary_id?: string | null
+  source_summary_fingerprint?: string | null
+  transcript_fingerprint: string
+  playback_start_seconds?: number | null
+  playback_end_seconds?: number | null
+  content: MinutesContent
+  revisions?: Array<MinutesRevision>
+}
+
+export interface AgendaMinutesCreateRequest {
+  source_summary_id?: string | null
+}
+
+export interface AgendaMinutesEditRequest {
+  expected_audit_fingerprint: string
+  content: MinutesContent
+}
+
 export interface AiDefaultSelection {
   summary_model: string
   translate_model: string
@@ -1063,6 +1093,14 @@ export interface ChannelCommissioningSetup {
   emergency_slate_asset_id?: string | null
   cea708_passthrough?: boolean
   watch_folder_path?: string | null
+}
+
+export interface ChannelEmbedResponse {
+  channel_id: string
+  title: string
+  manifest_url: string | null
+  portal_url: string
+  embed_html: string
 }
 
 export interface ChannelLogEntry {
@@ -2713,6 +2751,7 @@ export interface MeetingAgenda {
   agenda_id: string
   station_id: string
   meeting_asset_id: string
+  source_recording_job_id?: string | null
   source_doc_url?: string | null
   status?: 'draft' | 'published'
   created_at?: string
@@ -2723,6 +2762,7 @@ export interface MeetingAgendaInput {
   agenda_id: string
   station_id: string
   meeting_asset_id: string
+  source_recording_job_id?: string | null
   source_doc_url?: string | null
 }
 
@@ -2738,6 +2778,42 @@ export interface MigrationRollbackRequest {
 export interface MintInviteInput {
   guest_display_name: string
   role: 'council_member' | 'presenter' | 'public_comment'
+}
+
+export interface MinutesContent {
+  sections: Array<MinutesSection>
+  decisions_reviewed?: boolean
+}
+
+export interface MinutesMotion {
+  text: string
+  mover: string
+  seconder?: string
+  outcome: 'passed' | 'failed' | 'withdrawn' | 'no_vote'
+  votes?: Array<MinutesVote>
+  transcript_ranges: Array<TranscriptRange>
+  human_confirmed?: boolean
+}
+
+export interface MinutesRevision {
+  operator_id: string
+  edited_at: string
+  previous_fingerprint: string
+  content: MinutesContent
+}
+
+export interface MinutesSection {
+  item_id: string
+  title: string
+  discussion?: string
+  transcript_ranges?: Array<TranscriptRange>
+  not_discussed?: boolean
+  motions?: Array<MinutesMotion>
+}
+
+export interface MinutesVote {
+  member: string
+  choice: 'yes' | 'no' | 'abstain' | 'absent'
 }
 
 export interface MissingMediaAlertRow {
@@ -3508,6 +3584,8 @@ export interface PublicTranscriptCue {
 }
 
 export interface PublishApprovalRequest {
+  youtube_scheduled_start?: string | null
+  youtube_scheduled_end?: string | null
   operator_id: string
   operator_display_name: string
   youtube_channel_id?: string | null
@@ -3586,6 +3664,8 @@ export interface PublishPreflightResponse {
 }
 
 export interface PublishRetryRequest {
+  youtube_scheduled_start?: string | null
+  youtube_scheduled_end?: string | null
   operator_id: string
   operator_display_name: string
   youtube_channel_id?: string | null
@@ -3599,6 +3679,10 @@ export interface PublishSurfaceOverride {
 export interface PublishSurfaceStatus {
   delivery_state?: string | null
   channel_id?: string | null
+  broadcast_id?: string | null
+  stream_id?: string | null
+  scheduled_start?: string | null
+  scheduled_end?: string | null
   id: string
   label: string
   kind: 'canonical' | 'archive' | 'reach' | 'record' | 'audience'
@@ -3673,7 +3757,7 @@ export interface RecordExportResponse {
 export interface RecordedCaptionSettings {
   vocabulary?: CustomVocabulary
   enabled?: boolean
-  languages?: Array<'en' | 'es'>
+  languages?: Array<'en' | 'es' | 'zh-Hans' | 'fil' | 'vi' | 'ar'>
   completion_requirement?: 'all_selected_languages' | 'english_reviewed'
 }
 
@@ -4879,6 +4963,7 @@ export interface SummaryDraft {
   provenance: ModelProvenance
   audit_fingerprint: string
   operator_message?: string | null
+  agenda_minutes?: AgendaMinutes | null
 }
 
 export interface SummaryEditRequest {

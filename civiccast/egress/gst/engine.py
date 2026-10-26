@@ -2023,6 +2023,21 @@ class GstPlayoutEngine:
         # holds that last buffer on screen instead of dropping the pad — proven live
         # (see the S15 graphics-overlay pipeline proof test).
         layer_pad.set_property("repeat-after-eos", layer.repeat_after_eos)
+        still_path = layer.image_path
+        if layer.source_chain and layer.source_chain[0].factory == "filesrc":
+            still_path = str(layer.source_chain[0].props.get("location", ""))
+        if layer.repeat_after_eos and still_path and Path(still_path).suffix.lower() == ".png":
+            # PNG decoders can give their sole still a 40ms duration. The live
+            # compositor may already be past that window when decoding finishes;
+            # GstVideoAggregator skips that buffer before repeat-after-eos can
+            # retain it. A static image has no expiry. Leave live layer timing alone.
+            def retain_still(_pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+                with info.writable_object() as buffer:
+                    if buffer is not None:
+                        buffer.duration = Gst.CLOCK_TIME_NONE
+                return Gst.PadProbeReturn.OK
+
+            layer_tail.get_static_pad("src").add_probe(Gst.PadProbeType.BUFFER, retain_still)
         return layer_pad, collected
 
     def _build_secondary_audio(self, leg: SecondaryAudioLeg, mux: Gst.Element) -> None:

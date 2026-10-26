@@ -34,7 +34,9 @@ def build_embed_html(
         f'title="{safe_title}" '
         f'width="{width}" height="{height}" '
         f'loading="lazy" '
-        f'frameborder="0" '
+        f'style="width:100%;aspect-ratio:16/9;height:auto;border:0" '
+        f'referrerpolicy="no-referrer" '
+        f'sandbox="allow-scripts allow-same-origin allow-presentation" '
         f'allow="autoplay; fullscreen; picture-in-picture" '
         f"allowfullscreen></iframe>"
     )

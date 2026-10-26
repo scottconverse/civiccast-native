@@ -1,4 +1,33 @@
 # Beta 20 current-source review tripwire renewal
+## October 26 retained caption stream PMT discovery correction
+
+Required Windows121552808917 retained the exact failing TS/worker/decoder log.
+Default movie-filter extraction reproduces exit-22 (unspecified video size,
+empty pixel format); larger probe/time bounds alone do not fix it. The same
+bytes decode with format_opts=scan_all_pmts=1, matching ffprobe's explicit
+MPEG-TS default (FFmpeg fftools/ffprobe.c open_input_file). Outgoing caption ends
+4.367s; queued old caption ends10.154s before actual switch10.155s; incoming
+caption10.888-12.521s is present and delayed stale speech absent. The inline
+native-test decoder now selects that demux option; boundary assertions and
+product bytes are unchanged. Only its existing source tripwire is renewed.
+Signed candidate40317362877/42339334 remains valid; no installer rebuild.
+
+## October 26 static PNG and workflow floor tripwire renewal
+
+Required CI40310373196 Windows job121529748466 passed in13m30s, including
+all native media cases and the delayed static-PNG overlay regression. Local
+forced200ms admission failed before the indefinite-duration correction (4.83s)
+and passed after (4.61s), with logo/banner, continuity and clean teardown checks.
+Only static repeat-after-eos PNG buffers receive indefinite duration; live
+layer timing is unchanged. Current-source engine and native-test blob bindings
+now identify that reviewed correction. The ci-test workflow binding identifies
+native collection floor2034/2273 updates retaining the existing50-test margin.
+No registered producer node, control, verifier rule or historical acceptance
+status changes. Required unit job121529748660 found18 stale-binding assertions
+(11783 other tests passed); these source tripwires are renewed without claiming
+installed, pre-login, hardware or current external-service acceptance. Those
+outcomes remain separate; F4 historical filesrc provenance remains unexplained.
+
 
 
 ## October 26 caption extraction diagnostic binding

@@ -25,6 +25,7 @@ export type PortalRoute =
   | { view: 'watch'; assetId: string; startSeconds?: number }
   | { view: 'redeem' }
   | { view: 'schedule'; channel: string }
+  | { view: 'captions'; channel: string }
 
 export function parseHashRoute(hash: string): PortalRoute {
   const raw = hash.replace(/^#/, '')
@@ -53,6 +54,9 @@ export function parseHashRoute(hash: string): PortalRoute {
       ...(Number.isFinite(seconds) && seconds >= 0 ? { startSeconds: seconds } : {}) }
   }
   if (segments[0] === 'redeem') return { view: 'redeem' }
+  if (segments[0] === 'captions') {
+    return { view: 'captions', channel: new URLSearchParams(queryString).get('channel') || 'public' }
+  }
   if (segments[0] === 'schedule') {
     const params = new URLSearchParams(queryString)
     return { view: 'schedule', channel: params.get('channel') ?? 'public' }

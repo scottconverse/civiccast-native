@@ -74,3 +74,21 @@ describe('HlsPlayer native-HLS captions', () => {
     ).toBe('true')
   })
 })
+
+
+it.each([
+  ['es', 'Spanish'], ['zh-Hans', 'Chinese (Simplified)'], ['fil', 'Tagalog / Filipino'],
+  ['vi', 'Vietnamese'], ['ar', 'Arabic'],
+])('selects reviewed %s track from native player manifest metadata', async (language, label) => {
+  const english: MutableTextTrack = { label: 'English', language: 'en', mode: 'showing' }
+  const translated: MutableTextTrack = { label, language, mode: 'disabled' }
+  vi.spyOn(HTMLMediaElement.prototype, 'canPlayType').mockReturnValue('maybe')
+  vi.spyOn(HTMLMediaElement.prototype, 'textTracks', 'get').mockReturnValue(nativeTextTracks(english, translated))
+  render(<HlsPlayer manifestUrl="/reviewed/playlist.m3u8" />)
+  fireEvent.loadedMetadata(screen.getByLabelText('Meeting video player'))
+  const choice = await screen.findByRole('button', { name: label })
+  fireEvent.click(choice)
+  expect(translated.mode).toBe('showing')
+  expect(english.mode).toBe('disabled')
+  expect(choice.getAttribute('aria-pressed')).toBe('true')
+})

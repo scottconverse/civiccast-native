@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Ollama Spanish translation adapter and BLEU release gate."""
+"""Ollama recorded translation adapter and legacy BLEU wiring helper."""
 
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ from civiccast.ai_runtime.ollama_client import (
     generate_with_ollama,
     get_ollama_model_manifest,
 )
+from civiccast.recorded_languages import RECORDED_TRANSLATION_LANGUAGES
 
 _TRANSLATION_MODEL_TAG = "translategemma:4b"
 
 
 @dataclass(frozen=True)
 class OllamaSpanishTranslator:
-    """Release translation adapter descriptor."""
+    """Recorded translation adapter; legacy class name preserves callers."""
 
     model_tag: str
     runtime_evidence: RuntimeEvidence
@@ -50,12 +51,7 @@ class OllamaSpanishTranslator:
     def translate(self, text: str) -> str:
         """Translate English civic text to Spanish with local Ollama."""
 
-        prompt = (
-            "Translate the following municipal meeting text to Spanish. "
-            "Return only the Spanish translation, no commentary.\n\n"
-            f"{text}"
-        )
-        return generate_with_ollama(model=self.model_tag, prompt=prompt, base_url=self.base_url)
+        return self.translate_text(text, source_language="en", target_language="es")
 
     def translate_text(
         self,
@@ -67,7 +63,25 @@ class OllamaSpanishTranslator:
     ) -> str:
         """TranslationProvider-compatible boundary for caption translation."""
 
-        return self.translate(text)
+        if source_language != "en" or target_language not in RECORDED_TRANSLATION_LANGUAGES:
+            raise ValueError("Recorded translation supports English to es, zh-Hans, fil, vi or ar.")
+        target = RECORDED_TRANSLATION_LANGUAGES[target_language]
+        terminology = ""
+        if glossary:
+            terminology = "\nUse these approved terms: " + "; ".join(
+                f"{source} = {translated}" for source, translated in glossary.items()
+            )
+        prompt = (
+            f"Translate the following English municipal meeting text to {target}. "
+            f"Return only the {target} translation, no commentary."
+            f"{terminology}\n\n{text}"
+        )
+        result = generate_with_ollama(model=self.model_tag, prompt=prompt, base_url=self.base_url)
+        if not result.strip():
+            raise ValueError(
+                f"The translation model returned no {target} text. Retry or repair the local model."
+            )
+        return result.strip()
 
 
 @dataclass(frozen=True)

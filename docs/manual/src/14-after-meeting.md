@@ -40,6 +40,14 @@ CivicCast gives each person one or more roles. The role decides which buttons wo
 
 You should see a table with the columns Title, State, Status, Duration, Size, Codec and Published. The asset ID appears in small type under each title.
 
+### Apply common metadata to selected recordings
+
+Records clerks, meeting operators and support administrators can check individual rows or use **Select visible assets**. Search and state filters do not clear a selection; the count includes hidden selections. **Clear selection** starts over.
+
+Check **Apply common description** and/or **Apply common meeting body**, enter the replacement value, then choose **Apply metadata to selected assets**. A checked blank field clears that value; an unchecked field stays unchanged. Title, trim, captions and retention are not changed by this form. Each selected record uses its observed version, so a concurrent edit can refuse that record without overwriting another operator's work.
+
+The result lists saved and failed recordings separately. Successful records leave the selection; failed records stay selected for review. Other successful saves are not rolled back. Refresh and review conflicts before applying again; there is no automatic retry. Sign-ins without the metadata-edit role do not see these controls, and the existing server permission gate still applies.
+
 The **State** and **Status** columns describe the same video in two ways.
 
 | State | What it means |
@@ -107,11 +115,11 @@ The preview has video playback controls. Use **Play selected trim** to inspect t
 
 > **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). To expose these markers to residents, use **Sync from chapters** on an agenda, review its times, and publish that agenda.
 
-> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and Spanish caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
+> **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. After changing an already packaged video, use **Repackage for playback** on the Assets screen to apply the new trim to the streamable copy. Existing English and selected translated caption tracks are rebuilt from their reviewed source cues before the new package replaces the old one. If a matching review is incomplete or no approved cues fall in the new range, repackaging refuses and keeps the previous playback package. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
 
 > **Note:** The trim also applies when the video airs from the schedule on a channel.
 
-> **Note:** Caption review keeps timestamps from the original recording. Published English and Spanish captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
+> **Note:** Caption review keeps timestamps from the original recording. Published English and translated captions are clipped to the range used to package the video and shifted to that playback timeline. For example, a source cue at 30 seconds appears at 28 seconds when the packaged trim starts at 2 seconds. Changing a saved trim takes effect in playback after repackaging; review records keep their original source timestamps.
 
 If saving fails with a message about another writer, someone else changed the video while you were editing. Close the editor, open the video again and redo your change. If the video is already on a schedule item that is committed to air, the save is refused with the "cannot be edited ... already published" message described under [Edit a video's public details](#ch-after-meeting).
 
@@ -164,13 +172,15 @@ See [Running the meeting](#ch-running-meeting) for the Channels screen.
 
 ## Offline captions: how a recording gets its captions
 
-Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, whether to include Spanish alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Publishing can queue captions automatically. For existing packaged recordings, open **Review queue > Recording caption backlog**, select up to ten recordings and click **Caption selected**. Each recording reports its own queue or packaging error; the existing serial worker processes the batch within the station’s current resource limits. Selecting a recording with an active job reuses that job. Inference completion means cues await human review, not that their words are accurate or approved.
+Supported recorded translations are **Spanish**, **Chinese (Simplified writing, zh-Hans)**, **Tagalog / Filipino**, **Vietnamese**, and **Arabic**. Existing Spanish settings and reviewed tracks remain. Chinese support does not claim every spoken variety or Traditional writing. Choose a reviewer who knows the selected language: model output is a draft, and every translated cue needs human review/editing before publication. English wording or timing changes require matching translation review again. Unsupported targets are refused rather than translated into Spanish.
+
+Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, which translations to include alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Publishing can queue captions automatically. For existing packaged recordings, open **Review queue > Recording caption backlog**, select up to ten recordings and click **Caption selected**. Each recording reports its own queue or packaging error; the existing serial worker processes the batch within the station’s current resource limits. Selecting a recording with an active job reuses that job. Inference completion means cues await human review, not that their words are accurate or approved.
 
 1. With recorded captions enabled, you approve publishing the recording. CivicCast queues a caption job for it first, even if the Portal row is not selected. If it cannot queue the job, publication reports the failure. A recording with no stored video file gets no caption job. When recorded captions are disabled, new caption jobs are not created and existing jobs pause until processing is enabled again.
 2. The job transcribes the audio into English cue lines. On the video's detail page, the **Offline caption jobs** card shows **Queued or transcribing…**. A full meeting can take several minutes, not seconds.
 3. When transcription ends, the card shows **Awaiting review**. The cues are now in the **Review queue**.
-4. You decide every English cue. If Spanish is selected, CivicCast also translates the reviewed English and queues the Spanish cues for review.
-5. With **all selected languages** required, the selected tracks attach after their review is finished. With **reviewed English** required, the English track can attach first; selected Spanish captions attach later after their own review. English-only jobs do not need a translator or Spanish review.
+4. You decide every English cue. For each selected language, CivicCast translates the reviewed English and queues those cues for their own review.
+5. With **all selected languages** required, the selected tracks attach after their review is finished. With **reviewed English** required, the English track can attach first; selected translations attach later after their own review. English-only jobs do not need a translator or translation review.
 
 > **Note:** Changing the completion setting never publishes unreviewed caption text. Disabling processing does not mark an uncaptioned recording as captioned.
 
@@ -186,7 +196,7 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 - Every selected Spanish cue was rejected. Open the Review queue, choose Spanish, and edit or approve cues. The Spanish track attaches once review is complete and at least one cue is approved or edited. Under **Attach English after its review**, reviewed English can already be available.
 - Spanish is selected but no translation model is available. The row says to install or repair it under "Settings > AI Models > Translation" and run 'civiccast doctor'. With **Wait for every selected language**, CivicCast retries with growing waits; after its attempts run out, the card shows **Failed** and a records clerk must click **Retry** after repair. With **Attach English after its review**, reviewed English attaches while the active job waits for Spanish. English-only jobs do not encounter this hold.
 
-Published English and Spanish captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps. Repackaging rebuilds existing tracks from reviewed source cues before replacing the old package; incomplete matching review or an unusable caption range leaves the previous package intact.
+Published English and translated captions use the packaged playback timeline: cues outside its trim are excluded, crossing cues are clipped, and retained cues are shifted by the packaged IN point. Review records keep their original source timestamps. Repackaging rebuilds existing tracks from reviewed source cues before replacing the old package; incomplete matching review or an unusable caption range leaves the previous package intact.
 
 ## Review and correct captions
 
@@ -238,7 +248,17 @@ If the audio is not available, the card says "Audio evidence is unavailable. App
 
 Everyone can read the queue and play audio. Only a records clerk can approve, edit or reject. For anyone else a yellow note says "Caption review actions require the records clerk role. The queue stays visible for read-only review." and the boxes and buttons are disabled.
 
-### If it did not work
+### Agenda-based draft minutes
+
+A records clerk can open the meeting agenda and expand **Draft meeting minutes** once its recording and reviewed English transcript are available. Choose a completed cited summary from that same recording, or choose the manual option when generation is unavailable. Creating minutes does not run a separate model for every agenda item. Untimed or uncited discussion needs clerk entry; an empty section is not a claim that nothing happened.
+
+Open the draft in Summary review. Each agenda section has editable discussion and transcript citations. Citation playback follows the packaged recording timeline, while stored evidence keeps its source-recording times. Add motions with the mover, optional seconder, outcome and individual member votes. Check the recording and citations, then explicitly confirm each motion and its votes. Editing a motion or vote clears that confirmation. Mark an item not discussed only after checking it, and confirm that all items were checked for motions and votes.
+
+Use **Save draft minutes** before approval. Approval stays unavailable while edits are unsaved or saving. Every save keeps the previous content, editor and time; approval is tied to the saved fingerprint. If another clerk edits the draft, reload and review the current version. Transcript corrections require rebuilding the draft against the current reviewed cues. These are editable drafts, not an automatic or certified parliamentary record.
+
+After human approval, the signed record export includes the agenda discussion, citations, confirmed motions and votes in the rendered minutes, plus structured minutes and edit history in its PDF attachment. Approved minutes are immutable. If a model fails or no suitable cited summary exists, use the manual option with the same reviewed transcript and human approval controls.
+
+## If it did not work
 
 | What you see | Cause and fix |
 | --- | --- |
@@ -308,11 +328,12 @@ If you open the page with a role that is not allowed, you see "This action requi
 
 ## Watch folders, retention rules and storage (Media Lifecycle Settings)
 
-This page holds three station-wide settings. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
+This page holds station-wide settings and cleanup review. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
 
 - **Watch folders.** A watch folder is a folder on the station's computer (a local disk, a USB drive or a network share) that CivicCast checks automatically and copies new videos from. Type the folder path in **Watch folder path** or click **Browse…**, then click **Add watch folder**. A new file is imported once it has stopped growing. The original stays where it is, and the new video appears in Assets as Validated. Click **Scan now** to check immediately, or **Remove** to stop watching (files already imported stay).
 - **Retention automation.** A rule sets a video's retention policy by its meeting body. Fill in **Rule name**, **Meeting body (exact match)** and **Retention policy**, then click **Add rule**. Then click **Apply rules now**.
 - **Storage budget.** A read-only view of how much disk the library uses, with a table by retention policy.
+- **Storage cleanup review.** Shows recordings already flagged by the retention worker, 50 per page (use **Previous cleanup page** and **Next cleanup page** to review the rest), with current source-file size, expiry and protection checks. Each recording is fetched directly, including older records outside the Assets list's first page. Legal hold, permanent retention, an extended/no expiry, active processing or unavailable current protection prevent an eligibility label. **Eligible for records-officer review** is a review candidate, not permission to delete. Open its recording link to review retention/holds through existing controls. Nothing is purged from this screen; obtain the station's normal records-officer disposition authorization. These checks refresh every 30 seconds, and **Refresh cleanup review** reloads the flag queue.
 
 Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ingest" times, or **Degraded** with the reason, for example a drive that was unplugged.
 
@@ -321,6 +342,16 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 > **Warning:** The **Browse…** and **Scan now** buttons need the setup_admin role, adding or removing a watch folder needs publish_operator or setup_admin, and retention buttons need records_clerk or setup_admin. The page shows every button to every role, and a wrong-role click returns an error message.
 
 > **For IT staff:** Watch folders, upload storage and the storage budget are set up in Part II (configuration and operations chapters). If the budget card says no budget is configured, the setting is an environment variable that only IT can change.
+
+## Agenda-based draft minutes
+
+A records clerk can open the meeting agenda and expand **Draft meeting minutes** once its recording and reviewed English transcript are available. Choose a completed cited summary from that same recording, or choose the manual option when generation is unavailable. Creating minutes does not run a separate model for every agenda item. Untimed or uncited discussion needs clerk entry; an empty section is not a claim that nothing happened.
+
+Open the draft in Summary review. Each agenda section has editable discussion and transcript citations. Citation playback follows the packaged recording timeline, while stored evidence keeps its source-recording times. Add motions with the mover, optional seconder, outcome and individual member votes. Check the recording and citations, then explicitly confirm each motion and its votes. Editing a motion or vote clears that confirmation. Mark an item not discussed only after checking it, and confirm that all items were checked for motions and votes.
+
+Use **Save draft minutes** before approval. Approval stays unavailable while edits are unsaved or saving. Every save keeps the previous content, editor and time; approval is tied to the saved fingerprint. If another clerk edits the draft, reload and review the current version. Transcript corrections require rebuilding the draft against the current reviewed cues. These are editable drafts, not an automatic or certified parliamentary record.
+
+After human approval, the signed record export includes the agenda discussion, citations, confirmed motions and votes in the rendered minutes, plus structured minutes and edit history in its PDF attachment. Approved minutes are immutable. If a model fails or no suitable cited summary exists, use the manual option with the same reviewed transcript and human approval controls.
 
 ## If it did not work
 

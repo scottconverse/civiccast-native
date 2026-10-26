@@ -1,3 +1,4 @@
+import { EmbedCopyPanel } from './EmbedCopyPanel'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -9,6 +10,7 @@ import {
   type EgressStateRow,
   getAppPlatformConfig,
   getChannelNowNext,
+  getCaptionStatus,
   getChannelPlayoutPlan,
   getChannelProofLog,
   getCtvFeed,
@@ -151,6 +153,33 @@ function ErrorPanel({ error }: { error: unknown }) {
   )
 }
 
+function freshReading(iso: string | undefined): boolean {
+  const age = Date.now() - new Date(iso ?? '').getTime()
+  return Number.isFinite(age) && age >= 0 && age <= 120_000
+}
+
+export function ChannelConfidence({ channelId }: { channelId: string }) {
+  const state = useQuery({ queryKey: ['egress-state', channelId], queryFn: () => getEgressState(channelId), retry: false, refetchInterval: POLL_MS })
+  const health = useQuery({ queryKey: ['egress-health', channelId], queryFn: () => getEgressHealth(channelId), retry: false, refetchInterval: POLL_MS })
+  const captions = useQuery({ queryKey: ['caption-status', channelId], queryFn: () => getCaptionStatus(channelId), retry: false, refetchInterval: POLL_MS })
+  const sample = health.data?.[0]
+  const fresh = freshReading(sample?.sampled_at)
+  const outputUnavailable = state.isError || health.isError || !state.data || !sample
+  const proof = captions.data?.latest
+  const captionLabel = captions.isError ? 'Unavailable' : !proof ? 'Not verified'
+    : !freshReading(proof.sampled_at) ? 'Stale' : proof.status === 'FAIL' ? 'Proof failed'
+    : proof.status === 'PASS' && captions.data?.caption_status === 'on' ? 'Verified on' : 'Not verified'
+  return <div aria-label={`Confidence for ${channelId}`} className="grid gap-1 text-xs">
+    <div>Output: {state.isPending || health.isPending ? 'Checking…' : outputUnavailable ? 'Unavailable'
+      : !fresh ? `Stale — last ${stateLabel(state.data!.state)}` : stateLabel(state.data!.state)}</div>
+    <div>Program: {state.isError ? 'Unavailable' : state.data?.current_source_label ?? 'Unavailable'}{!fresh && state.data?.current_source_label ? ' (last observed)' : ''}</div>
+    <div>Audio: {health.isError || !sample ? 'Unavailable' : !fresh ? 'Stale'
+      : sample.last_loudness_lufs == null ? 'Not measured' : `${sample.last_loudness_lufs.toFixed(1)} LUFS measured`}</div>
+    <div>Captions: {captions.isPending ? 'Checking…' : captionLabel}</div>
+    <div style={{ color: 'var(--cc-ink-3)' }}>Health sampled {sample ? new Date(sample.sampled_at).toLocaleTimeString() : 'never'} · checked {health.dataUpdatedAt ? new Date(health.dataUpdatedAt).toLocaleTimeString() : 'never'}</div>
+  </div>
+}
+
 function ChannelCard({
   channel,
   appChannel,
@@ -188,6 +217,7 @@ function ChannelCard({
           </div>
         </div>
       </div>
+      <ChannelConfidence channelId={channel.channel_id} />
       <div className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         {channel.fallback_behavior}
       </div>
@@ -2091,6 +2121,7 @@ export function ChannelOpsScreen() {
             saveError={graphicsOverlayMutation.error}
             onSave={(next) => graphicsOverlayMutation.mutate(next)}
           />
+          {selectedChannel && <EmbedCopyPanel key={selectedChannel.channel_id} kind="channel" identity={selectedChannel.channel_id} />}
           <OutputsPanel outputs={selectedChannel?.outputs ?? []} />
           <CtvPanel feed={ctvQuery.data} />
         </div>

@@ -150,3 +150,177 @@ def test_async_surface_update_does_not_overwrite_concurrent_publication(session_
     assert store.replace_surfaces("meeting", newer.surfaces, updated)
     saved = store.get_run("meeting")
     assert saved.surfaces == updated and saved.audit_events == newer.audit_events
+
+
+def test_scheduled_youtube_receipt_survives_retry_restart_and_update_failure(
+    session_factory, tmp_path, monkeypatch
+):
+    import json
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    import httpx
+
+    import civiccast.syndicate.live_output as module
+    from civiccast.egress.router import get_egress_store
+    from civiccast.platform.providers import ProviderRegistry
+    from civiccast.publish.models import PublishApprovalRequest, PublishRetryRequest
+    from civiccast.publish.service import approve_publish, retry_publish_surface
+    from civiccast.schedule.models import StaffAssetRow
+    from civiccast.syndicate.live_wiring import build_youtube_output, restore_youtube_schedules
+    from civiccast.syndicate.youtube import YouTubeClient, YouTubeSettings
+
+    now = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(module, "datetime", Clock)
+    start, end = now + timedelta(hours=1), now + timedelta(hours=2)
+    calls = []
+    update_fails = False
+    snippet = {
+        "title": "Council",
+        "description": "Retain description",
+        "scheduledStartTime": start.isoformat(),
+    }
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "test"})
+        if request.method == "DELETE" or request.url.path.endswith("/transition"):
+            return httpx.Response(204)
+        if request.method == "PUT":
+            if update_fails:
+                return httpx.Response(503)
+            snippet.update(json.loads(request.content)["snippet"])
+            return httpx.Response(200, json={"id": "event"})
+        if request.url.path.endswith("/liveBroadcasts"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "event",
+                    "items": [{"snippet": snippet, "status": {"lifeCycleStatus": "live"}}],
+                },
+            )
+        if request.url.path.endswith("/bind"):
+            return httpx.Response(200, json={"id": "event"})
+        if request.url.path.endswith("/liveStreams"):
+            stream = {
+                "cdn": {
+                    "ingestionInfo": {
+                        "rtmpsIngestionAddress": "rtmps://a.rtmps.youtube.com/live2",
+                        "streamName": "private-key",
+                    }
+                },
+                "status": {"streamStatus": "active"},
+            }
+            return httpx.Response(200, json={"id": "stream", **stream, "items": [stream]})
+        raise AssertionError(request.url)
+
+    store = PostgresPublishStore(session_factory)
+    asset = StaffAssetRow(
+        asset_id="meeting",
+        title="Council",
+        state="validated",
+        manifest_url="https://station.example/meeting.m3u8",
+        published_at=now,
+        retention_policy="meeting",
+        version=1,
+    )
+    egress = Mock()
+    egress.get_config.return_value = SimpleNamespace(
+        enabled=True, sinks=[SimpleNamespace(kind="hls", uri=str(tmp_path))]
+    )
+    (tmp_path / "playlist.m3u8").write_text("#EXTM3U")
+    registry = ProviderRegistry()
+    app = SimpleNamespace(
+        dependency_overrides={get_egress_store: lambda: egress},
+        state=SimpleNamespace(
+            store_bundle=SimpleNamespace(
+                publish_store=lambda: store,
+                asset_store=lambda: SimpleNamespace(list_all=lambda: [asset]),
+            ),
+            provider_registry=registry,
+        ),
+    )
+    registry.register(
+        "youtube",
+        "mock",
+        lambda: YouTubeClient(
+            YouTubeSettings("test", "test", "test"),
+            transport=httpx.MockTransport(handler),
+            live_output=app.state.youtube_live_output,
+        ),
+    )
+
+    def owner():
+        manager = build_youtube_output(app)
+        monkeypatch.setattr(manager._supervisor, "start", lambda: None)
+        process = Mock()
+        process.poll.return_value = None
+        monkeypatch.setattr(manager, "_launch", Mock(return_value=process))
+        app.state.youtube_live_output = manager
+        return manager
+
+    manager = owner()
+    approval = PublishApprovalRequest(
+        operator_id="operator",
+        operator_display_name="Operator",
+        approved_surface_ids=["portal", "youtube-live"],
+        youtube_channel_id="government",
+        youtube_scheduled_start=start,
+        youtube_scheduled_end=end,
+    )
+    approve_publish(asset=asset, request=approval, store=store, registry=registry)
+    surface = next(s for s in store.get_run("meeting").surfaces if s.id == "youtube-live")
+    assert surface.delivery_state == "scheduled" and surface.broadcast_id == "event"
+    assert "private-key" not in surface.model_dump_json()
+    manager._launch.assert_not_called()
+    retry = PublishRetryRequest(operator_id="operator", operator_display_name="Operator")
+    retry_publish_surface(
+        asset=asset, surface_id="youtube-live", request=retry, store=store, registry=registry
+    )
+    manager.close()
+    manager = owner()
+    restore_youtube_schedules(app)
+    assert manager.knows("meeting")
+    manager.run_once()
+    manager._launch.assert_not_called()
+    update_fails = True
+    failed = retry_publish_surface(
+        asset=asset, surface_id="youtube-live", request=retry, store=store, registry=registry
+    )
+    surface = next(s for s in failed.surfaces if s.id == "youtube-live")
+    assert (
+        surface.state == "failed"
+        and surface.broadcast_id == "event"
+        and surface.stream_id == "stream"
+    )
+    manager.run_once()
+    assert (
+        next(s for s in store.get_run("meeting").surfaces if s.id == "youtube-live").delivery_state
+        == "failed"
+    )
+    update_fails = False
+    retry_publish_surface(
+        asset=asset, surface_id="youtube-live", request=retry, store=store, registry=registry
+    )
+    now = start
+    manager.run_once()
+    assert (
+        next(s for s in store.get_run("meeting").surfaces if s.id == "youtube-live").delivery_state
+        == "live"
+    )
+    now = end
+    manager.run_once()
+    row = store.get_run("meeting")
+    assert next(s for s in row.surfaces if s.id == "youtube-live").delivery_state == "stopped"
+    assert next(s for s in row.surfaces if s.id == "portal").state == "succeeded"
+    assert calls.count(("POST", "/youtube/v3/liveBroadcasts")) == 1
+    assert calls.count(("POST", "/youtube/v3/liveStreams")) == 1
+    manager.close()

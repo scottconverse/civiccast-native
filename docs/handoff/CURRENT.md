@@ -1,6 +1,289 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active PR269 correction - October 26, 2026
+## Current consolidated N4-N8/F5 source delivery - October 26, 2026
+
+- CURRENT frozenPR270head423393349f87148e7253f93691a9a70478cc120c pushed.
+  RequiredCI40317242166 terminal;93014/cell850 consumedexit1. Unit121552808870
+  SUCCESS34m8s incl Postgres/nativepure, Claims121567232117SUCCESS17s/integration
+  PASS. WholePRrollup22SUCCESS/3SKIP/1FAIL (only Windows121552808917 decoder
+  discovery;56othernative-mediaPASS). InformationalrandomizedalsoPASS. No other
+  defect toconsolidate; next push reviewed helper-onlycorrection and own one
+  requiredCIwaiter. Signed42339334kitbelow remainsvalid, no rebuild.
+- ExactWindows retainedartifact12648720319 (windows-native-junit,2.5MB) contains
+ 2.9MB outputTS/worker/graph/decoder receipt. Defaultmoviefilter reproducibly
+  exit-22 unspecifiedH264size/emptyformat. Largerprobe/timealoneFAIL; source
+  comparison identifies ffprobe explicit scan_all_pmts=1 missing frommovie.
+  Samebytes with that option decode OUTGOING2.367-4.367/queued6.433-10.154,
+  incoming10.888-12.521; actualswitch10.155, delayedstaleabsent. Existinghelper
+  now sets demuxoption only; unchanged boundary assertionsPASS onretainedTS,
+  Ruff/format/diffPASS, only existingnative-testhash renewed. No productdelta,
+  no new recording/build; reviewed test-onlycorrection ready forpush.
+  Original CIartifact immutable; local output.caption-decode.json now records
+  correctedhelperresult. %TEMP%/civiccast-retained-caption-default.json preserves
+  reproducedfailure; %TEMP%/civiccast-pr270-windows-42339334 contains retainedbytes.
+- Signing candidate40317362877 terminalSUCCESS;11307/cell851 consumedexit0.
+  Station1215532329962m59s/manual1215532336332m47s/app12155450232719m38sPASS;
+  assembled121562733091. Kit C:/CivicCastTester/kit-staging/423393349f87148e7253f93691a9a70478cc120c.
+  Setup261349744bytes, SHA2569b01304429a07220dd5f35b061a779fdc07744fb6d0ae45defec232eccb0375a.
+  DirectAuthentiCodeValidCNScottConverse/Microsofttimestamp; build log verifies
+  patchedlauncher12:01:40 and generateduninstallernstF8C0.tmp12:01:45 signatures.
+  These are packaging proofs, not installed acceptance. Candidate receipt and
+  signedpacks remain C:/CivicCastTester/candidates/423393349f87148e7253f93691a9a70478cc120c/candidate.
+- AutomaticGateA40320430842 terminalCANCELLED, RAM8675MB<16384MB. Cancellation
+  was late: ownedSandboxRemoteSession26180 launched12:10:17UTC; stopped only
+  verified ownedsandbox-lab/CivicCastSandboxTest.wsb client, forcecancelledrun,
+  confirmed noSandboxclient remains. Unknownvmwp27068 preserved. No claim of
+  prelaunch prevention or completed acceptance. Do not relaunch until16GBfree.
+  Existinglistener86662/PID14068 owned; source/CI continuation only meanwhile.
+  No stationchange/tags/publication/LFS/spend. F5 installed launcher/uninstaller
+  signature checks and isolated install/uninstall acceptance remain pending.
+
+### Historical prior candidate failure and correction receipts
+
+- PR270 correction includes reviewed DCO906fd0a2 Tauri conditional hook fix
+  and bounded manual provisioning diagnostics, plus current-source tripwire
+  renewal. Remote8d64ce26 required CI40310373196 terminalFAILURE; sole15349/cell806
+  consumedexit1. Unit12152974866050m10s:18stale-binding failures/11783passed,
+ 106skip/5deselected. All18 specific assertions nowPASS42.84s; only engine.py,
+  existing native test and ci-test floor workflow role hashes renewed. Complete
+  registered-input drift scan nowempty; packaging paths are not bound. Claims
+  historical/current-source/installed limitations unchanged. Exact log
+  %TEMP%/civiccast-pr270-unit-8d64.log. No product unit assertion failure.
+- Windows121529748466SUCCESS13m30s delayedPNG/fullnative suite, integrationPASS;
+  all other required checksSUCCESS/SKIP at terminalrollup. Claims failure is
+  consequentmissing nativepureJUnit afterpytestfailed. Randomizedinformational.
+  Next push consolidated correction, own ONE current-head requiredCI waiter.
+- Candidate40310416286 terminalFAILURE;67349/cell807 consumedexit1. Reused signed
+  station121529915153SUCCESS2m42s; app121531088730 builtverifiedcomponentpacks,
+  compiled and initialNSISsucceeded, then normalization rejected Tauri's empty
+  conditional UNINSTALLERSIGNCOMMAND hook at11:06:46UTC. Focused correction
+  removes only recognized conditional block, preserves unknownfinalizer rejection,
+  hidden checked callback/signingorder/failure restoration. Existing two cases
+  PASS1.58s, native collection counts unchanged. Ruff/diff/actionlintPASS.
+  %TEMP%/civiccast-final-candidate-build.log. No qualifying signed setup yet.
+- Manual121529915032 failed silent10min apt provisioning before render; exactlog
+  %TEMP%/civiccast-final-candidate-manual.log. Necessary replacement includes
+  visible progress, existing30s network/60slock/retry1 options,180supdate/360sinstall
+  bounds and failure holderdump; samepackages/renderchecks. No obsoletejobretry.
+- AutomaticGateA40312615017 completed neutral/success with all three install and
+  upgrade lanes SKIPPED; no Sandbox/stationinterruption. Listener86662/PID14068
+  remains owned, no buildrunning. Last C211GBfree/RAM8978MB vs Sandbox16384MB;
+  recheckbeforeacceptance and preserve unknown VM/station. Next corrected signing
+  candidate reuses existing verifiedstation route, no tags/publication/LFS/spend.
+  F5 installed launcher/uninstaller signatures and isolatedacceptance remain.
+
+### Historical earlier PNG and fixture receipts
+
+-40302184786 terminal FAILURE, sole67973/cell747 consumedexit1. Unit121502756357
+ 58m22s:3failed/11798passed/106skipped/5deselected. Exact native collection now
+ 2084pure/2326total/2323Windows(nonintegration); workflowfloors2034/2273 retain
+  margin50. Schedule embed fixture now supplies explicit allowed access policy,
+  matching existing VOD fixture; production fail-closed policy unchanged.
+  Three exact failed testsPASS27.76s. Log %TEMP%/civiccast-pr270-unit-current.log.
+- Required Windows121502756712 failed only static-PNG compositing (56other
+  native-mediaPASS). Local original scenarioFAIL6.37s, retained33frames allmissing,
+  decoderexit0: %TEMP%/civiccast-pr270-overlay-diagnosis/test_graphics_overlay_composit0.
+  Gst1.28 VideoAggregator skips sole PTS0/40ms PNG buffer arriving after live
+  deadline before repeat-after-eos can retain it. Debug probe captured40ms+EOS;
+  timing changed/pass is diagnostic, not a fix. Static repeat-after-eos PNG-only
+  writable pad probe now makes duration indefinite; live-layer timing unchanged.
+  Existing scenario forces200ms PNG admission: without fixFAIL4.83s, with fix
+  PASS4.61s (logo/banner pixels,continuity,clean teardown), settled lastframe.
+  Initial fixture exclusive image_path/source_chain violation corrected; direct
+  setter rejected immutable buffer, diagnosed bundled writable_object API used.
+  Ruff/format/diffPASS. %TEMP%/civiccast-pr270-windows-current.log retained.
+- Other current required checksPASS, including both a11y and docs retry
+ 121509027854 (10:01:47-10:06:13UTC). Original docs apt/TeX provisioning silent
+ 10min timeout occurred before render; one failed-job-only retry cleared it.
+  Informational randomized121502712534 failed apt on all3mirrors beforepytest;
+  no product finding, no new gate/rerun. Exact logs %TEMP%/civiccast-pr270-{docs,
+  randomized}-current.log. Whole rollup18SUCCESS/3SKIP, unit/Windows and consequent
+  claimsFAIL; randomizedFAIL is informational. Next one correctionpush/newwaiter.
+- Candidate40303350129 at3074f2b6 CANCELLED for named artifact-affecting PNG
+  defect before installer signing/kit;78803/cell757 consumedexit1. Verified signed
+  station reuse121506336646 and exactmanual121506336342PASS. Both large uploads
+  false; station used existing complete beta20-documentation-revision/kit/station,
+  model acquisition skipped. Automatic GateA40304402239 completed neutral/skip,
+  no Sandbox install. Corrected signed candidate and installed-signature acceptance
+  remain; no release/tag/publication. Existing runnerlistener86662/PID14068 owned.
+- GateA template requires16384MB vs free~9091MB at candidate launch. Preserve
+  existing vmwp27068 (sinceOct18,parentvmcompute5428) and station. Parent requested
+  app cleanup; recheck headroom before isolated acceptance, cancel only our queued
+  automatic GateA before Sandbox launch if still insufficient. No VM changes.
+
+### Historical PR270 initial candidate and typing correction
+
+
+- PR270 initial lint121492497246 failed14 mypy types in8changedfiles. Exact
+  log %TEMP%/civiccast-pr270-lint.log. Corrected annotations/invariant narrowing,
+  typed conditional caption keyword and existing SQLAlchemy/callback type seams;
+  no normal runtime behavior change. Required mypy civiccast78729 terminal0,
+  no issues730files; affectedRuff passed. Next DCOcorrectionpush/newsolewaiter,
+  retaining terminal receipts rather than rerunning local functional suites.
+- PR270 https://github.com/scottconverse/civiccast-native/pull/270 review-ready,
+  frozen head0bfcb944071017e4dfda13905b628236f661f1e6. Parent verified exacthead,
+  mergeable/body/review; source frozen pending requiredCI, no additional checks.
+- Sole waiter2879 owns ci-test40299157456, started~09:24UTC, Unit121492497954,
+  Windows121492497573, integration121492498028. Expected fullterminal success/
+  concretefailure; priorunit54m14s, jobtimeout75m. Ctrl-C2879 cancels watcher only.
+  WholePRrollup at meaningful job completion/failure boundaries, ci-test alone
+  does not prove allCI. Existing listener86662/PID14068 owned, build undispatched.
+
+
+- Source candidate ab3df74981a82367d6726baec464c8f0ccf05b85, reviewed/DCO,
+  branch fix/f5-installed-authenticode-signing; N8 103f870d, F5 signing3cd74389,
+  reuseab3df749. No downstream push yet. Parent owns finalrollup/PR269merge.
+- Existing CIwait23640/cell683 consumed terminal0:40289108609 attempt2 SUCCESS,
+  Unit12147009249454m14s, Claims12149162566030s; Windows13m25s and integration38s
+  SUCCESS retained. Public-a11y retry SUCCESS per parentrollup. No CIwaiter alive;
+  Parent fullrollup20SUCCESS/3SKIP verified; PR269 merged09:22:15UTC main
+  8608a4b55ae382fd21b6a8ebe5a315c0804a68ff. Integrated main without conflicts;
+  valid focused evidence reused, no broad local rerun for merge alone.
+- Existing runnerlistener86662/PID14068 owned onlineidle; no build dispatched.
+  Finalcandidate signing/isolatedinstalledacceptance remains, no release/tag.
+
+### Historical F5 preparation / PR269 attempt2
+
+- F4 distinction: PR268 corrected the reproduced unsafe aborted-leg teardown /
+  mux hang with fenced release before NULL; native supersede and required Windows
+  checks passed. Original run40165319415 attempt1 filesrc11 stream error safely
+  aborted, but its source cause remains unexplained. No existing receipt proves
+  that original error shares the corrected teardown cause; original diagnostic
+  provenance remains unresolved under the exact F4 plan, no green-retry claim.
+- PR269 attempt2 Unit121470092494 active, sole waiter23640. Public accessibility
+ 121459714731 cancelled after30min apt/Playwright prerequisite install, before
+  tests; failed-job-only rerun requested on fresh runner, no second watcher.
+  Other terminal required checks SUCCESS; randomized informational SUCCESS.
+- N8 DCO103f870d28b0b723d9451fdc420b1c07dcd1465d complete locally/reviewed.
+  Active serial child fix/f5-installed-authenticode-signing. F5 source correction
+  signs patched launcher before NSIS and generated uninstaller via the same pinned
+  ArtifactSigning module/callback, inherited Azure credentials, fail-closed.
+  Existing builder/workflow95pass6.73s; final hidden callback and fail-closed
+  copy correction3pass1.68s. Ruff/diff and PowerShell parse passed. Existing
+  ArtifactSigning module command contract inspected locally; actual final signed package and isolated
+  installed/uninstalled signature acceptance remain, no build launched.
+  Callback explicitly Hidden, module child tools NoNewWindow, inherited ConPTY.
+  Python exit failure checked before any setup copy. DCO source3cd74389.
+- Final-build feasibility metadata08:38UTC: C free237GB, E free1174GB,
+  physical RAM free~9.6GB; no owned local build/test process, sole gh watcher23640.
+  Initial blackwell-builder selfhosted sandbox-lab runner was OFFLINE/notbusy;
+  existing listener connectivity subsequently verified below, no build dispatched.
+  C:/CivicCastTester/runtime-artifact-mirror contains pinned FFmpeg70.8MB,
+  Ollama1.46GB, PostgreSQL334MB, TSDuck38.5MB archives. Prior candidate/kit-staging
+  7d61cbede contain receipts but no current setup/packs, cannot assume ready kit.
+  Complete existing beta20-documentation-revision/kit under task outputs has
+  app/server/runtime packs and station floor/Whistle/Gemma/translation packs.
+  Reuse unchanged verified assets; rebuild changed app/server/setup once against
+  final source, no LFS/spend. Signing module0.1.8 available locally.
+  Existing Run-GateA.ps1 -KitDir route avoids large downloads and keeps isolation;
+  prior C:/Dev/CivicCast-TestVM evidence also exists. One vmwp process27068 exists,
+  ownership not established; do not interrupt. No build/VM/install launched.
+  Credential/runner presence probe: Azure/pack environment values all absent,
+  Azure CLI unavailable; no local signing credential access established. Existing
+  C:/actions-runner/.runner identifies blackwell-builder; credential files exist
+  (values not read), no .service/runner service/task/listener process. Repo secrets
+  remain in Actions. Parent selected existing configured runner route: at final
+  readiness start C:/actions-runner/run.cmd in owned invisible ConPTY, record
+  session/PID, verify repo runner/notbusy/no competing queued candidate, then
+  dispatch existing workflow using local mirror/kit and no large uploads. This
+  parent superseded the wait-to-start instruction for connectivity only. Queue=[]
+  before start, config expectedrepo=true. Started existing run.cmd08:44:30UTC in
+  owned invisible ConPTY86662; ListenerPID14068 parent20564, version2.337.0.
+  Connected/listening; GitHub08:44:42 ONLINE/idle, no Worker. Stop owned listener
+  Ctrl-C86662 after verifying ownership. No build dispatch, credential copying,
+  local unsigned build, VM or station changes. CIwait23640 remains sole waiter.
+  Exact future dispatch: gh workflow run native-beta-candidate-artifacts.yml
+  --ref main -f build_target=self-hosted -f upload_large_artifacts=false
+  -f upload_candidate_binaries=false -f prepare_only=false
+  -f reuse_station_dir="C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/beta20-documentation-revision/kit/station";
+  empty reuse_station_run_id/reuse_station_source_sha
+  (hosted-only), reviewed_pyav_release_tag only if reusing an actual reviewed tag.
+  Before dispatch verify main equals approved merged final source, then verify
+  returned candidate run.headSha equals it; no tag/new release. GateA automatic
+  workflow_run completion uses local kit; manual gate-a-station-acceptance.yml
+  --ref main -f run_id=<candidateRun> -f lane=full if needed, no duplicate lane.
+  Readiness constraint from existing workflow: station model/floor/Whistle caches
+  deleted on previous success and absent under actual runner _work/_temp; build
+  root absent. Stock selfhosted dispatch would fetch them again. Existing complete
+  kit contains their packs, but no selfhosted reuse_station input exists. Resolve
+  supported local asset staging before dispatch; no new download/build performed.
+  Bounded F5 preparation delta: existing builder --reuse-station-dir option and
+  selfhosted workflow input now verify/reuse complete signed station packs through
+  verify_station_media + verify_native_pack; same-volume hardlinks, no repacking,
+  default path unchanged. Three acquisition steps/raw-rootcleanup skipped only
+  for explicit selfhosted reuse. Actual existing index signature verified against
+  current repo public key: beta20/key civiccast-production-2026-beta1/channelbeta,
+  all6 required packs named; full pack verification runs at final reuse execution.
+  Existing tiny bundle/reuse/samefile/version rejection + workflowselection2pass
+  1.70s, Ruff passed. Parent material review complete; no packagebuild/signcall.
+  Final isolated installed launcher/uninstaller Valid timestamped expected signer
+  verification plus applicable existing install/uninstall acceptance remains.
+  Consolidated PR body prepared %TEMP%/civiccast-n4-n8-f5-pr-body.md; push awaits
+  PR269 merge and required CI. Actual signed installed acceptance remains.
+
+### Historical N8 finishing / PR269 infrastructure failure
+
+- Parent owns roadmap/merge. PR269 frozen4b2dfe78; sole waiter16889 consumed
+  terminal exit1, run40289108609. Unit121460108930 failed before pytest:
+  existing apt prerequisite install timed out on all three mirrors (~24min).
+  Claims verifier consequently missing JUnit, not product test evidence. Windows
+  SUCCESS; other terminal required checks SUCCESS, public-a11y still live08:25UTC.
+  Failed log %TEMP%/civiccast-pr269-correction-failed.log. Failed-job-only attempt2 requested; sole waiter23640 owns Unit121470092494
+  started08:26UTC (~64min normal baseline). Ctrl-C stops watcher only. No downstream push before merge.
+- N7 committed7ef5f5f5, reviewed; N4-N7 unpushed serial ancestors preserved.
+  Active feat/n8-agenda-draft-minutes implements cited editable agenda sections,
+  human-confirmed structured motions/votes, CAS approval and durable edit history,
+  approved PDF narrative+JSON export and manual no-model recovery. Parent material
+  review complete after dirty/save-pending approval block and constructor correction.
+- Real migrated/store/API/cited generation/offset/history/approval/export/manual
+  workflow passed4.49s; operator review+agenda37passed2.61s. Affected backend
+  batch36pass/1fail: legacy PDF assertion assumed optional minutes attachment on
+  every record; corrected actual-stream MIME check and minutes JSON MIME assertion.
+  Typed caption fixture corrected four required fields. Exact PDF case passed;
+  actual workflow4.46s passed including optional JSON MIME. TypeScript/affected
+  ESLint/Ruff/diff check passed. API/manual/help generation73857 terminal0;
+  PDF/DOCX8125 terminal0 (usual MiKTeX update warnings). N8 ready DCO commit;
+  next F5 source-only signing seam, no installer build yet.
+
+## Historical N7 finishing / PR269 CI - October 26, 2026
+
+- Parent owns roadmap/merge. PR269 frozen4b2dfe786541294fa5f92a82ed0cc8e0edf823a2.
+  Old ci-test40283658614 completed CANCELLED;69829 consumed exit1 (supersession).
+  Sole waiter16889 owns40289108609, started08:00UTC, ~64min baseline; Ctrl-C16889
+  cancels watcher only. Full rollup08:03UTC lint/operator/operator-a11y/docs/security
+  SUCCESS; public-a11y/unit/Windows/repro still running, no failure then. Next
+  consume at commit boundary; do not infer all CI from ci-test alone.
+- N4-N6 preserved; correction merged26359142 on N6, explicit head0096. Active
+  child feat/n7-selected-languages-caption-display, no downstream push until merge.
+- N7 selected es,zh-Hans(Simplified Chinese),fil(Tagalog/Filipino),vi,ar; Spanish
+  preserved. Existing target-aware Ollama prompt/glossary validation, station
+  controls/review filters, worker review gate, HLS/flat-sidecar/CDN/repackage path
+  implemented. Public selected-channel large-text display/link uses existing
+  sidecar; first snapshot honest, new-change status, missing/interrupted/unchanged
+  30s clear, channel-key clears old text before new request. Live translation off.
+- Focused backend85pass6.81s with2 cancellation fake keyword mismatches corrected;
+  those2pass1.46s. Actual-sample edit/approve/publish/repackage5pass1.79s. Operator
+  review/settings34pass1.49s, native-player all-five selection6pass209ms; both
+  portal typechecks, operator affected ESLint passed. Public built workflow401ms
+  covers delayed new channel/text clearing,60px/link,30s/noinput/error. Public
+  lint mechanical helper export corrected; final affected ESLint/types/Ruff passed.
+- Actual local model five samples completed87322 exit0 (~28s), no helper live.
+  Input: "The council meeting begins at 6 p.m. Public comment follows the budget
+  discussion." Exact outputs retained in test_offline_caption_job.py and temporary
+  civiccast-n7-translation-samples.json. Runtime translategemma:4b digest
+  c49d986b0764f5881c476eb21435bb62b7abc62347aab3d4a6071e811be510a1, Ollama0.30.6.
+  Bounded model-assisted/root sample review: Spanish/Vietnamese preserve meaning;
+  Chinese generalizes council to municipal meeting; Arabic incorrectly says
+  legislative session; Filipino order sentence ambiguous. Explicit draft edits
+  for those three passed existing edit/approve→published tracks. No professional
+  or native-language certification claimed; stations need qualified reviewers.
+- Parent N7 material review complete. API/manual/help generated; PDF/DOCX82632
+  terminal0 (usual MiKTeX update warnings only), docsite12764 terminal0. N7 ready
+  for DCO commit then N8 exact scope. Full rollup08:08UTC reproducibility SUCCESS;
+  public-a11y/unit/Windows still live; no failures. Sole waiter16889 retained.
+  N8/F5 pending; no release/build/live-provider claim.
+
+## PR269 correction receipts - October 26, 2026
 
 - Parent owns roadmap/merge. PR268 is merged; F4/F6/F7 acceptance delivered.
   PR269 old head bfc4dc62 has required lint/operator/public-a11y failures;
@@ -26,7 +309,45 @@
   Existing waiter cancellation is Ctrl-C after verified owned session; no other
   local helper/test process is live. Named recovery stashes remain untouched.
 
-## N1-N3 combined delivery - October 26, 2026
+## N4-N6 preserved implementation receipts - October 26, 2026
+
+- Parent owns roadmap/merge. PR269 frozen bfc4dc620b3958cbe839a63450fece84f2129a66,
+  required CI run40283658614, sole watcher69829 started07:08UTC (~65min prior
+  baseline). Last natural-boundary state Unit and Windows running; no other CI
+  watcher. Cancel watcher only Ctrl+C in69829; next consume at N5 check boundary.
+- N4 reviewed/local DCO50cbb23a02de954ccf625711be0cdcb743c976a7 unpushed pending
+  predecessor delivery. API/help/manual/PDF/DOCX generated; no local jobs live.
+  Focused102backend13.26s,32dashboard2.21s,both portals typecheck/affected ESLint,
+  Ruff, built external-origin TS/Spanish parsed cue/keyboard/375px/access403
+  workflow13.3s passed. Actual YouTube transmission/account activation deferred.
+- N5 reviewed/local DCO7be2ab2255a3c4c26ddbba75d4466576ccf16ccc; capture-linked
+  source markers rebase through F1 while legacy/direct player times remain.
+  Named recording selection, measured capture clock (bounded five-second probe),
+  finalized asset linkage, hh:mm:ss correction, import basis and current public
+  package/viewer access delivered. Evidence188 backend23.94s incl real UDP/media,
+  44 operator3.01s, built resident HLS/keyboard corrected0.5s seek3.2s, types,
+  affected ESLint/Ruff, generated API/help/manual/PDF/DOCX passed. N4+N5 unpushed.
+- Active child feat/n6-daily-station-operations based N5. First product changes:
+  all-channel actual output/source/audio/caption confidence with stale/missing
+  readings; selected version-checked description/meeting-body edits with per-row
+  results and failed-only remaining selection; read-only cleanup review joins
+  existing expiry queue to current asset retention and legal-hold/readiness.
+  Cleanup pages50 rows with current per-asset GETs (not limited Assets firstpage);
+  only visible rows probe protection. No deletion/purge/control or station work.
+- N6 material review complete after paging correction. Existing UI82 passed1.81s;
+  changed direct-asset/selection3 passed890ms and paging1 passed807ms; types and
+  affected ESLint passed. Updated manual/help/PDF/DOCX generation6734 exit0;
+  final generated files include pagination wording. N6 ready for DCO commit.
+- PR269 is NOT GREEN: parent complete-rollup found formatter
+  tests/captions/test_review_persistence.py; AppStaffLogin new array mocks;
+  public routing search fixture; operator first-mile Saved/publish-caption copy
+  assertions. Informational randomized is not a gate, but exposed real affected
+  packaging approved legacy-ID preservation and obsolete migration-head tests.
+  Root logs in Temp/civiccast-pr269-{a11y,randomized}.log. Next finish/preserve
+  N6 commit then isolate corrections on PR269 branch; no N7 work until repaired.
+  Sole ci-test watcher69829 remains live; this watcher covers only ci-test,
+  not the entire PR rollup. Last Windows121442261136 SUCCESS/unit121442261074 live.
+
 
 - Parent owns roadmap/merge. PR268 merged07:03:52UTC, main5764afbcbdf757aa5b5ad6f91187283346ab2e94.
   Frozen e615fc82 CI run40277731000 SUCCESS; waiter2108 exited0. Final rollup

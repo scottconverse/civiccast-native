@@ -48,3 +48,38 @@ class TestOllamaTranslationProvider:
         assert result.status == "ok"
         assert result.bleu >= 5
         assert result.evidence_line.startswith("runtime=ollama")
+
+
+def test_selected_recorded_targets_prompt_and_validation(monkeypatch: MonkeyPatch) -> None:
+    import pytest
+
+    from civiccast.recorded_languages import RECORDED_TRANSLATION_LANGUAGES
+    from civiccast.translate.ollama import OllamaSpanishTranslator
+
+    module = import_module("civiccast.translate.ollama")
+    prompts = []
+
+    def generate(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return "translated sample"
+
+    monkeypatch.setattr(module, "generate_with_ollama", generate)
+    provider = OllamaSpanishTranslator(model_tag="existing-local-model", runtime_evidence=None)
+    for language, label in RECORDED_TRANSLATION_LANGUAGES.items():
+        assert (
+            provider.translate_text(
+                "The meeting starts at 6.",
+                source_language="en",
+                target_language=language,
+                glossary={"City Hall": "approved term"},
+            )
+            == "translated sample"
+        )
+        assert label in prompts[-1]
+        assert "City Hall = approved term" in prompts[-1]
+    with pytest.raises(ValueError, match="supports English"):
+        provider.translate_text("hello", source_language="en", target_language="de")
+    assert len(prompts) == 5
+    monkeypatch.setattr(module, "generate_with_ollama", lambda **kwargs: "  ")
+    with pytest.raises(ValueError, match="returned no Arabic"):
+        provider.translate_text("hello", source_language="en", target_language="ar")

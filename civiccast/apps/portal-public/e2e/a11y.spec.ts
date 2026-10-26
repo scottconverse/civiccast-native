@@ -699,3 +699,77 @@ test.describe('public portal accessibility', () => {
     await page.screenshot({ path: `${evidenceDir}/v0.10-public-portal-feeds-mobile.png`, fullPage: true })
   })
 })
+
+
+test('built embed plays captions on an external origin and clears withdrawn playback', async ({ page }) => {
+  await mockPortal(page)
+  await mockCaptionedHls(page)
+  // The retained TS starts at 1.4s (126000 ticks); bind VTT local zero to that
+  // media timestamp so its cue survives hls.js's negative-time filtering.
+  await page.route('**/captioned/captions/es/seg000.vtt', async (route) => {
+    await route.fulfill({ contentType: 'text/vtt', body: 'WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:126000\n\ncue-es\n00:00:00.000 --> 00:00:01.800\nLa mocion se aprueba.\n' })
+  })
+  // Vite preview proxies /api to a development backend; serve the actual built
+  // index at the dedicated route, as the production FileResponse does.
+  await page.route('**/api/public/embed-player/asset/meeting', async (route) => {
+    const response = await route.fetch({ url: 'http://localhost:4173/' })
+    await route.fulfill({ response })
+  })
+  let available = true
+  await page.route('**/api/public/embed/meeting', async (route) => {
+    await route.fulfill({ status: available ? 200 : 403, contentType: 'application/json', body: JSON.stringify(available ? { title: 'Council meeting', manifest_url: '/captioned/playlist.m3u8' } : { detail: 'Restricted' }) })
+  })
+  await page.route('http://127.0.0.1:4173/external-host', async (route) => {
+    await route.fulfill({ contentType: 'text/html', body: '<html><body><h1>Community website</h1><iframe title="Meeting player" style="width:100%;aspect-ratio:16/9" src="http://localhost:4173/api/public/embed-player/asset/meeting"></iframe></body></html>' })
+  })
+  await page.goto('http://127.0.0.1:4173/external-host')
+  const player = page.frameLocator('iframe')
+  await expect(player.getByRole('main', { name: 'Embedded station player' })).toBeVisible()
+  await expect(player.getByRole('button', { name: 'English', exact: true })).toBeVisible()
+  await expect(player.getByRole('button', { name: 'Spanish', exact: true })).toBeVisible()
+  await player.locator('video').evaluate(async (node: HTMLVideoElement) => { node.muted = true; await node.play() })
+  await expect.poll(() => player.locator('video').evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(3)
+  await player.getByRole('button', { name: 'Spanish', exact: true }).press('Enter')
+  await expect(player.getByRole('button', { name: 'Spanish', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(() => player.locator('video').evaluate((node: HTMLVideoElement) => Array.from(node.textTracks).flatMap((track) => Array.from(track.cues ?? []).map((cue) => (cue as VTTCue).text)).join(' '))).toContain('La mocion')
+  await page.setViewportSize({ width: 375, height: 700 })
+  expect(await player.locator('main').evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+  available = false
+  await expect(player.locator('video')).toHaveCount(0, { timeout: 12000 })
+  await expect(player.getByRole('status')).toContainText('unavailable or restricted')
+})
+
+
+test('published agenda chapters seek the selected recording after a correction', async ({ page }) => {
+  await mockPortal(page)
+  await mockCaptionedHls(page)
+  await page.route('**/api/public/assets/meeting', async (route) => {
+    await route.fulfill({ json: { asset_id: 'meeting', title: 'January Council',
+      description: '', manifest_url: '/captioned/playlist.m3u8', duration_seconds: 2,
+      published_at: '2026-01-01T00:00:00Z', chapters: [] } })
+  })
+  await page.route('**/api/public/paywall/access?**', async (route) => {
+    await route.fulfill({ json: { allowed: true, has_access: true } })
+  })
+  await page.route('**/api/public/assets/meeting/transcript', async (route) => {
+    await route.fulfill({ status: 404, json: { detail: 'No transcript' } })
+  })
+  // Projected source markers in a package starting at 1.5s: active chapter zero,
+  // and the corrected decision at source 2s becomes player 0.5s.
+  await page.route('**/api/public/agendas/meeting', async (route) => {
+    await route.fulfill({ json: { agenda_id: 'network-agenda', meeting_asset_id: 'meeting',
+      source_doc_url: null, items: [
+        { item_id: 'marker-1', order: 1, title: 'Public comment', video_timecode_s: 0 },
+        { item_id: 'marker-2', order: 2, title: 'Decision', video_timecode_s: 0.5 },
+      ] } })
+  })
+  await page.goto('/#/watch/meeting')
+  const video = page.locator('video')
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(1)
+  await video.evaluate((node: HTMLVideoElement) => { node.muted = true; void node.play() })
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(3)
+  await video.evaluate((node: HTMLVideoElement) => node.pause())
+  await page.getByRole('button', { name: 'Jump to Decision' }).press('Enter')
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(0.5, 1)
+  await expect(page.getByRole('heading', { name: 'January Council' })).toBeVisible()
+})

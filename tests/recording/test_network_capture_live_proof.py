@@ -52,6 +52,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from civiccast.agenda.models import AgendaItem, MeetingAgendaInput
+from civiccast.agenda.router import create_agenda, mark_item_now
+from civiccast.agenda.service import AgendaService
+from civiccast.agenda.store import AgendaStore
 from civiccast.db import Base
 from civiccast.live.models import RecordingTarget
 from civiccast.live.recording_paths import DEFAULT_RECORDING_TARGET_ID
@@ -151,6 +155,7 @@ def _udp_mpegts_source(port: int) -> Iterator[None]:
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     try:
         time.sleep(_STARTUP_WAIT_SECONDS)
@@ -197,6 +202,9 @@ def service_and_engine(tmp_path: Path):
     try:
         yield service, factory
     finally:
+        for job in store.list_jobs("civiccast-station"):
+            if job.state in {"arming", "recording"}:
+                service.stop_job(job.job_id)
         engine.dispose()
 
 
@@ -212,7 +220,7 @@ def test_network_stream_capture_produces_real_playable_asset(service_and_engine)
     with _udp_mpegts_source(port):
         source = RecordingSource(kind="mpegts", uri=f"udp://127.0.0.1:{port}?pkt_size=1316")
         job = service.record_now_from_source(
-            station_id="proof-station",
+            station_id="civiccast-station",
             source=source,
             duration_seconds=3600,  # long planned window; this test stops it explicitly
             encoder_profile="copy",
@@ -224,7 +232,33 @@ def test_network_stream_capture_produces_real_playable_asset(service_and_engine)
             f"{job.failure_reason}"
         )
 
+        agendas = AgendaStore(factory)
+        agenda_service = AgendaService(agendas)
+        agenda = create_agenda(
+            MeetingAgendaInput(
+                agenda_id="network-agenda",
+                station_id="civiccast-station",
+                meeting_asset_id="placeholder-reference",
+                source_recording_job_id=job.job_id,
+            ),
+            store=agendas,
+            recordings=RecordingStore(factory),
+        )
+        for order, title in enumerate(["Opening", "Public comment", "Decision"]):
+            agendas.upsert_item(
+                AgendaItem(
+                    item_id=f"marker-{order}",
+                    agenda_id=agenda.agenda_id,
+                    order=order,
+                    title=title,
+                    video_timecode_s=order,
+                )
+            )
         time.sleep(_CAPTURE_SECONDS)
+        marked = mark_item_now(agenda.agenda_id, "marker-2", store=agendas, capture=service)
+        assert marked.video_timecode_s >= 2
+        assert marked.video_timecode_s <= service.recorded_position_seconds(job.job_id)
+        assert agenda_service.public_view("civiccast-station", agenda.meeting_asset_id) is None
 
         done = service.stop_job(job.job_id)
 
@@ -264,3 +298,21 @@ def test_network_stream_capture_produces_real_playable_asset(service_and_engine)
     assert asset.width_px == 640
     assert asset.height_px == 360
     assert asset.duration_seconds == probe.duration_seconds
+
+    # The content-derived final asset resolves the same live-created agenda.
+    linked = agendas.get_agenda_by_asset("civiccast-station", done.asset_id)
+    assert linked.agenda_id == agenda.agenda_id
+    assert agendas.get_agenda(agenda.agenda_id).meeting_asset_id == done.asset_id
+    corrected = marked.model_copy(update={"video_timecode_s": 2})
+    agendas.upsert_item(corrected)
+    assert agenda_service.public_view("civiccast-station", done.asset_id) is None
+    agenda_service.publish(agenda.agenda_id)
+    public = agenda_service.public_view("civiccast-station", done.asset_id)
+    assert public.meeting_asset_id == done.asset_id
+    assert [(item.title, item.video_timecode_s) for item in public.items] == [
+        ("Opening", 0),
+        ("Public comment", 1),
+        ("Decision", 2),
+    ]
+    with pytest.raises(RuntimeError, match="recording"):
+        service.recorded_position_seconds(job.job_id)
