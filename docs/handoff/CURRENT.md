@@ -1,63 +1,81 @@
 # CivicCast portable handoff â€” October 24, 2026
 
-## Active F1–F3 execution — October 25, 2026
+## Active F1â€“F3 delivery checkpoint â€” October 25, 2026
+- OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
+  subsequently explicitly approved creating its YouTube channel. Created Google
+  project `keen-apogee-512802-i5` (CivicCast YouTube), configured an external/testing
+  OAuth app and desktop client, enabled YouTube Data API, and added only this account
+  as a test user. Scott completed consent. Desktop PKCE + validated-state loopback
+  callback succeeded; OAuth refresh and channel API both return HTTP 200.
+  Credentials are local in an ACL-protected private directory, outside the repository;
+  no secret values are recorded here or in chat. The existing Setup save function
+  wrote isolated credentials; the real adapter consumed them without OAuth env vars.
+  Created channel CivicCast, handle @CivicCast1, ID `UCIsN1mKqtpMNpvoh8GPSXkQ`.
+  Scott completed phone verification; the correct-account verification screen
+  confirms it. Refreshed Studio for this exact channel/account. Its live-access
+  request is now active: requested October 25, 2026 at 9:01 PM America/Denver;
+  observed countdown "Only 23:59:51 until you can stream". Expected availability
+  October 26 around 9:01 PM Denver time, subject to Google's actual activation.
+  OAuth refresh, channels.list and now liveBroadcasts.list return HTTP 200; the
+  list response does not establish permission to start while Studio's countdown
+  remains active. No event or sender created. Scott explicitly accepted F2 setup
+  and implementation: real streaming is NOT required for sign-off and this delay
+  is NOT a blocker. A later destination/viewer/stop rehearsal remains a follow-up,
+  without touching the endurance run.
+  No active watcher, callback, test sender or automatic continuation is running.
+  No billing, station changes, installer, release, or merge. OAuth callback helper
+  session 92399 finished successfully; earlier blocked attempt 29891 was cancelled.
 
-Owner assignment: execute F1/F2/F3 from plan commit `7edc550049c38b3806ba091e4f3d6b9d6051b6b9`;
-implement, verify focused behavior and CI, push DCO commits and deliver a review-ready PR.
-**No merge, release, installer rebuild or installed-station update. Goal remains incomplete
-until real YouTube acceptance and CI are satisfied.**
-
-- Candidate: `C:/Dev/civiccast-f1-f3`, branch `fix/f1-f3-caption-publish-dependencies`,
-  based on plan commit `7edc5500`; fetched main `933dd657`. Original checkout and its
-  uncommitted restart checkpoint are preserved. One executor; routing skill applied,
-  current agent retained; no independent reviewer was commissioned.
-- F1: earlier review missed delivered source commits `5c3540ec` and `5ca75521`.
-  Preserve those fixes: package timeline clips/rebases approved English/Spanish cues;
-  repackaging reconstructs from approved source cues and holds missing/stale review.
-  Existing caption/packager/PDF focused run: 107 passed; eight auth failures diagnosed
-  as ambient `CIVICCAST_STAFF_TOKENS`, with all nine packaging cases passing after
-  clearing it in the isolated child shell. Real fractional trim passed. Added combined
-  real FFmpeg package + bilingual-caption sample passed (0.333–0.9 s range, head/tail
-  removed, cues 0–0.167 and 0.467–0.567 s, originals preserved). No caption engine change.
-- F2 implemented: protected Setup values feed IA/YouTube/NAS/SMTP settings directly,
-  explicit provider selections retained, no environment mutation or duplicate setup.
-  Added refresh-token and SMTP fields; webhook-only configuration stays compatible.
-  Selected channel's fresh local HLS feeds a separate owned FFmpeg RTMPS output;
-  event title/current start/privacy/auto-start/stop are configured and bound.
-  Watch links replace ingest links. Destination polling distinguishes starting/live/
-  failed/stopped; startup timeout, process exit, disconnect, stop, partial event setup,
-  shutdown and restart interruption are handled. Unused events/streams are cleaned up;
-  remote cleanup failure is reported; shutdown continues if status saving fails.
-  Destination polling is 30 seconds to limit API quota use; UI polling stays local. CAS surface updates preserve concurrent publish
-  work; dashboard reads remain batched. Legacy unconfirmed YouTube successes display
-  unverified and private ingest URLs are removed from responses. Local portal survives
-  output/provider failures. Mocks explicitly remain simulated/unverified.
-- F2 acceptance blocker: no YouTube OAuth client ID/secret/refresh token in the existing
-  shell or saved Setup store. Asked Scott for an existing protected credential location
-  (never secrets in chat); no response yet. No account, spending or external YouTube
-  event was created. **Simulator proof is not real YouTube viewer acceptance.**
-- Software receiver proof: existing real FFmpeg sender and loopback RTMP receiver
-  transferred 62,197 bytes of FLV; simulated API confirmation drove starting/live/
-  stopped; sender was reaped and receiver terminated. Contract tests cover metadata,
-  OAuth, cleanup, missing source, process/destination failure and confirmation timeout.
-- Verification: 190 backend cases passed, then 39 real-sample/lifecycle cases after
-  cleanup corrections, 156 publish cases after CAS/batched-read changes, 21 targeted
-  legacy/query-count/default-selection regressions. Final restart/setup regression: 27 passed.
-  Operator publish UI: 31 passed including channel payload/stop; operator build/lint
-  passed. Public portal: 69 passed and lint passed. One stale on-air wording assertion
-  failed with both old Vitest 4.1.11 and updated 4.1.12; corrected only the test to the
-  existing playback-position wording. Native lock/closure checks: 71 passed.
-  Repository Ruff check/format passed with pinned 0.15.12; full mypy passed for 725
-  files with pinned mypy 2.0.0/SQLAlchemy 2.0.49. Earlier latest-tool diagnostics were
-  resolved by matching the lock, without unrelated source changes. Generated API
-  artifacts updated. Claims blob and marker checks found no drift. Final CI pending.
-- F3 targeted updates only: uv lock changes exactly four package versions; native app
-  lock changes only pypdf/filelock/setuptools; runtime lock changes setuptools. Existing
-  LGPL PyAV wheel hash and all other native pins retained; app lock hash updated.
-  Public/operator npm lock changes are Vitest family/Zod and public Undici only.
-  Fresh pip-audit passes existing allowlist policy; both npm audits have zero findings.
-  No suppression/threshold/workflow changes. Existing NLTK PYSEC-2026-3740 exception
-  remains unchanged and is outside these selected remediation claims.
+- Delivered: review-ready PR267 https://github.com/scottconverse/civiccast-native/pull/267
+  on branch `fix/f1-f3-caption-publish-dependencies`, head
+  `29a1d373b52bf25cd6fdfd3e893308ade2c4a799`. PR is OPEN, non-draft, merge state CLEAN.
+  All new commits have DCO sign-off. **Do not merge, tag, release, rebuild an installer,
+  or update/restart the endurance station.** Scott revised F2 acceptance to accept
+  the completed setup without a real streaming check. F1/F2/F3 are accepted; finish
+  the requested setup-manual documentation and its required CI/PR delivery.
+- Worktree: `C:/Dev/civiccast-f1-f3`; original checkout and its pre-existing handoff
+  remain preserved. Baseline main `933dd657`; plan commit `7edc5500`. One executor;
+  current-agent routing skill applied; no independent reviewer was commissioned.
+- F1 VERIFIED: original review missed fixes already in main (`5c3540ec`, `5ca75521`).
+  Retained package-timeline clipping/rebasing and approved-source repackaging gates.
+  Added real FFmpeg fractional-trim + bilingual-caption regression: removed head/tail
+  excluded, retained cues align to 0â€“0.167 and0.467â€“0.567 seconds, originals unchanged.
+  Existing trim/repackage/review regressions passed; no caption engine was replaced.
+- F2 ACCEPTED BY OWNER; LIVE REHEARSAL IS FOLLOW-UP: protected Setup values now feed existing
+  IA/YouTube/NAS/SMTP adapters with environment fallback and explicit provider override.
+  Added required YouTube refresh-token and optional SMTP fields; webhook-only setup
+  remains compatible. No secrets copied into environment or returned in Setup responses.
+  Publish selects a channel with fresh HLS and sends its existing audio/video through
+  a separate owned FFmpeg RTMPS process to a configured/bound YouTube event. Current
+  start/title/privacy/auto-start/stop metadata, viewer links, destination-confirmed
+  lifecycle, two-minute startup timeout, process/destination failure, stop/shutdown,
+  restart interruption, partial setup cleanup and private ingest-link redaction are
+  covered. Thirty-second destination polling limits quota use; UI reads local status.
+  Conditional surface writes preserve concurrent publishing; dashboard reads stay
+  batched. Simulated and historical unconfirmed YouTube results remain unverified.
+  Provider/output failures leave local portal publication available.
+- F2 proof and acceptance: real Google OAuth refresh, channels.list and
+  liveBroadcasts.list return HTTP 200; the authorized channel is @CivicCast1.
+  Existing Setup save securely feeds the real adapter without OAuth environment
+  variables. Scott completed phone verification. Studio's activation countdown is
+  recorded above. Contract tests and the real local FFmpeg/RTMP receiver establish
+  local starting/live/stopped lifecycle and transport. No actual YouTube stream or
+  viewer playback is claimed. Scott explicitly removed that check as a sign-off
+  requirement and said to count F2 as a win; the earlier blocked audit is superseded.
+- Documentation follow-up: expanded the setup chapter with account/channel
+  selection, project/API setup, OAuth app/client/test-user creation, desktop PKCE
+  helper, protected three-field storage, testing-token expiry, phone verification,
+  Studio account selection/activation and later rehearsal/stop. Corrected related
+  obsolete provider/publishing claims. Regenerated the assembled, in-product and
+  downloadable manual artifacts. Helper is an IT source-checkout tool, not a new
+  installer feature; focused callback/security checks pass (4 cases).
+- F3 VERIFIED: targeted package updates only; uv changes exactly four resolved versions.
+  Native app lock changes only pypdf/filelock/setuptools, runtime lock only setuptools;
+  existing single LGPL PyAV wheel retained and app lock hash updated. Security floors
+  are scoped to captions-runtime/dev groups so global uv settings cannot contaminate
+  hash-required native staging. All four current-head CI security scans pass; both npm
+  audits are zero. Existing allowlisted NLTK PYSEC-2026-3740 remains unchanged/outside
+  selected remediation. No suppression, threshold or workflow gate was changed.
 
 | Dependency | Corrected advisory identities | New pin and exposure |
 |---|---|---|
@@ -69,59 +87,37 @@ until real YouTube acceptance and CI are satisfied.**
 | Zod | GHSA-mrhx-c7xc-m3w5 | 4.6.7; frontend development ESLint tooling |
 | Undici | GHSA-4qv8-2p9j-2685; GHSA-f72v-6w45-q472; GHSA-xjj6-f33q-929c | 7.30.1; public portal dev jsdom dependency |
 
-Installed environments retain their current packages. Applying these dependency fixes
-later requires an owner-authorized installed application/runtime update from corrected
-locks (including caption environment filelock where present). Nothing was installed into,
-restarted or rebuilt for the endurance station. Source CI does not prove its remediation.
+- Final CI, current head: **23 passed,3 installer-related checks skipped,0 failed,
+  0 pending**. ci-test40233336560 completed SUCCESS, including claims verifier.
+  Unit cross-platform:11759 passed,105 skipped,5 deselected; Linux native subset:
+  2082 passed,242 deselected; additional required captured case:1 passed, no skips.
+  Windows:2321 native passed (floor2271), plus35 installer/filesystem and56 media
+  cases, no skips. Security40233336615, lint/types40233336623, docs40233336572,
+  Windows payload reproducibility40233336536 and a11y40233336538 all pass. Existing
+  informational randomized run40233336611 also passes; it was not promoted to a gate.
+  CI URL: https://github.com/scottconverse/civiccast-native/actions/runs/40233336560
+- Focused evidence retained:190 provider/publish checks;39 sample/lifecycle checks;
+  156 publish checks;21 legacy/query-count regressions;27 restart/setup checks;
+  12 shutdown/lifecycle checks;71 native lock/closure checks;31 operator publish UI
+  and69 public UI tests; operator build and both frontend linters; pinned Ruff/mypy
+  (725 source files); generated OpenAPI/lock currency; no claims blob/marker drift.
+  A stale public test assertion was reproduced on both old/new Vitest then corrected
+  to existing wording. CI exposed two old auth/installer fixtures omitting the new
+  refresh token; both were reproduced and corrected, retaining role/redaction checks.
+  Required unit work finished before that test-only push. No broad manual rerun,
+  unrelated repair, mutation testing or new gate was added.
+- Installed environments retain current packages. Applying F3 later needs a separate
+  owner-authorized installed app/runtime update from corrected locks, including
+  caption-environment filelock where present. No installed package was changed here.
+- All owned checks, software receiver/sender, browser helpers and CLI watchers are
+  terminal. Last watcher79306 / wait179 returned0. No automatic continuation is
+  promised. Scratch receipts remain under original chat `work/f1-f3-*`.
+- Next: deliver this manual/helper follow-up on the same PR and complete its
+  required checks. F1/F2/F3 acceptance no longer waits for YouTube activation or
+  real streaming. Reuse prior passing evidence for unchanged implementation.
+  A later live rehearsal is follow-up, not a blocker. No F4-F7/N-series work,
+  merge, release, installer, LFS transfer, spending or installed-station changes.
 
-- Delivery: PR267 https://github.com/scottconverse/civiccast-native/pull/267 is open
-  for review; current head `c782c01489b2b5fb708a3fc1674861eaedf98cf1`.
-  All implementation commits carry DCO sign-off. No merge authorized.
-- CI on c782c014: all four security scans, lint/types, operator build, docs render,
-  public accessibility, agenda integration, publish soak and policy gates passed.
-  Operator accessibility: 269 passed, one publish test omitted the new required
-  source channel. Corrected fixture to select government and assert the POST channel;
-  focused real-browser rerun passes.
-  Both Windows jobs failed before testing/payload staging because global uv
-  constraints injected unhashed ranges into hash-required installs. Reproduced the
-  exact error locally; moved security floors into captions-runtime/dev dependency
-  groups instead. Runtime hash-required dry-run now resolves all eight pinned
-  packages; no package installed. All 200 resolved versions are unchanged by this
-  configuration correction, so prior audit evidence remains valid. Native lock/
-  closure regression71 passed again. No gate, threshold or suppression changed.
-- Current delivery head: `b303359c0b726876e219feb26ae4a900534ceae7`, PR267 open.
-  Current CI: ci-test40228919784; security40228919743; lint40228919832;
-  docs40228919843; Windows app reproducibility40228919751; a11y40228919769.
-  Superseded c782c014 unit workflow was cancelled after the source correction.
-  Owned GitHub watch session6379 now observes PR267 every30s and exits when checks
-  finish; log `work/f1-f3-ci-watch-b303359c.log` in original chat. Older duplicate
-  watch63380 was stopped with Ctrl-C (watch only, not GitHub jobs). Keep following
-  current-head CI and fix concrete failures; do not infer an automatic continuation.
-- F1 verified: delivered trim/repackage implementation retained and combined real
-  sample passed. F3 targeted remediation verified by current-head security scans;
-  no installed-environment update was performed. F2 software implementation and
-  simulator checks pass; real destination acceptance remains blocked below.
-- CI on b303359c is terminal: 20 checks passed, including Windows probes
-  (2321 native tests,35 installer/filesystem and56 media cases, no skips) and
-  app reproducibility. Required unit run40228919784 completed with11757 passed,
-  105 skipped,5 deselected and exactly the same two fixture failures found in the
-  informational randomized run (11761 passed,106 skipped,2 failed). Claims verifier
-  rejected the failed producer as required; no binding drift is present.
-- Corrected those two auth/installer fixtures to supply/expect the newly required
-  refresh token; preserved403/200 role checks and both secret-redaction assertions,
-  and removed duplicate environment setup. Reproduced before fixing; both focused
-  cases now pass, and affected Ruff checks pass. Application/dependency code and
-  package versions are unchanged. No extra gate or unrelated repair was introduced.
-- Next: push this test-only correction, follow current-head CI through the existing
-  GitHub watch with fail-fast notification, and deliver the review-ready PR when
-  required checks pass. The old watcher6379 and wait172 are terminal; wait163 was
-  stopped earlier to inspect the informational failure. No watcher currently owned.
-- Real authorized YouTube destination acceptance remains incomplete; no OAuth
-  credential location response yet. The native goal stays active/incomplete.
-  No owned local FFmpeg sender/receiver or browser/server check remains.
-- Boundaries: no station touch, LFS transfer, installer, release, merge, paid service,
-  account creation, F4–F7/N-series work or automatic delegation. Historical records below
-  are superseded only for this explicitly authorized F1–F3 assignment.
 
 ## Historical restart checkpoint â€” October 25, 2026
 

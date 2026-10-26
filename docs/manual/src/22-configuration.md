@@ -361,7 +361,73 @@ The Provider setup block on the Setup page lists twelve cards: Local resident po
 
 The same providers can be configured with environment variables instead (for example `CIVICCAST_R2_ACCOUNT_ID`, `CIVICCAST_R2_ACCESS_KEY_ID`, `CIVICCAST_R2_SECRET_ACCESS_KEY`, `CIVICCAST_R2_BUCKET`, `CIVICCAST_R2_PUBLIC_BASE_URL`, `CIVICCAST_CDN_PROVIDER`, and the `CIVICCAST_BUNNY_*`, `CIVICCAST_FASTLY_*`, `CIVICCAST_AKAMAI_*`, `CIVICCAST_IA_*`, `CIVICCAST_YOUTUBE_*` and `CIVICCAST_SMTP_*` families listed in [Appendix: settings](#app-settings)). The CDN, archive and mail details are in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
 
-For Internet Archive, local archive, YouTube, mail and subscriber webhooks, saving a credential in `provider-credentials.json` does **not** set the publishing adapter's selector or service environment. The adapter registry reads `CIVICCAST_PROVIDER_*` selectors and credentials from the running service environment. IT must set those using the [service environment procedure](#configuration-env) and restart the service; use the [provider behavior notes](#ch-integrations) to see which Publish paths are actually available.
+For Internet Archive, local archive, YouTube and SMTP mail, saved Setup details feed the existing real adapter directly. You do not need to copy those credentials into service environment variables or restart the station for this connection. Saved fields take precedence over environment fallback. An explicit `CIVICCAST_PROVIDER_*` selector still overrides automatic selection; ask IT to check it if a saved connection remains simulated. Subscriber notices with only a webhook secret retain their existing webhook behavior; SMTP selection requires SMTP details. Configuration alone does not prove delivery.
+
+### Connect YouTube, from account sign-in to live access {#configuration-youtube}
+
+YouTube is optional. Its setup has three separate parts: a YouTube channel, Google's permission for CivicCast to use it (OAuth), and YouTube's permission to livestream. Signing into YouTube in Chrome completes none of the other two permissions by itself. Have the station's Google-account owner and an IT person do this together. Do it at least a day before the first planned stream; Google can impose a first-time activation wait.
+
+#### 1. Select the station account and create its channel
+
+1. Sign into YouTube with the Google account the station will own. Check the email in the account menu; several accounts can be signed into the same browser.
+2. Open [YouTube's channel switcher](https://www.youtube.com/channel_switcher). Select the intended channel if one exists. A Google account can exist without a YouTube channel: **No channel** means one still needs to be created.
+3. With the account owner's approval, choose **Create a channel**, set the channel name and available `@handle`, review the displayed terms, and choose **Create channel**. Record the channel address and channel ID. Do not create another channel if the station already has the one it wants.
+
+#### 2. Prepare a Google Cloud project and OAuth client
+
+1. In the same browser, open [Google Cloud Console](https://console.cloud.google.com/). Confirm the station email in its account menu too. Google Cloud, YouTube and YouTube Studio can each select a different signed-in account. The `authuser` query parameter with the station email can help select the correct account; always confirm the screen itself.
+2. On a first visit, review Google's welcome/terms screen, select the country and accept the terms if authorized. Opening this console does not require starting its free trial or enabling billing for this procedure. Dismiss the trial offer.
+3. Use the project picker to select the station's existing project. If there is none, have the owner approve creating a project, for example **CivicCast YouTube**, then select it. Keep its project ID with the station's setup records.
+4. In **APIs & Services > Library**, find **YouTube Data API v3** and choose **Enable**. Confirm that the page says **API Enabled**. The same API supports CivicCast's live-broadcast operations; the YouTube Analytics and Reporting APIs are not needed for this connection.
+5. Open **Google Auth Platform**. If it says it is not configured, choose **Get started**. Set an app name such as **CivicCast**, select the station's support email, choose **External** for a regular Gmail account, and enter the contact email. Review the Google API Services User Data Policy, finish the steps and choose **Create**. An organization-managed account may have different audience choices; ask its administrator.
+6. Under **Audience**, leave an initial rehearsal app in **Testing** and choose **Add users**. Enter the station's exact Google email, press **Enter** so it becomes an email chip, then choose **Save**. Confirm the address appears in the test-user table. Text left in the entry box without a saved table row does not grant access.
+7. Under **Clients**, choose **Create client**, select **Desktop app**, give it a name such as **CivicCast station**, and choose **Create**. CivicCast is the desktop application here; do not select a web application or the AI-agent option for this flow.
+8. Download the client JSON while Google's creation dialog is open. Google may show the client secret only at creation. Store this file in a local folder restricted to the station administrator and necessary service/administrator accounts; keep it out of shared or cloud-synced folders. It contains a client ID and client secret, but it does **not** yet contain the refresh token CivicCast needs. Do not post it in chat, email it or commit it to source control.
+
+#### 3. Authorize CivicCast and obtain the refresh token
+
+The YouTube card has no **Sign in with Google** button in this version. IT must perform the desktop OAuth flow once outside the Setup screen. The source checkout includes [`scripts/authorize_youtube.py`](https://github.com/scottconverse/civiccast-native/blob/main/scripts/authorize_youtube.py), the repeatable helper for this step. Run it with the matching CivicCast Python environment (the example assumes the checkout's `.venv`, with CivicCast and its normal `httpx` dependency installed). This is a setup tool, not an installer rebuild or station restart.
+
+From that checkout, replace the example paths and email with the station's own values:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\authorize_youtube.py `
+  --client-json 'C:\StationPrivate\youtube-client.json' `
+  --output 'C:\StationPrivate\youtube-authorized.json' `
+  --account 'station@example.org'
+```
+
+Use a new output filename; the helper refuses to overwrite an existing file. It opens the normal system browser, listens only on `127.0.0.1` at a temporary port, and waits up to ten minutes. It uses a random request state and PKCE (a one-time proof that protects the authorization-code exchange), requests offline access with the `youtube.force-ssl` permission, and exchanges the returned code directly with Google. It does not print the code, client secret or tokens. Its output file is access-restricted before the credentials are written. Google describes this flow in its [desktop OAuth guide](https://developers.google.com/youtube/v3/live/guides/auth/installed-apps).
+
+1. In the Google consent screen, confirm the intended station account and, if offered, the intended YouTube channel. Review the app name and YouTube permissions. Complete consent only for the station's own trusted OAuth app.
+2. For an app still in Testing, Google can show an unverified-app notice. Confirm that IT created the app and that the account is in its test-user table before continuing through Google's available test-app consent steps. If Google says **Access blocked** because the app is being tested, return to **Audience**, save the correct test-user entry and run the helper again; repeated sign-ins alone do not fix it.
+3. On success the browser says authorization is complete, and the helper confirms that it saved protected credentials. The JSON contains `client_id`, `client_secret` and `refresh_token`. Keep all three private. If consent is declined, permission is missing or the helper times out, it does not report success; correct the cause and rerun it with a new output filename if a file was already saved.
+4. A Google access token is short-lived and is not a substitute for the refresh token. Do not use the deprecated procedure that asks you to copy an authorization code out of a browser page. The local callback receives the code automatically.
+
+**Testing-mode lifetime:** Google's External/Testing apps normally issue refresh tokens that expire after seven days for this YouTube scope. This is suitable for initial setup, but not a permanent unattended station connection. Before ongoing operation, have IT complete Google's applicable publishing/verification requirements and reauthorize as needed. Do not mistake publishing the OAuth app for publishing a CivicCast release. See Google's [token-expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration). Revoking the app's account access or changing its client can also require new authorization.
+
+#### 4. Save all three credentials in CivicCast
+
+1. On the station computer, sign into CivicCast with the `setup_admin` role and open **Setup > Provider setup > YouTube**.
+2. Open the protected authorization file locally and copy its **Client ID**, **Client secret** and **Refresh token** into the corresponding fields. Choose **Save details**. Do not paste the JSON itself into one field. Older setups that saved only the client ID and secret must add the refresh token.
+3. CivicCast stores these values in its protected provider-credentials file and does not show secret values again. The real adapter reads that saved configuration; no duplicate environment setup or station restart is needed. Keep the original client/authorization files protected or remove working copies after the credentials and recovery arrangements are secure. Never attach them to a support report.
+4. The YouTube card has no **Test connection** button in this version. **Record redacted proof** records an evidence reference; it does not test the connection. IT can check token refresh and the authorized channel through the API without starting a stream. A successful account/API check establishes authorization, not viewer delivery.
+
+#### 5. Verify the phone number and request livestream access
+
+1. Open [YouTube Studio](https://studio.youtube.com/) for the same station channel, then **Create > Go live**. If Studio says you do not have permission, switch to the station account before proceeding; creating a new project or replacing the OAuth token will not fix a browser signed into the wrong account.
+2. If Studio offers **Request access to streaming**, choose **Request**. If it asks you to verify a phone number, choose **Verify**. Complete [YouTube phone verification](https://www.youtube.com/verify) yourself: select the delivery method and country, enter the number, request the code and enter it on Google's page. Do not send the phone number or verification code to support. YouTube may limit how many accounts a number can verify.
+3. Check the account on the verification page. **Phone number verified** for a different signed-in account does not verify the station channel. Select the station account and finish its verification.
+4. Return to the station channel's **Go live** page, refresh it, and finish **Request** if still offered. Confirm either the live controls or the displayed activation countdown. Phone verification and live activation are separate; completing one does not necessarily remove the other wait.
+5. Google can impose a first-time wait of up to 24 hours. Write down Studio's request time and expected ready time in the station's local timezone. An active **Only … until you can stream** countdown is a YouTube activation delay; do not keep replacing credentials, restart CivicCast or rebuild an installer to address it. After it ends, check Studio's actual access status. See [YouTube's live-streaming guidance](https://support.google.com/youtube/answer/2474026).
+
+#### 6. Run the first stream when YouTube is ready
+
+Start the desired CivicCast channel and confirm its local program output, then open **Publish**, select that channel for **YouTube Live**, and start the optional YouTube output. The selected channel needs fresh local HLS output. CivicCast creates and binds the YouTube event, then sends that channel through a separate owned output process; the default event privacy is **unlisted**. Keep a first rehearsal away from a channel already serving a meeting.
+
+The returned `youtube.com/watch?v=…` address is the viewer link. **Starting** means the sender has started; **live** requires YouTube to report both an active stream and a live broadcast. **Simulated** means nothing was sent. The dashboard polls destination state periodically; setup success alone must never be described as a confirmed live stream. **Failed** leaves local portal publication available. When finished, choose **Stop YouTube output**, then check the event in Studio if remote cleanup needs attention. Stream keys and ingest addresses are not public viewer links.
+
+If Google returns `liveStreamingNotEnabled`, check the selected channel's phone verification and activation countdown first. If its channel API returns no channels, check that the account has a YouTube channel and that OAuth authorized the intended identity. If refresh fails later, check testing-mode token expiry or revoked consent before replacing unrelated settings. An owner can accept completed setup separately from a later live rehearsal; record those as separate results rather than claiming the rehearsal happened.
 
 ## Run Cable Commissioning {#configuration-commissioning}
 

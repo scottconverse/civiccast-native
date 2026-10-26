@@ -190,6 +190,9 @@ environment variables. Setup responses expose configuration state, not secrets.
 Incomplete saved settings fail validation; there is no silent mock fallback.
 YouTube setup requires the OAuth client ID, client secret **and refresh token**.
 Existing installations with only the first two must add the refresh token.
+The user manual's [YouTube setup procedure](../manual/src/22-configuration.md#configuration-youtube)
+covers Google Cloud/OAuth clients, the desktop consent helper, channel creation,
+phone verification, first-time live activation and saving all three credentials.
 SMTP setup accepts host, from-address, port, username/password and STARTTLS;
 webhook-only setups do not need SMTP fields. A valid configuration is not proof
 of delivery. YouTube simulations remain explicitly simulated and unverified.
@@ -209,8 +212,9 @@ process and closes the event. App shutdown also closes active output; after an
 unexpected restart a formerly active row is marked interrupted rather than live.
 Use YouTube Studio to inspect any event whose remote cleanup could not complete.
 Stream keys stay out of publish proofs, API responses and captured FFmpeg logs.
-Real destination acceptance requires authorized OAuth access; simulator results
-alone do not demonstrate that a YouTube viewer received the selected channel.
+Simulator results alone do not demonstrate that a YouTube viewer received the
+selected channel. Setup acceptance and a later destination/viewer rehearsal can
+be recorded separately; neither should be represented as the other.
 
 | Provider (`real`) | Credential / config variables |
 |---|---|
