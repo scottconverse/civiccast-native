@@ -211,6 +211,52 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
 
 
+def test_program_boundary_refuses_delayed_asr_and_feeds_only_incoming_captions(
+    tmp_path: Path,
+) -> None:
+    tap_root = tmp_path / "tap"
+    for channel in ("public", "government"):
+        (tap_root / channel).mkdir(parents=True)
+    worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    worker.run_once()
+    cue = CaptionCue(
+        cue_id="speech",
+        start_seconds=1,
+        end_seconds=3,
+        text="Outgoing speech",
+        confidence=1,
+        low_confidence=False,
+    )
+    old_generation = worker._session_generation.get("public", 0)
+    assert worker.publish_for_current_session("public", old_generation, [cue])
+    assert worker.publish_for_current_session("government", 0, [cue])
+    (tap_root / "public" / "program-boundary.json").write_text(
+        json.dumps({"token": "incoming", "first_segment": 2})
+    )
+    # A late ASR completion is refused even before the next scan sees the marker.
+    assert not worker.publish_for_current_session("public", old_generation, [cue])
+    worker.run_once()
+    assert "Outgoing speech" not in _active_vtt(tap_root, "public").read_text()
+    assert "Outgoing speech" in _active_vtt(tap_root, "government").read_text()
+    incoming = cue.model_copy(update={"text": "Incoming speech"})
+    assert worker.publish_for_current_session(
+        "public", worker._session_generation["public"], [incoming]
+    )
+    calls: list[dict] = []
+    feed = CaptionFeedWorker(
+        work_dir=tmp_path / "egress",
+        on_air_channels=lambda: ["public"],
+        caption_cue_provider=lambda channel: load_caption_cues_from_timed_text(
+            _active_vtt(tap_root, channel), source_id=channel
+        ),
+        program_token_provider=lambda _channel: "incoming",
+        send_caption_cue=lambda *_args, **kwargs: calls.append(kwargs) or True,
+    )
+    assert feed.run_once().cues_sent == 1
+    assert calls[0]["text"] == "Incoming speech"
+    assert calls[0]["program_token"] == "incoming"
+
+
 def _runtime_status(tap_root: Path, channel_id: str) -> dict:
     path = tap_root.parent / "egress" / channel_id / "captions" / "runtime-status.json"
     return json.loads(path.read_text(encoding="utf-8"))

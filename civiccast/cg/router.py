@@ -34,7 +34,6 @@ from civiccast.cg.models import (
 from civiccast.cg.service import (
     build_bulletin_queue,
     build_feed_catalog,
-    build_hls_manifest,
     build_hls_render_plan,
     build_idle_page,
     build_multi_zone_snapshot,
@@ -764,12 +763,13 @@ def hls_render_plan(channel_id: str = "public") -> CgHlsRenderPlan:
 @public_router.get(
     "/channels/{channel_id}/stream.m3u8",
     response_class=Response,
-    summary="Read the CG HLS manifest",
+    summary="Standalone CG video preview is unavailable",
+    responses={503: {"description": "No standalone CG encoder or segments are available"}},
 )
 def hls_manifest(channel_id: str = "public") -> Response:
-    return Response(
-        content=build_hls_manifest(channel_id=channel_id),
-        media_type="application/vnd.apple.mpegurl",
+    raise HTTPException(
+        status_code=503,
+        detail=build_hls_render_plan(channel_id).unavailable_reason,
     )
 
 

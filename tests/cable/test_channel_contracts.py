@@ -881,6 +881,32 @@ def test_public_caption_feed_serves_atomic_webvtt_without_caching(
     assert set(operation["responses"]["200"]["content"]) == {"text/vtt"}
 
 
+def test_public_caption_feed_fences_prior_program_before_asr_rescans(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter
+
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path / "tap"))
+    monkeypatch.delenv("CIVICCAST_CAPTION_TAP", raising=False)
+    writer = RollingWavSegmentWriter(tmp_path / "tap" / "government")
+    writer.begin_program("incoming")
+    writer.close()
+    sidecar = active_caption_sidecar(tmp_path, "government")
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(
+        "WEBVTT\n\noutgoing-1\n00:00:01.000 --> 00:00:03.000\nOld program\n", encoding="utf-8"
+    )
+    app = create_app()
+    app.dependency_overrides[default_egress_work_dir] = lambda: tmp_path
+    client = TestClient(app)
+    assert "Old program" not in client.get("/api/public/channels/government/captions.vtt").text
+    sidecar.write_text(
+        "WEBVTT\n\nincoming-1\n00:00:01.000 --> 00:00:03.000\nNew program\n", encoding="utf-8"
+    )
+    assert "New program" in client.get("/api/public/channels/government/captions.vtt").text
+
+
 def test_public_caption_feed_returns_404_for_missing_or_unknown_channel(
     monkeypatch, tmp_path: Path
 ) -> None:

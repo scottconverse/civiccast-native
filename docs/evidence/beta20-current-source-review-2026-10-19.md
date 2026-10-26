@@ -1,6 +1,44 @@
 # Beta 20 current-source review tripwire renewal
 
 
+## October 26 caption extraction diagnostic binding
+
+Windows job121419690914 passed the F4 supersession case but failed the F7
+caption-boundary proof with empty extracted text. The worker committed and
+terminated cleanly; the decoder previously discarded exit status and stderr.
+No failed stream was retained, so its exact cause is unresolved. One local
+scenario passed25.82s; this does not explain CI. The native test tripwires now
+bind decoder status/stderr preservation and failure-only stream/log retention
+under the existing caption-worker-failure artifact. No product behavior changed.
+
+## October 25 F6/F7 caption boundary and preview correction
+
+The current-source tripwires for worker, engine, control, audio tap, native test
+file and workflow now bind the F6/F7 candidate. Live program changes fence queued
+ASR, WAVs, public WebVTT and embedded commands with a program token. The sparse
+caption source is replaced at selector handoff and emits CEA-608 erase through
+the existing cc_data path. Live cccombiner uses timestamp aggregation without
+its optional scheduling FIFO: native packet inspection found the retained FIFO
+delayed erase three frames after request-pad replacement. The decoded boundary
+regression passed locally in25.33 seconds with continuous TS/audio and incoming
+captions. It joins the existing Windows media job; registered producer nodes,
+controls and verifier enforcement are unchanged. Existing production-pressure
+encoder settings do not decode on the older local probe runtime; this focused
+caption proof uses the existing standard encoder settings, not a repaired encoder.
+
+F4 required CI40274379021 failed the superseding scenario: only one replacement
+stream became ready; outgoing audio stopped and abort retirement remained blocked.
+The abort-only teardown still flushed a connected selector and NULLed before
+releasing request pads, unlike the established confirmed-retirement contract.
+It now reuses that fenced release-before-NULL path; a focused ordering assertion
+checks isolation without any connected flush. Local ordering128pass and the same
+native scenario passed15.54 seconds. Required CI must validate this correction.
+The historical first-attempt filesrc flow error still has no preserved Gst debug
+cause; its log now records URI-redacted detail for a future recurrence. This
+structural correction does not claim every historical transient is explained.
+These source bindings do not renew historical installed, hardware, pre-login or
+release acceptance. Completed required hosted CI remains necessary.
+
 ## October 24 checker-integration workflow binding
 
 PR265's collection-floor correction changed only comments and the two native

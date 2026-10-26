@@ -1,5 +1,82 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Current delivery checkpoint - October 26, 2026
+
+- PR268 frozen at a5122f08 until this diagnostic-only commit is pushed.
+  Run40276241194 Windows job121419690914 failed F7 extraction: decoded text
+  empty, worker switch10.155s and clean EOS; F4 supersede passed. Exact log:
+  C:\Users\scott\AppData\Local\Temp\civiccast-pr268-windows-second.log.
+  Retained junit has no TS or decoder stderr. One local scenario15661 passed
+  25.82s (Temp/civiccast-f7-ci-diagnosis); CI cause remains unresolved.
+- Approved diagnostic change preserves decoder exit/stdout/stderr and failed
+  TS/worker log in existing caption-worker-failure artifact. No product fix
+  claimed. Ruff check/format passed. Next push and use one required CI waiter.
+- Existing waiter20498 owns run40276241194; unit job121419690772 still live
+  at last consumption. No remote cancellation. Cancel only watcher via Ctrl+C.
+- N1 source is safe in named stash 'N1 source in progress while diagnosing
+  PR268 caption CI', created on feat/n1-public-transcript-search. Restore only
+  on that branch after diagnostic push; do not mix N1 into PR268. N1 contains
+  packaged transcript search/read endpoints with current-grant signed-cookie
+  access checks, timestamp links and accessible transcript; checks pending.
+  Parent authorized N1 checks alongside hosted CI after headroom check (11GB free).
+
+## Active F4/F6/F7 checkpoint — October 25, 2026
+
+- Scott explicitly resumed this work in the parent Codex chat; the earlier chat
+  remains paused and must not be messaged. Parent owns the complete roadmap;
+  this directly controlled worker owns only F4/F6/F7. F1–F3 are merged; F5 and
+  N1–N8 remain pending. No tags, publication, installer build or station changes.
+- N7 selection for later work: Spanish, Chinese, Tagalog/Filipino, Vietnamese,
+  Arabic (top five US languages besides English). Preserve existing Spanish;
+  specify supported Chinese written variants honestly during N7 implementation.
+- Candidate: `fix/f4-f6-f7-transitions-preview-captions` in
+  `C:\Dev\civiccast-f4-f6-f7`, based on current main
+  `6f1e13a0b0954d525829fe3f562a73b99ddb6f26`; PR #267 confirmed merged.
+- F4 remains unresolved: first-attempt run40165319415 replacement filesrc11
+  stream error aborts the replacement safely; Gst debug detail was discarded.
+  Exact log: C:\Users\scott\AppData\Local\Temp\civiccast-f4-historical.log.
+  Baseline native session51334 passed, as did one bounded scheduling probe;
+  neither proves a fix. Pending-reload log now preserves URI-redacted Gst detail.
+- F6 implemented: standalone CG HLS explicitly unavailable (503, null paths,
+  truthful UI/help), layout preview and on-air graphics preserved. Focused checks
+  passed in affected batch140 tests (six expected platform skips).
+- F7 implemented program fencing for WAV/ASR/WebVTT/feed/embedded commands at
+  actual reload switch. Native decode caught233 ms outgoing-caption carryover;
+  direct cc_data erase reduced it to100 ms but still failed session49269.
+  Packet capture proves erase arrives three frames late. cccombiner retains its
+  scheduling FIFO across request-pad replacement (upstream gstcccombiner.c).
+- Current correction disables the extra FIFO only for live appsrc captions;
+  timestamp aggregation remains. Same interval proof session43974 PASSED in25.33s,
+  output C:\Users\scott\AppData\Local\Temp\civiccast-f7-native5.
+  No owned background process remains. Public sidecar9pass; operator13pass;
+  caption/tap/feed126pass; strategy80pass6POSIX-skips; ordering/ack142pass2runtime-skips.
+  Strategy initially20 gi-import failures when runtime env omitted, corrected
+  by declaring the existing runtime. API/manual artifacts generated, including
+  in-product/PDF/DOCX. Parent final material review found a missing daemon token passthrough; fixed
+  and verified real feed-to-daemon-to-owned-strategy integration (1pass).
+  Earlier failing captures native3/native4 remain beside it; final reviewed
+  candidate and requiredCI correction status follow below.
+- PR268 https://github.com/scottconverse/civiccast-native/pull/268 at DCO head
+  3915b48c381c1308165dce268451e745c156c9d4. Parent material review completed.
+  Required Windows job121413878829 FAILED: media1failed56passed434.98s.
+  New F7 decode proof passed. F4 superseding scenario reload2 held only one
+  stream, audio stopped before EOS, readiness timeout10s aborted, mux stalled
+  and stop reported an aborted leg still retiring. Exact first-candidate log:
+  C:\Users\scott\AppData\Local\Temp\civiccast-pr268-windows-first.log:781.
+- Bounded diagnostic83643 passed again (no further hunt). Abort NULL/hold
+  detail preserved in Temp\civiccast-f4-current-diagnosis. Structural correction:
+  abort now reuses confirmed-retirement fenced request-pad release before NULL;
+  removed connected-selector flush and duplicated teardown. Ordering128pass/
+  2runtime-skips; same native supersede test86377 passed15.54s, output
+  Temp\civiccast-f4-abort-isolation-fixed. Historical filesrc reason still unknown.
+- Parent correction review complete. First-candidate unit job121413878544 was
+  still running at correction push; not a pass. Parent authorized supersession
+  without waiting solely to preserve old evidence. Old watch95625 ended; next
+  action DCO correction push and one watcher on new candidate required CI.
+  No local test remains running. No merge/tag/publication/station change by worker.
+- Prior F1-F3 records below are historical; PR267 receipts remain preserved in
+  C:\Dev\civiccast-f1-f3\docs\handoff\CURRENT.md.
+
 ## Active F1–F3 delivery checkpoint — October 25, 2026
 - OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
   subsequently explicitly approved creating its YouTube channel. Created Google

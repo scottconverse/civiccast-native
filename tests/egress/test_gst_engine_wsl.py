@@ -852,7 +852,17 @@ def _decode_back_caption_text(ts: Path) -> str:
         capture_output=True,
         text=True,
     )
-    return proc.stdout if proc.returncode == 0 else ""
+    ts.with_suffix(".caption-decode.json").write_text(
+        json.dumps(
+            {"exit_code": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    assert proc.returncode == 0, (
+        f"caption extraction failed (ffmpeg exit {proc.returncode}): {proc.stderr}"
+    )
+    return proc.stdout
 
 
 def _assert_caption_decoded(decoded: str, expected: str, *, context: str) -> None:
@@ -3250,7 +3260,9 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
                 # armed, not only an idle GAP source. PTS=0 is intentionally stale:
                 # production rebases late ASR cues to the current live edge.
                 cue = base64.b64encode(f"CIVICCAST ROLLOVER {cycle + 1}".encode()).decode("ascii")
-                _send(control, f"caption 0 1000 {cue}")
+                marker = _tap_dir / "program-boundary.json"
+                token = json.loads(marker.read_text())["token"] if marker.exists() else ""
+                _send(control, f"caption 0 1000 {cue}" + (f" {token}" if token else ""))
             committed += 1
             for proc, _control, log, _out_ts, _tap_dir, _channel_dir in workers:
                 # Thirty seconds lets the unchanged 15s production commit watchdog
@@ -3296,6 +3308,88 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
             and not isinstance(settlement["ts"], bool)
             and settlement["ts"] > 0
         ), settlement
+
+
+def test_program_switch_discards_queued_and_delayed_outgoing_captions(tmp_path: Path) -> None:
+    """Decode actual emitted bytes across a deferred program/caption boundary."""
+    try:
+        _assert_program_switch_caption_boundary(tmp_path)
+    except Exception:
+        workspace = os.environ.get("GITHUB_WORKSPACE")
+        if workspace:
+            import shutil
+
+            retained = Path(workspace) / "caption-worker-failure" / "program-boundary"
+            retained.mkdir(parents=True, exist_ok=True)
+            for name in ("output.ts", "worker.log", "graph.json", "output.caption-decode.json"):
+                source = tmp_path / name
+                if source.is_file():
+                    shutil.copy2(source, retained / name)
+        raise
+
+
+def _assert_program_switch_caption_boundary(tmp_path: Path) -> None:
+    clips = [tmp_path / f"segment-{index:04d}.ts" for index in range(1, 5)]
+    for clip in clips:
+        _write_short_av_ts_clip(clip, seconds=2.5, video_caps=_PRODUCTION_CAPS)
+    out_ts = tmp_path / "output.ts"
+    tap_dir = tmp_path / "caption-tap"
+    graph = _production_pressure_playlist_graph(clips, out_ts=out_ts, audio_tap_dir=tap_dir)
+    graph = replace(
+        graph,
+        encoder=graphmod.encode_chain_specs(
+            width=640, height=360, fps=30, bitrate_kbps=2000, gop=30, encoder=_H264_ENCODER
+        ),
+    )
+    reload_path = tmp_path / f"incoming{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+    reload_path.write_text(
+        graphmod.graph_to_json(
+            _multi_segment_playlist_reload_graph(clips, video_caps=_PRODUCTION_CAPS)
+        ),
+        encoding="utf-8",
+    )
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        _wait_for_log(log, "CTRL first-output:", timeout=25.0)
+        outgoing = base64.b64encode(b"OUTGOING COUNCIL").decode("ascii")
+        queued = base64.b64encode(b"STALE QUEUED SPEECH").decode("ascii")
+        _send(control, f"caption 2000 2000 {outgoing}")
+        _send(control, f"caption 6000 12000 {queued}")
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload committed", timeout=30.0)
+        boundary = json.loads((tap_dir / "program-boundary.json").read_text())
+        token = boundary["token"]
+        delayed = base64.b64encode(b"STALE DELAYED SPEECH").decode("ascii")
+        stale_command = f"caption 0 1000 {delayed} outgoing"
+        if os.name == "nt":
+            assert not control.send_and_wait("caption", stale_command)
+        else:
+            _send(control, stale_command)
+        incoming = base64.b64encode(b"INCOMING PLANNING").decode("ascii")
+        _send(control, f"caption 0 2000 {incoming} {token}")
+        # Keep capturing through both the incoming cue and the queued old PTS.
+        _wait_for_log(log, "pipeline EOS", timeout=25.0)
+        assert proc.wait(timeout=25) == 0
+    finally:
+        _reap(proc)
+    text = log.read_text(encoding="utf-8", errors="replace")
+    decoded = _decode_back_caption_text(out_ts)
+    _assert_caption_decoded(decoded, "OUTGOING COUNCIL", context=text)
+    _assert_caption_decoded(decoded, "INCOMING PLANNING", context=text)
+    switch_time = float(re.search(r"switch_running_time=([0-9.]+)", text).group(1))
+    old_blocks = [
+        block
+        for block in decoded.split("\n\n")
+        if "OUTGOING COUNCIL" in block or "STALE QUEUED" in block
+    ]
+    for block in old_blocks:
+        end = re.search(r"--> (\d+):(\d+):(\d+),(\d+)", block)
+        hours, minutes, seconds, milliseconds = map(int, end.groups())
+        assert (
+            hours * 3600 + minutes * 60 + seconds + milliseconds / 1000 <= switch_time + 1 / 30
+        ), block
+    assert "STALE DELAYED" not in decoded, decoded
+    _assert_continuous(out_ts, text, require_audio_pid=True)
 
 
 def test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air(

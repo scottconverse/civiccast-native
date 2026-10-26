@@ -179,9 +179,9 @@ def build_multi_zone_snapshot(
                 refresh_seconds=60,
             ),
         ],
-        hls_render_path=f"/api/public/cg/channels/{channel_id}/stream.m3u8",
+        hls_render_path=None,
         portal_render_path=f"/api/public/cg/channels/{channel_id}/snapshot",
-        proof_boundary="software-cg-snapshot-to-portal-and-hls-render-path",
+        proof_boundary="software-cg-snapshot-to-portal-layout",
     )
 
 
@@ -319,31 +319,17 @@ def build_hls_render_plan(channel_id: str = "public") -> CgHlsRenderPlan:
     return CgHlsRenderPlan(
         channel_id=channel_id,
         snapshot_url=f"/api/public/cg/channels/{channel_id}/snapshot",
-        manifest_url=f"/api/public/cg/channels/{channel_id}/stream.m3u8",
-        segment_pattern=f"/api/public/cg/channels/{channel_id}/segments/cg-%05d.ts",
+        manifest_url=None,
+        segment_pattern=None,
         target_duration_seconds=6,
         linear_overlay_contract_url=f"/api/public/cg/channels/{channel_id}/overlay-contract",
-        proof_boundary="software-cg-render-plan-to-hls-manifest",
+        proof_boundary="standalone-cg-video-unavailable",
     )
 
 
 def build_hls_manifest(channel_id: str = "public") -> str:
-    """Return a deterministic live HLS manifest for the CG render plan."""
-
-    plan = build_hls_render_plan(channel_id)
-    return "\n".join(
-        [
-            "#EXTM3U",
-            "#EXT-X-VERSION:3",
-            f"#EXT-X-TARGETDURATION:{plan.target_duration_seconds}",
-            "#EXT-X-MEDIA-SEQUENCE:0",
-            "#EXTINF:6.000,",
-            plan.segment_pattern.replace("%05d", "00000"),
-            "#EXTINF:6.000,",
-            plan.segment_pattern.replace("%05d", "00001"),
-            "",
-        ]
-    )
+    """Refuse to manufacture a manifest when no standalone encoder writes segments."""
+    raise RuntimeError(build_hls_render_plan(channel_id).unavailable_reason)
 
 
 def build_overlay_contract(channel_id: str = "public") -> CgOverlayContract:

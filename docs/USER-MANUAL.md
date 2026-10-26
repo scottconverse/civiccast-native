@@ -1545,6 +1545,8 @@ Two more previews need a channel chosen in **Target channel**: **Preview schedul
 
 ### Show community bulletins between programs (CG Board)
 
+The board layout preview shows the current design. A separate CG video stream is unavailable; its old manifest endpoint returns an unavailable response because no standalone encoder produces its segments. Watch the channel monitor to verify graphics on the actual channel output. Channel graphics and the layout designer remain available.
+
 CG board and legacy slides now wrap supported title, organization, and message text into their allocated areas and reduce text size when needed. Long content can appear small; preview at the intended resolution before approval. Ticker scrolling behavior is unchanged.
 
 *CG* is short for "character generator", the part of a broadcast system that puts text and graphics on screen. In CivicCast the **CG Board** is the "community board" a channel can show between programs: a card with station and community announcements. It is **not** the lower-third banner (that is on **Channels**, see above).

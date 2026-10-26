@@ -30,10 +30,12 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from civiccast.captions.models import CaptionCue
+from civiccast.captions.tap import build_audio_tap_plan
 from civiccast.egress.caption_embed import (
     count_caption_timing_windows,
     load_caption_cues_from_timed_text,
 )
+from civiccast.egress.gst.audio_tap import read_program_boundary
 
 _LOG = logging.getLogger(__name__)
 
@@ -111,6 +113,7 @@ class CaptionFeedWorker:
         caption_cue_provider: CaptionCueProvider,
         send_caption_cue: SendCaptionCue,
         is_enabled: Callable[[], bool] | None = None,
+        program_token_provider: Callable[[str], str] | None = None,
     ) -> None:
         self._work_dir = work_dir
         self._on_air_channels = on_air_channels
@@ -124,6 +127,7 @@ class CaptionFeedWorker:
         # feed on the next cycle with no control-plane restart. Default: always
         # enabled, so an injected worker in a test behaves as before.
         self._is_enabled = is_enabled or (lambda: True)
+        self._program_token_provider = program_token_provider or (lambda _channel: "")
         self._disabled_announced = False
         # Already-pushed IDs within each channel's rolling provider window.
         self._sent: dict[str, set[str]] = {}
@@ -171,7 +175,10 @@ class CaptionFeedWorker:
         dropped = 0
         touched: list[str] = []
         for channel_id in on_air:
+            token = self._program_token_provider(channel_id)
             cues = self._caption_cue_provider(channel_id)
+            if token:
+                cues = [cue for cue in cues if cue.cue_id.startswith(f"{channel_id}-{token}-")]
             current_ids = {cue.cue_id for cue in cues}
             seen = self._sent.setdefault(channel_id, set())
             acknowledged_pages = self._acknowledged_pages.setdefault(channel_id, set())
@@ -216,6 +223,7 @@ class CaptionFeedWorker:
                         text=page,
                         pts_seconds=page_pts,
                         duration_seconds=page_duration,
+                        **({"program_token": token} if token else {}),
                         delivery_id=caption_page_delivery_id(
                             channel_id,
                             cue.cue_id,
@@ -309,4 +317,9 @@ def build_caption_feed_worker(
         caption_cue_provider=_cues,
         send_caption_cue=send_caption_cue,
         is_enabled=is_enabled,
+        program_token_provider=lambda channel_id: (
+            read_program_boundary(plan.tap_dir)[0]
+            if (plan := build_audio_tap_plan(channel_id)) is not None
+            else ""
+        ),
     )

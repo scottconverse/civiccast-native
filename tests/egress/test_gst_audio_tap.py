@@ -37,6 +37,21 @@ def _read_pcm(path: Path) -> tuple[tuple[int, int, int], bytes]:
         return shape, source.readframes(source.getnframes())
 
 
+def test_program_fence_discards_partial_and_racing_old_samples(tmp_path: Path) -> None:
+    from civiccast.egress.gst.audio_tap import read_program_boundary
+
+    writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    writer.write_pcm_s16le(b"\x01\x00" * 12)
+    writer.begin_program("incoming")
+    writer.write_pcm_s16le(b"\x02\x00" * 10)  # delayed outgoing callback
+    writer.write_pcm_s16le(b"\x03\x00" * 10, program_token="incoming")
+    assert writer.close() == "drained"
+    token, first = read_program_boundary(tmp_path)
+    assert (token, first) == ("incoming", 1)
+    assert _read_pcm(tmp_path / "chunk-000001.wav")[1] == b"\x03\x00" * 10
+    assert not (tmp_path / "chunk-000002.wav").exists()
+
+
 def test_writer_rotates_atomic_mono_s16le_segments_without_losing_samples(
     tmp_path: Path,
 ) -> None:

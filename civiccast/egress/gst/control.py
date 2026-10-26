@@ -28,6 +28,7 @@ ControlCommand = (
     | tuple[Literal["reload"], str]
     | tuple[Literal["stop"]]
     | tuple[Literal["caption"], int, int, str]
+    | tuple[Literal["caption"], int, int, str, str]
     | tuple[Literal["emergency"], str]
 )
 
@@ -163,7 +164,9 @@ def parse_control_line(line: str) -> ControlCommand | None:
         return ("emergency", parts[1].strip())
     if verb == "caption" and len(parts) == 2:
         fields = parts[1].split()
-        if len(fields) == 3 and fields[0].isdigit() and fields[1].isdigit() and fields[2]:
+        if len(fields) in (3, 4) and fields[0].isdigit() and fields[1].isdigit() and fields[2]:
+            if len(fields) == 4:
+                return ("caption", int(fields[0]), int(fields[1]), fields[2], fields[3])
             return ("caption", int(fields[0]), int(fields[1]), fields[2])
         return None
     if verb == "stop" and len(parts) == 1:

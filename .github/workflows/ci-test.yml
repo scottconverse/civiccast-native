@@ -690,6 +690,7 @@ jobs:
           tests/egress/test_gst_engine_reload_commit_ordering.py::test_u16_packaged_runtime_resolution_matches_its_declared_root
           tests/egress/test_gst_engine_wsl.py::test_caption_embed_survives_to_emitted_stream
           tests/egress/test_gst_engine_wsl.py::test_live_caption_appsrc_starts_without_a_cue_and_decodes_a_later_cue
+          tests/egress/test_gst_engine_wsl.py::test_program_switch_discards_queued_and_delayed_outgoing_captions
           tests/egress/test_gst_engine_wsl.py::test_secondary_audio_muxes_an_extra_pid
           tests/egress/test_gst_engine_wsl.py::test_live_worker_forks_selected_program_audio_into_atomic_caption_wavs
           tests/egress/test_gst_engine_wsl.py::test_audio_tap_queue_and_appsink_carry_the_item88_safety_properties_live

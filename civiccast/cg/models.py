@@ -228,8 +228,10 @@ class CgHlsRenderPlan(BaseModel):
 
     channel_id: Annotated[str, Field(min_length=1, max_length=120)]
     snapshot_url: Annotated[str, Field(min_length=1, max_length=500)]
-    manifest_url: Annotated[str, Field(min_length=1, max_length=500)]
-    segment_pattern: Annotated[str, Field(min_length=1, max_length=500)]
+    available: bool = False
+    unavailable_reason: str = "Standalone CG video preview is unavailable. Preview the board layout here; watch channel graphics in the channel monitor."
+    manifest_url: Annotated[str, Field(min_length=1, max_length=500)] | None
+    segment_pattern: Annotated[str, Field(min_length=1, max_length=500)] | None
     target_duration_seconds: Annotated[int, Field(gt=0, le=60)]
     linear_overlay_contract_url: Annotated[str, Field(min_length=1, max_length=500)]
     proof_boundary: Annotated[str, Field(min_length=1, max_length=160)]
@@ -259,7 +261,7 @@ class MultiZoneCgSnapshot(BaseModel):
     channel_id: Annotated[str, Field(min_length=1, max_length=120)]
     template: CgTemplate
     zones: list[CgZone]
-    hls_render_path: Annotated[str, Field(min_length=1, max_length=500)]
+    hls_render_path: Annotated[str, Field(min_length=1, max_length=500)] | None
     portal_render_path: Annotated[str, Field(min_length=1, max_length=500)]
     proof_boundary: Annotated[str, Field(min_length=1, max_length=160)]
 

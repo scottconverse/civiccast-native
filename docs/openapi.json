@@ -9728,7 +9728,7 @@
           "public",
           "cg"
         ],
-        "summary": "Read the CG HLS manifest",
+        "summary": "Standalone CG video preview is unavailable",
         "operationId": "hls_manifest_api_public_cg_channels__channel_id__stream_m3u8_get",
         "parameters": [
           {
@@ -9744,6 +9744,9 @@
         "responses": {
           "200": {
             "description": "Successful Response"
+          },
+          "503": {
+            "description": "No standalone CG encoder or segments are available"
           },
           "422": {
             "description": "Validation Error",
@@ -39042,16 +39045,40 @@
             "minLength": 1,
             "title": "Snapshot Url"
           },
-          "manifest_url": {
+          "available": {
+            "type": "boolean",
+            "title": "Available",
+            "default": false
+          },
+          "unavailable_reason": {
             "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
+            "title": "Unavailable Reason",
+            "default": "Standalone CG video preview is unavailable. Preview the board layout here; watch channel graphics in the channel monitor."
+          },
+          "manifest_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Manifest Url"
           },
           "segment_pattern": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Segment Pattern"
           },
           "target_duration_seconds": {
@@ -50941,9 +50968,16 @@
             "title": "Zones"
           },
           "hls_render_path": {
-            "type": "string",
-            "maxLength": 500,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Hls Render Path"
           },
           "portal_render_path": {

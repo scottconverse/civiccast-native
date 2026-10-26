@@ -942,8 +942,10 @@ export interface CgFeedSource {
 export interface CgHlsRenderPlan {
   channel_id: string
   snapshot_url: string
-  manifest_url: string
-  segment_pattern: string
+  available?: boolean
+  unavailable_reason?: string
+  manifest_url: string | null
+  segment_pattern: string | null
   target_duration_seconds: number
   linear_overlay_contract_url: string
   proof_boundary: string
@@ -2786,7 +2788,7 @@ export interface MultiZoneCgSnapshot {
   channel_id: string
   template: CgTemplate
   zones: Array<CgZone>
-  hls_render_path: string
+  hls_render_path: string | null
   portal_render_path: string
   proof_boundary: string
 }

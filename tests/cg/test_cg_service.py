@@ -53,7 +53,7 @@ def test_multi_zone_snapshot_has_required_24_7_bulletin_zones() -> None:
 
     assert snapshot.channel_id == "public"
     assert snapshot.template.template_id == "standard-community-board"
-    assert snapshot.hls_render_path == "/api/public/cg/channels/public/stream.m3u8"
+    assert snapshot.hls_render_path is None
     assert snapshot.portal_render_path == "/api/public/cg/channels/public/snapshot"
     assert {zone.kind for zone in snapshot.zones} >= {
         "primary",
@@ -189,13 +189,14 @@ def test_bulletin_submission_requires_moderation_and_approval_metadata() -> None
 
 def test_hls_render_plan_and_manifest_are_channel_specific() -> None:
     plan = build_hls_render_plan(channel_id="public")
-    manifest = build_hls_manifest(channel_id="public")
+    with pytest.raises(RuntimeError, match="Standalone CG video preview is unavailable"):
+        build_hls_manifest(channel_id="public")
 
     assert plan.snapshot_url == "/api/public/cg/channels/public/snapshot"
-    assert plan.manifest_url == "/api/public/cg/channels/public/stream.m3u8"
+    assert plan.manifest_url is None
+    assert plan.segment_pattern is None
+    assert plan.available is False
     assert plan.linear_overlay_contract_url == "/api/public/cg/channels/public/overlay-contract"
-    assert "#EXTM3U" in manifest
-    assert "/api/public/cg/channels/public/segments/cg-00000.ts" in manifest
 
     overlay_contract = build_overlay_contract(channel_id="public")
     assert overlay_contract.snapshot_url == "/api/public/cg/channels/public/snapshot"
@@ -210,7 +211,7 @@ def test_portal_display_packages_board_inputs_for_between_streams_display() -> N
     assert display.template_library.active_template_id == display.snapshot.template.template_id
     assert display.feed_catalog.adapters
     assert display.approved_bulletins.approved_zone_items
-    assert display.render_plan.manifest_url.endswith("/stream.m3u8")
+    assert display.render_plan.manifest_url is None
     assert display.overlay_contract.zone_count == len(display.snapshot.zones)
 
     alternate_display = build_portal_display(

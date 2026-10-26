@@ -24,7 +24,9 @@ import signal
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from itertools import count, pairwise
 from pathlib import Path
 from typing import Any, ClassVar
@@ -1470,9 +1472,13 @@ class GstPlayoutEngine:
 
         source.connect("pad-added", _on_pad_added)
 
-    def _build_chain(self, specs: tuple[ElementSpec, ...]) -> tuple[Gst.Element, Gst.Element]:
+    def _build_chain(
+        self, specs: tuple[ElementSpec, ...], *, collected: list[Gst.Element] | None = None
+    ) -> tuple[Gst.Element, Gst.Element]:
         """Build a linear chain (decodebin links dynamically). Returns (first, last)."""
         elements = [self._make(spec) for spec in specs]
+        if collected is not None:
+            collected.extend(elements)
         for upstream, downstream in pairwise(elements):
             if upstream.get_factory().get_name() in self._DECODERS:
                 self._link_dynamic_video(upstream, downstream)
@@ -1570,10 +1576,33 @@ class GstPlayoutEngine:
         serializes it as A/53 SEI. Returns the inserter chain's tail (its src feeds the
         mux). A live ``appsrc`` source is captured into ``self.caption_appsrc`` so the
         daemon can push cues. The live SEI presence is POSIX/LPM-validated."""
-        combiner = self._make(leg.combiner)
+        combiner_spec = leg.combiner
+        if leg.caption_source[0].factory == "appsrc":
+            # Live cc_data is already timestamped and padded by ccconverter.
+            # cccombiner's optional scheduler retains its private FIFO when a
+            # caption request pad is replaced, delaying the program-boundary
+            # erase behind outgoing padding. Keep timestamp-based aggregation
+            # without that additional FIFO for the live source.
+            combiner_spec = replace(combiner_spec, props={**combiner_spec.props, "schedule": False})
+        combiner = self._make(combiner_spec)
         self._link(video_prev, combiner)  # encoded H.264 → cccombiner 'sink' (video) pad
 
         # Caption text chain → cccombiner's request 'caption' pad.
+        self._caption_combiner = combiner
+        self._caption_source_leg = leg
+        self._build_caption_source(leg, combiner)
+
+        # cccombiner → h264ccinserter (→ h264parse) → [mux, linked by the caller].
+        prev = combiner
+        for spec in leg.inserter_chain:
+            element = self._make(spec)
+            self._link(prev, element)
+            prev = element
+        return prev
+
+    def _build_caption_source(
+        self, leg: CaptionEmbedLeg, combiner: Gst.Element, *, clear_at_ns: int | None = None
+    ) -> None:
         caption_specs = leg.caption_source
         if caption_specs[0].factory == "appsrc":
             # Separate serialized GAP forwarding from appsrc's source task.
@@ -1593,10 +1622,20 @@ class GstPlayoutEngine:
                 ),
                 *caption_specs[1:],
             )
-        cap_first, cap_last = self._build_chain(caption_specs)
+        token = getattr(self, "_caption_program_token", "")
+        if token:
+            caption_specs = tuple(
+                replace(spec, name=f"{spec.name}_{token}" if spec.name else None)
+                for spec in caption_specs
+            )
+        collected: list[Gst.Element] = []
+        cap_first, cap_last = self._build_chain(caption_specs, collected=collected)
+        self._caption_source_elements = collected
         if cap_first.get_factory().get_name() == "appsrc":
             self.caption_appsrc = cap_first  # daemon pushes cues here (push_caption_cue)
-            queue = self.pipeline.get_by_name("caption_flow_queue")
+            queue = self.pipeline.get_by_name(
+                f"caption_flow_queue_{token}" if token else "caption_flow_queue"
+            )
             if queue is None:
                 raise RuntimeError("live caption forwarding queue was not built")
             pad = queue.get_static_pad("src")
@@ -1612,6 +1651,34 @@ class GstPlayoutEngine:
 
             probe_id = pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, _entered_caption_downstream)
             self._caption_gap_probe = (pad, probe_id)
+        if clear_at_ns is not None:
+            # A blank timed-text page needs several CEA control frames before
+            # it displays. Put EDM directly on the existing cc_data path so an
+            # outgoing caption is erased on the first incoming video frame.
+            erase = self._make(
+                ElementSpec(
+                    "appsrc",
+                    f"caption_erase_{token}",
+                    {
+                        "is-live": True,
+                        "format": 3,
+                        "caps": "closedcaption/x-cea-708,format=(string)cc_data,framerate=(fraction)30/1",
+                    },
+                )
+            )
+            concat = self._make(
+                ElementSpec("concat", f"caption_reset_{token}", {"adjust-base": False})
+            )
+            self._link(erase, concat)
+            self._link(cap_last, concat)
+            collected.extend((erase, concat))
+            cap_last = concat
+            clear = Gst.Buffer.new_allocate(None, 3, None)
+            clear.fill(0, b"\xfc\x94\x2c")  # valid field-1 CEA-608 EDM, with parity
+            clear.pts = clear_at_ns
+            clear.duration = Gst.SECOND // 30
+            erase.emit("push-buffer", clear)
+            erase.emit("end-of-stream")
         caption_pad = combiner.request_pad_simple("caption")
         if (
             caption_pad is None
@@ -1619,21 +1686,83 @@ class GstPlayoutEngine:
         ):
             raise RuntimeError("failed to link caption source into cccombiner 'caption' pad")
 
-        # cccombiner → h264ccinserter (→ h264parse) → [mux, linked by the caller].
-        prev = combiner
-        for spec in leg.inserter_chain:
-            element = self._make(spec)
-            self._link(prev, element)
-            prev = element
-        return prev
+        self._caption_request_pad = caption_pad
 
-    def push_caption_cue(self, *, text: str, pts_seconds: float, duration_seconds: float) -> bool:
+    def _begin_caption_program(self, cutoff_ns: int | None = None) -> None:
+        """Replace only the sparse caption source at the actual selector switch.
+
+        The live combiner has no additional scheduling FIFO. The
+        encoder, mux, selected video/audio and graphics stay in place. A new
+        source also discards appsrc/queue/converter state; late commands must
+        carry the new token and cannot refill it with the outgoing program.
+        """
+        writer = getattr(self, "audio_tap_writer", None)
+        if getattr(self, "caption_appsrc", None) is None and writer is None:
+            return
+        token = uuid.uuid4().hex
+        self._caption_program_token = token
+        if cutoff_ns is None:
+            cutoff_ns = self._pipeline_running_time_ms() * Gst.MSECOND
+        self._caption_audio_cutoff_ns = cutoff_ns
+        if writer is not None:
+            writer.begin_program(token)
+        if getattr(self, "caption_appsrc", None) is None:
+            return
+        old_elements = self._caption_source_elements
+        combiner = self._caption_combiner
+        pad = self._caption_request_pad
+        old_src = old_elements[-1].get_static_pad("src")
+        old_src.add_probe(
+            Gst.PadProbeType.BUFFER
+            | Gst.PadProbeType.BUFFER_LIST
+            | Gst.PadProbeType.EVENT_DOWNSTREAM,
+            _drop_everything_probe,
+        )
+        old_src.unlink(pad)
+        combiner.release_request_pad(pad)
+        probe = self._caption_gap_probe
+        if probe is not None:
+            probe[0].remove_probe(probe[1])
+        self._caption_gap_gate.close()
+        self._caption_gap_gate = CaptionGapGate()
+        self.caption_appsrc = None
+        now_ms = cutoff_ns // Gst.MSECOND
+        self._build_caption_source(
+            self._caption_source_leg, combiner, clear_at_ns=now_ms * Gst.MSECOND
+        )
+        self._caption_stream_position_ms = now_ms
+        for element in reversed(self._caption_source_elements):
+            element.sync_state_with_parent()
+        self._send_live_caption_gap(now_ms, LIVE_CAPTION_LEAD_MS)
+        thread = threading.Thread(
+            target=self._dispose_elements_best_effort,
+            args=(old_elements,),
+            name="cc-caption-retire",
+            daemon=True,
+        )
+        self._abort_retire_threads = [
+            item for item in self._abort_retire_threads if item.is_alive()
+        ]
+        self._abort_retire_threads.append(thread)
+        thread.start()
+        print(f"CTRL caption program changed: {token}", flush=True)
+
+    def push_caption_cue(
+        self,
+        *,
+        text: str,
+        pts_seconds: float,
+        duration_seconds: float,
+        program_token: str | None = None,
+    ) -> bool:
         """Push one timed-text caption cue into the live caption appsrc (S11a).
 
         Returns False if no live caption source is built (no-op). The daemon calls this
         via the ``caption`` control command to feed continuous captions from the channel
         caption pipeline; the buffer carries PTS+duration so cccombiner schedules the
         cue against the video. Live behavior is POSIX/LPM-validated."""
+        if (program_token or "") != getattr(self, "_caption_program_token", ""):
+            return False
         appsrc = self.caption_appsrc
         if appsrc is None:
             return False
@@ -1946,7 +2075,14 @@ class GstPlayoutEngine:
             if not mapped:
                 return Gst.FlowReturn.ERROR
             try:
-                writer.write_pcm_s16le(map_info.data)
+                token = getattr(self, "_caption_program_token", None)
+                cutoff_ns = getattr(self, "_caption_audio_cutoff_ns", None)
+                if cutoff_ns is not None:
+                    segment = sample.get_segment()
+                    running_ns = segment.to_running_time(Gst.Format.TIME, buffer.pts)
+                    if running_ns == Gst.CLOCK_TIME_NONE or running_ns < cutoff_ns:
+                        return Gst.FlowReturn.OK
+                writer.write_pcm_s16le(map_info.data, program_token=token)
             except Exception as exc:
                 self._error = f"caption audio tap failed: {exc}"
                 print(f"ERROR: {self._error}", flush=True)
@@ -1960,6 +2096,12 @@ class GstPlayoutEngine:
         appsink.connect("new-sample", _on_new_sample)
         self.audio_tap_appsink = appsink
         self.audio_tap_writer = writer
+        # A restarted worker must not reuse a prior worker's program fence.
+        if (writer.tap_dir / "program-boundary.json").exists():
+            token = uuid.uuid4().hex
+            self._caption_program_token = token
+            writer.begin_program(token)
+            print(f"CTRL caption program changed: {token}", flush=True)
 
     @staticmethod
     def _tag_audio_language(element: Gst.Element, language: str) -> None:
@@ -2366,7 +2508,10 @@ class GstPlayoutEngine:
                     source_name = message.src.get_name()
                 print(
                     "CTRL reload aborted: new program errored before commit "
-                    f"(source={source_name}): {err}",
+                    f"(source={source_name}): {err}; debug="
+                    + re.sub(
+                        r"[A-Za-z][A-Za-z0-9+.-]*://\S+", "[source URI redacted]", str(_debug)
+                    ),
                     flush=True,
                 )
                 self._abort_pending_reload("error")
@@ -5058,6 +5203,7 @@ class GstPlayoutEngine:
                     text=text,
                     pts_seconds=command[1] / 1000.0,
                     duration_seconds=command[2] / 1000.0,
+                    **({"program_token": command[4]} if len(command) == 5 else {}),
                 )
                 if not pushed:
                     print("CTRL caption dropped: no live caption source", flush=True)
@@ -7141,6 +7287,7 @@ class GstPlayoutEngine:
         # input-selector can observe the buffer/serialized event that applies its
         # pending active-pad transition. Teardown is still gated by notify plus
         # exact property readback in ``_confirm_reload_selector_handoff``.
+        self._begin_caption_program(pending.get("old_tail_cutoff_ns"))
         self._release_hold_probes(pending)
         pending["replacement_released"] = True
         print("CTRL reload: holds released", flush=True)
@@ -8463,105 +8610,23 @@ class GstPlayoutEngine:
         audio_pad: Gst.Pad | None,
         elements: list[Gst.Element],
     ) -> tuple[bool, str | None]:
-        """NULL, unlink/release, and remove a now-inactive source leg.
+        """Retire an aborted, never-selected leg using the same isolation policy.
 
-        Every step is best-effort so one failure cannot prevent the remaining
-        cleanup. The explicit result is load-bearing for asynchronous reload
-        settlement: a partial retirement is never reported as committed/applied.
-
-        Round-2 finding 3 -- ONE policy, applied identically on the commit path and
-        the abort path, because the two used to disagree about what "failed"
-        even meant:
-
-        * ``set_state(NULL)`` returning ASYNC is NOT a failure. These legs are
-          bins; see ``_null_retiring_element``. Wait for it, bounded.
-        * A NULL that genuinely does not land is retried once, then reported.
-          That is the only condition that returns ``(False, reason)``.
-        * A failed unlink or a failed ``pipeline.remove`` is logged as a WARNING
-          and does NOT fail the retirement. The leg is already at NULL and off
-          air by that point; the cost is bookkeeping, not airtime.
-        * Nothing here kills a channel that is still producing. A retirement
-          problem that DOES take the channel off air stops the mux, and the stall
-          watchdog already owns that escalation with far better evidence than a
-          disposal return code can carry.
-
-        The old native failure stopped inside set_state(NULL) while a retired
-        concat task still held its streaming lock. Flush that inactive leg from
-        its tail source pads before NULL. Do not unlink a still-running source
-        and do not send FLUSH_STOP: either would reopen a producer race. The
-        commit-stage markers and watchdog retain failure evidence if teardown
-        still cannot complete.
+        The abort path fences its tails before releasing the first-buffer holds.
+        Release the inactive selector requests before potentially blocking NULL,
+        as on confirmed retirement. A connected-tail FLUSH_START and NULL-first
+        teardown can interact with shared selector streaming locks while the next
+        replacement is prerolling. No flush or state change enters the selected
+        program; disposal still runs off the main loop and reports failure.
         """
-        failures: list[str] = []
-        # A second deferred rollover in the native AV playlist shape wedged in
-        # ``element.set_state(NULL)``: the retiring concat's streaming task was
-        # still blocked at the selector even though that selector pad had become
-        # inactive.  FLUSH_START is deliberately sent from the retiring leg's OWN
-        # tail src pad, through its peer, before taking the leg down. GStreamer
-        # makes that out-of-band event turn blocked pushes into GST_FLOW_FLUSHING,
-        # so the retiring task releases its STREAM_LOCK before the downward state
-        # transition waits for it. Do NOT send FLUSH_STOP: this leg is being
-        # removed, and reopening it would restore the exact producer race this
-        # flush closes. Do NOT send on the selector request pad itself: that does
-        # not reach the retired leg's upstream task.
-        warnings = self._flush_retiring_leg_source_pads(video_pad, audio_pad)
-        for index, element in enumerate(elements):
-            self._null_retiring_element(element, index + 1, failures)
-        for stream, selector, pad in (
-            ("video", self.selector, video_pad),
-            ("audio", self.audio_selector, audio_pad),
-        ):
-            if selector is None or pad is None:
-                continue
-            try:
-                peer = pad.get_peer()
-                if peer is not None and peer.unlink(pad) is False:
-                    warnings.append(f"selector-unlink-failed:{stream}")
-                selector.release_request_pad(pad)
-            except Exception as exc:
-                warnings.append(f"selector-release-error:{stream}:{exc!r}")
-        for index, element in enumerate(elements):
-            try:
-                if self.pipeline.remove(element) is False:
-                    warnings.append(f"element-remove-failed:{index + 1}")
-            except Exception as exc:
-                warnings.append(f"element-remove-error:{index + 1}:{exc!r}")
-        if warnings:
-            # Round-2 finding 3: reported, never fatal. See the policy note in the
-            # docstring -- an unlink/remove hiccup on a leg that is already at NULL
-            # leaks bookkeeping, not airtime, and the element-count assertion in
-            # the leak test is what actually guards that.
-            print(f"WARN: leg disposal incomplete: {'; '.join(warnings)}", flush=True)
-        if failures:
-            reason = "; ".join(failures)
-            print(f"WARN: leg disposal did not reach NULL: {reason}", flush=True)
-            return False, reason
-        return True, None
-
-    @staticmethod
-    def _flush_retiring_leg_source_pads(video_pad: Gst.Pad, audio_pad: Gst.Pad | None) -> list[str]:
-        """Flush only the retiring leg downstream, without reopening it.
-
-        ``video_pad`` / ``audio_pad`` are input-selector request pads. Their peers
-        are the retiring leg's tail *src* pads; ``push_event(FLUSH_START)`` there
-        travels from that one leg into its now-inactive selector input and unblocks
-        the leg's task. It is intentionally not a pipeline-wide flush and there is
-        no matching FLUSH_STOP because the leg is immediately driven to NULL.
-        """
-        warnings: list[str] = []
-        for stream, selector_pad in (("video", video_pad), ("audio", audio_pad)):
-            if selector_pad is None:
-                continue
-            try:
-                peer = selector_pad.get_peer()
-                if peer is None:
-                    warnings.append(f"retiring-flush-peer-missing:{stream}")
-                    continue
-                if peer.push_event(Gst.Event.new_flush_start()) is False:
-                    warnings.append(f"retiring-flush-failed:{stream}")
-            except Exception as exc:
-                warnings.append(f"retiring-flush-error:{stream}:{exc!r}")
-        return warnings
+        return self._dispose_confirmed_old_leg(
+            {
+                "old_video_pad": video_pad,
+                "old_audio_pad": audio_pad,
+                "old_elements": elements,
+                "old_tail_drop_probes": [],
+            }
+        )
 
     def _null_retiring_element(self, element: Gst.Element, index: int, failures: list[str]) -> bool:
         """Bring ONE element of a retiring leg to NULL under the finding-3 policy.
