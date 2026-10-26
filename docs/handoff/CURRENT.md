@@ -1,5 +1,25 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Current delivery checkpoint - October 26, 2026
+
+- PR268 frozen at a5122f08 until this diagnostic-only commit is pushed.
+  Run40276241194 Windows job121419690914 failed F7 extraction: decoded text
+  empty, worker switch10.155s and clean EOS; F4 supersede passed. Exact log:
+  C:\Users\scott\AppData\Local\Temp\civiccast-pr268-windows-second.log.
+  Retained junit has no TS or decoder stderr. One local scenario15661 passed
+  25.82s (Temp/civiccast-f7-ci-diagnosis); CI cause remains unresolved.
+- Approved diagnostic change preserves decoder exit/stdout/stderr and failed
+  TS/worker log in existing caption-worker-failure artifact. No product fix
+  claimed. Ruff check/format passed. Next push and use one required CI waiter.
+- Existing waiter20498 owns run40276241194; unit job121419690772 still live
+  at last consumption. No remote cancellation. Cancel only watcher via Ctrl+C.
+- N1 source is safe in named stash 'N1 source in progress while diagnosing
+  PR268 caption CI', created on feat/n1-public-transcript-search. Restore only
+  on that branch after diagnostic push; do not mix N1 into PR268. N1 contains
+  packaged transcript search/read endpoints with current-grant signed-cookie
+  access checks, timestamp links and accessible transcript; checks pending.
+  Parent authorized N1 checks alongside hosted CI after headroom check (11GB free).
+
 ## Active F4/F6/F7 checkpoint — October 25, 2026
 
 - Scott explicitly resumed this work in the parent Codex chat; the earlier chat

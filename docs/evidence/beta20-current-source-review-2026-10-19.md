@@ -1,6 +1,16 @@
 # Beta 20 current-source review tripwire renewal
 
 
+## October 26 caption extraction diagnostic binding
+
+Windows job121419690914 passed the F4 supersession case but failed the F7
+caption-boundary proof with empty extracted text. The worker committed and
+terminated cleanly; the decoder previously discarded exit status and stderr.
+No failed stream was retained, so its exact cause is unresolved. One local
+scenario passed25.82s; this does not explain CI. The native test tripwires now
+bind decoder status/stderr preservation and failure-only stream/log retention
+under the existing caption-worker-failure artifact. No product behavior changed.
+
 ## October 25 F6/F7 caption boundary and preview correction
 
 The current-source tripwires for worker, engine, control, audio tap, native test

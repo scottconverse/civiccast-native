@@ -852,7 +852,17 @@ def _decode_back_caption_text(ts: Path) -> str:
         capture_output=True,
         text=True,
     )
-    return proc.stdout if proc.returncode == 0 else ""
+    ts.with_suffix(".caption-decode.json").write_text(
+        json.dumps(
+            {"exit_code": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    assert proc.returncode == 0, (
+        f"caption extraction failed (ffmpeg exit {proc.returncode}): {proc.stderr}"
+    )
+    return proc.stdout
 
 
 def _assert_caption_decoded(decoded: str, expected: str, *, context: str) -> None:
@@ -3302,6 +3312,23 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
 
 def test_program_switch_discards_queued_and_delayed_outgoing_captions(tmp_path: Path) -> None:
     """Decode actual emitted bytes across a deferred program/caption boundary."""
+    try:
+        _assert_program_switch_caption_boundary(tmp_path)
+    except Exception:
+        workspace = os.environ.get("GITHUB_WORKSPACE")
+        if workspace:
+            import shutil
+
+            retained = Path(workspace) / "caption-worker-failure" / "program-boundary"
+            retained.mkdir(parents=True, exist_ok=True)
+            for name in ("output.ts", "worker.log", "graph.json", "output.caption-decode.json"):
+                source = tmp_path / name
+                if source.is_file():
+                    shutil.copy2(source, retained / name)
+        raise
+
+
+def _assert_program_switch_caption_boundary(tmp_path: Path) -> None:
     clips = [tmp_path / f"segment-{index:04d}.ts" for index in range(1, 5)]
     for clip in clips:
         _write_short_av_ts_clip(clip, seconds=2.5, video_caps=_PRODUCTION_CAPS)
