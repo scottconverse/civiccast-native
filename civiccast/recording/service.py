@@ -44,7 +44,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from datetime import time as wall_time
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -608,7 +608,7 @@ class RecordingService:
             raise RuntimeError(
                 "This capture engine cannot report recording time; enter a reviewed time."
             )
-        return position(job_id)
+        return cast(Callable[[str], float], position)(job_id)
 
     def finalize_job(self, job_id: str) -> RecordingJob:
         """Transition ``recording → finalizing → done`` (DC-4, DC-6).

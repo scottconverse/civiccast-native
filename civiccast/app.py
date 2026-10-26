@@ -3518,7 +3518,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
         asset_store = PostgresAssetStore(_session_factory)
 
-        def playback_window(asset_id: str):
+        def playback_window(asset_id: str) -> tuple[float, float | None] | None:
             with _session_factory() as session:
                 try:
                     package = _package_dir_for_asset(asset_id, session)

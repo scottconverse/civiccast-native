@@ -506,7 +506,8 @@ def create_item(
     drop items at the same slot get a controlled conflict, never a raw
     500 (E-2 / Q-2 / T-1)."""
     resolved = _require_store(store)
-    if resolved.get_agenda(agenda_id) is None:
+    agenda = resolved.get_agenda(agenda_id)
+    if agenda is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail=f"Meeting agenda {agenda_id!r} not found."
         )
@@ -522,9 +523,7 @@ def create_item(
             status.HTTP_409_CONFLICT,
             detail=f"Agenda item {payload.item_id!r} already exists. Use PATCH to update.",
         )
-    _validate_marker(
-        resolved.get_agenda(agenda_id), payload.video_timecode_s, assets, recordings, capture, svc
-    )
+    _validate_marker(agenda, payload.video_timecode_s, assets, recordings, capture, svc)
     try:
         return resolved.upsert_item(AgendaItem(**payload.model_dump()))
     except AgendaItemOrderConflictError as exc:
@@ -565,6 +564,7 @@ def patch_item(
     merged = current.model_copy(update=updates)
     if "video_timecode_s" in updates:
         agenda = resolved.get_agenda(agenda_id)
+        assert agenda is not None
         _validate_marker(agenda, merged.video_timecode_s, assets, recordings, capture, svc)
     try:
         return resolved.upsert_item(merged)

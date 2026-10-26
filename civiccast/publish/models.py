@@ -68,7 +68,7 @@ class YouTubeSchedule(BaseModel):
     youtube_scheduled_end: AwareDatetime | None = None
 
     @model_validator(mode="after")
-    def _valid_youtube_window(self):
+    def _valid_youtube_window(self) -> YouTubeSchedule:
         start, end = self.youtube_scheduled_start, self.youtube_scheduled_end
         if (start is None) != (end is None) or (start and end and end <= start):
             raise ValueError("YouTube schedule requires a start and a later end.")

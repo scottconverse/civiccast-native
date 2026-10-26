@@ -327,19 +327,23 @@ class PostgresSummaryStore:
             _require_editable_minutes(summary, expected_audit_fingerprint)
             assert summary is not None
             updated = edited_minutes(summary, content, operator_id)
-            result = session.execute(
-                text(
-                    f"UPDATE {table}summaries SET narrative=:narrative, agenda_minutes_json=:minutes, "  # nosec B608
-                    "audit_fingerprint=:fingerprint WHERE summary_id=:summary_id "
-                    "AND status='pending_review' AND audit_fingerprint=:expected"
+            assert updated.agenda_minutes is not None
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    text(
+                        f"UPDATE {table}summaries SET narrative=:narrative, agenda_minutes_json=:minutes, "  # nosec B608
+                        "audit_fingerprint=:fingerprint WHERE summary_id=:summary_id "
+                        "AND status='pending_review' AND audit_fingerprint=:expected"
+                    ),
+                    {
+                        "narrative": updated.narrative,
+                        "minutes": updated.agenda_minutes.model_dump_json(),
+                        "fingerprint": updated.audit_fingerprint,
+                        "summary_id": summary_id,
+                        "expected": expected_audit_fingerprint,
+                    },
                 ),
-                {
-                    "narrative": updated.narrative,
-                    "minutes": updated.agenda_minutes.model_dump_json(),
-                    "fingerprint": updated.audit_fingerprint,
-                    "summary_id": summary_id,
-                    "expected": expected_audit_fingerprint,
-                },
             )
             if result.rowcount != 1:
                 session.rollback()

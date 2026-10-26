@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal, Protocol, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -247,6 +247,10 @@ class OfflineCaptionJobRecord(BaseModel):
     last_error: str = ""
     created_at: datetime
     updated_at: datetime
+
+
+class _TranslationCaptionArguments(TypedDict, total=False):
+    translated_cues: dict[str, list[CaptionCue]]
 
 
 class OfflineCaptionJobStore(Protocol):
@@ -932,19 +936,16 @@ class OfflineCaptionJobWorker:
         if self._cancelled(row.job_id):
             return self._store.get(row.job_id) or row
         try:
+            translation_arguments: _TranslationCaptionArguments = {}
+            if any(code != "es" for code in translations):
+                translation_arguments["translated_cues"] = {
+                    code: cues for code, cues in translations.items() if code != "es"
+                }
             attached = attach_reviewed_captions(
                 Path(row.package_dir),
                 english.cues,
                 spanish_cues=translations.get("es"),
-                **(
-                    {
-                        "translated_cues": {
-                            code: cues for code, cues in translations.items() if code != "es"
-                        }
-                    }
-                    if any(code != "es" for code in translations)
-                    else {}
-                ),
+                **translation_arguments,
             )
         except Exception as exc:
             return self._record_failure(row, now=now, error=str(exc), stage="caption attach")

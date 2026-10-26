@@ -11,14 +11,14 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
+def upgrade() -> None:
     schema = "civiccast" if op.get_bind().dialect.name != "sqlite" else None
     op.add_column(
         "summaries", sa.Column("agenda_minutes_json", sa.Text(), nullable=True), schema=schema
     )
 
 
-def downgrade():
+def downgrade() -> None:
     schema = "civiccast" if op.get_bind().dialect.name != "sqlite" else None
     with op.batch_alter_table("summaries", schema=schema) as batch:
         batch.drop_column("agenda_minutes_json")

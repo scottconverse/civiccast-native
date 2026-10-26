@@ -138,7 +138,8 @@ class YouTubeLiveOutput:
 
     def restore(self, client: YouTubeClient, *, asset_id: str, proof: YouTubePublishProof) -> None:
         """Resume a saved destination without creating or editing another event."""
-        if not proof.broadcast_id or not proof.stream_id:
+        broadcast_id, stream_id = proof.broadcast_id, proof.stream_id
+        if not broadcast_id or not stream_id:
             return
         with self._lock:
             if asset_id in self._deliveries:
@@ -151,8 +152,8 @@ class YouTubeLiveOutput:
             self._deliveries[asset_id] = _Delivery(
                 client=client,
                 proof=proof,
-                broadcast_id=proof.broadcast_id,
-                stream_id=proof.stream_id,
+                broadcast_id=broadcast_id,
+                stream_id=stream_id,
             )
             self._supervisor.start()
 
@@ -160,7 +161,10 @@ class YouTubeLiveOutput:
         self, delivery: _Delivery, ingest: str | None = None, source: Path | None = None
     ) -> None:
         try:
-            source = source or self._source(delivery.proof.channel_id)
+            if source is None:
+                channel_id = delivery.proof.channel_id
+                assert channel_id is not None
+                source = self._source(channel_id)
             ingest = ingest or delivery.client.live_ingest(delivery.stream_id)
             delivery.process = self._launch(
                 [
