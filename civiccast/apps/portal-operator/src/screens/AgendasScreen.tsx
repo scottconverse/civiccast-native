@@ -10,17 +10,10 @@
 //      publish/unpublish button (publish refuses on zero items per DC-1 with a
 //      surfaced 422), and a two-step delete confirm with the cascade warning.
 //
-//   B. Items list + editor — table of items (order, number, title, timecode,
-//      doc anchor) with add/edit/delete and a two-step delete confirm. Drag
-//      reordering is intentionally out of scope; the operator types the order
-//      number. Instead of a disabled "Set from current video time" button, the
-//      editor surfaces an honest helper link: open the meeting on the public
-//      portal in another tab, find the moment, paste the seconds here. The
-//      embedded player would require cross-app import of HlsPlayer (which
-//      lives in the portal-public package, depends on hls.js, and is not
-//      wired into the operator vite/tsconfig boundary). The link path keeps
-//      the operator on a single source of truth (the public portal player)
-//      without misleading affordances.
+//   B. Items use HH:MM:SS on the explicitly labeled playback/source clock.
+//      Active capture jobs expose a measured-media mark action. Their durable
+//      association follows the content-derived final asset; published source
+//      markers are mapped through the immutable package range.
 //
 //   C. Bulk actions — "Sync from chapters" + a plain-text agenda import. The
 //      PDF / DOCX path returns 415 from the server; we surface that as a
@@ -45,6 +38,9 @@ import {
   importAgendaFromDoc,
   importExternalAgenda,
   listAgendaItems,
+  listAgendaMeetings,
+  markAgendaItemNow,
+  type AgendaMeetingOption,
   listExternalAgendaMeetings,
   listMeetingAgendas,
   patchAgendaItem,
@@ -62,7 +58,7 @@ import type {
   MeetingAgendaInput,
   StaffIdentityResponse,
 } from '../types/api.generated'
-import { formatTimecode } from './agendas-format'
+import { formatTimecode, parseAgendaTime } from './agendas-format'
 import { hasRole } from './contribution-format'
 import { EmptyState } from '../components/EmptyState'
 
@@ -99,7 +95,6 @@ const JS_PORTAL_VENDOR_HINTS = [
 function publicWatchUrlFor(assetId: string | null | undefined): string | null {
   if (!assetId) return null
   const base = (import.meta.env.VITE_PUBLIC_PORTAL_BASE_URL ?? '').trim()
-  if (base.length === 0) return null
   const trimmed = base.replace(/\/+$/, '')
   return `${trimmed}/#/watch/${encodeURIComponent(assetId)}`
 }
@@ -174,13 +169,14 @@ function CreateAgendaForm({
   onChange,
   onSubmit,
   pending,
+  meetings,
 }: {
+  meetings: AgendaMeetingOption[]
   form: CreateAgendaFormState
   onChange: (next: CreateAgendaFormState) => void
   onSubmit: () => void
   pending: boolean
 }) {
-  const idAg = useId()
   const idMa = useId()
   const idUrl = useId()
   const canSubmit =
@@ -192,31 +188,14 @@ function CreateAgendaForm({
       style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
     >
       <h2 className="text-sm font-semibold">Create new agenda</h2>
-      <label htmlFor={idAg} className="grid gap-1 text-xs">
-        <span style={{ color: 'var(--cc-ink-3)' }}>Agenda ID (slug)</span>
-        <input
-          id={idAg}
-          aria-label="Agenda ID"
-          type="text"
-          value={form.agenda_id}
-          placeholder="council-2026-01"
-          onChange={(e) => onChange({ ...form, agenda_id: e.target.value })}
-          className="rounded-md px-2 py-1.5"
-          style={INPUT_STYLE}
-        />
-      </label>
       <label htmlFor={idMa} className="grid gap-1 text-xs">
-        <span style={{ color: 'var(--cc-ink-3)' }}>Meeting asset ID</span>
-        <input
-          id={idMa}
-          aria-label="Meeting asset ID"
-          type="text"
-          value={form.meeting_asset_id}
-          placeholder="asset-council-2026-01"
-          onChange={(e) => onChange({ ...form, meeting_asset_id: e.target.value })}
-          className="rounded-md px-2 py-1.5"
-          style={INPUT_STYLE}
-        />
+        <span>Meeting or recording</span>
+        <select id={idMa} aria-label="Meeting or recording" value={form.meeting_asset_id}
+          onChange={(event) => onChange({ ...form, meeting_asset_id: event.target.value, agenda_id: `agenda-${crypto.randomUUID()}` })}
+          className="rounded-md px-2 py-1.5" style={INPUT_STYLE}>
+          <option value="">Choose a meeting or recording</option>
+          {meetings.map((meeting) => <option key={meeting.meeting_asset_id} value={meeting.meeting_asset_id}>{meeting.title} ({meeting.state})</option>)}
+        </select>
       </label>
       <label htmlFor={idUrl} className="grid gap-1 text-xs">
         <span style={{ color: 'var(--cc-ink-3)' }}>Source doc URL (optional)</span>
@@ -254,6 +233,7 @@ function CreateAgendaForm({
 
 function SelectedAgendaCard({
   agenda,
+  meetingTitle,
   itemCount,
   onPublish,
   onUnpublish,
@@ -266,6 +246,7 @@ function SelectedAgendaCard({
   deleteError,
 }: {
   agenda: MeetingAgenda
+  meetingTitle?: string
   itemCount: number
   onPublish: () => void
   onUnpublish: () => void
@@ -288,12 +269,11 @@ function SelectedAgendaCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="flex items-center gap-2">
-            <strong className="cc-mono text-sm">{agenda.agenda_id}</strong>
+            <strong className="text-sm">{meetingTitle ?? 'Meeting agenda'}</strong>
             <StatusBadge status={status} />
           </div>
           <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            meeting asset:{' '}
-            <span className="cc-mono">{agenda.meeting_asset_id}</span>
+            Linked recording: {meetingTitle ?? 'unavailable; refresh the recording list'}
           </div>
           {agenda.source_doc_url ? (
             <div className="text-xs">
@@ -415,7 +395,7 @@ function formFromItem(item: AgendaItem): ItemFormState {
     order: String(item.order),
     number: item.number ?? '',
     title: item.title,
-    video_timecode_s: item.video_timecode_s == null ? '' : String(item.video_timecode_s),
+    video_timecode_s: item.video_timecode_s == null ? '' : formatTimecode(item.video_timecode_s),
     doc_anchor: item.doc_anchor ?? '',
     notes: item.notes ?? '',
   }
@@ -437,6 +417,7 @@ function ItemForm({
   onCancelEdit,
   pending,
   publicPortalUrl,
+  sourceTime,
 }: {
   form: ItemFormState
   onChange: (next: ItemFormState) => void
@@ -453,6 +434,7 @@ function ItemForm({
    * aliases that are deliberately scoped to ./src per app.
    */
   publicPortalUrl: string | null
+  sourceTime?: boolean
 }) {
   const idItem = useId()
   const idOrder = useId()
@@ -463,7 +445,7 @@ function ItemForm({
   const idNotes = useId()
   const editing = form.editingItemId != null
   const orderParsed = parseOptionalInt(form.order)
-  const tcParsed = parseOptionalInt(form.video_timecode_s)
+  const tcParsed = parseAgendaTime(form.video_timecode_s)
   const canSubmit =
     (editing || form.item_id.trim().length > 0) &&
     form.title.trim().length > 0 &&
@@ -546,15 +528,14 @@ function ItemForm({
 
       <div className="grid gap-3 sm:grid-cols-2">
         <label htmlFor={idTc} className="grid gap-1 text-xs">
-          <span style={{ color: 'var(--cc-ink-3)' }}>Video timecode (seconds, optional)</span>
+          <span style={{ color: 'var(--cc-ink-3)' }}>{sourceTime ? 'Source recording time (hh:mm:ss, optional)' : 'Packaged playback time (hh:mm:ss, optional)'}</span>
           <input
             id={idTc}
-            aria-label="Video timecode (seconds)"
+            aria-label={sourceTime ? 'Source recording time (hh:mm:ss)' : 'Packaged playback time (hh:mm:ss)'}
             aria-describedby={`${idTc}-tip`}
-            type="number"
-            min={0}
+            type="text"
             value={form.video_timecode_s}
-            placeholder="e.g. 125"
+            placeholder="00:02:05"
             onChange={(e) => onChange({ ...form, video_timecode_s: e.target.value })}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
@@ -576,18 +557,18 @@ function ItemForm({
                 >
                   open the meeting on the public portal ↗
                 </a>{' '}
-                in another tab, find the moment in the player, then paste the seconds here.
+                in another tab, find the moment in the player, then enter the time here. {sourceTime ? 'Use original capture time; published chapters adjust for packaged trims.' : 'Use the packaged public video clock; these times are already playback positions.'}
               </>
             ) : (
               <>
                 open the meeting on the public portal in another tab, find the moment in
-                the player, then paste the seconds here.
+                the player, then enter the time here. {sourceTime ? 'Use original capture time; published chapters adjust for packaged trims.' : 'Use the packaged public video clock; these times are already playback positions.'}
               </>
             )}
           </span>
           {!tcParsed.ok && (
             <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
-              Timecode must be a whole non-negative number of seconds (or blank).
+              Enter hh:mm:ss with minutes and seconds from 00 to 59, numeric seconds, or leave blank.
             </span>
           )}
         </label>
@@ -649,6 +630,8 @@ function ItemForm({
 
 function ItemsTable({
   items,
+  onMarkNow,
+  marking,
   onEdit,
   onArmDelete,
   onConfirmDelete,
@@ -656,6 +639,8 @@ function ItemsTable({
   deleting,
 }: {
   items: AgendaItem[]
+  onMarkNow?: (itemId: string) => void
+  marking?: boolean
   onEdit: (item: AgendaItem) => void
   onArmDelete: (itemId: string) => void
   onConfirmDelete: (itemId: string) => void
@@ -721,6 +706,7 @@ function ItemsTable({
                 </td>
                 <td className="px-2 py-1 text-right">
                   <div className="inline-flex flex-wrap items-center gap-1">
+                    {onMarkNow && <button type="button" disabled={marking} aria-label={`Mark ${item.title} now`} onClick={() => onMarkNow(item.item_id)}>Mark current item now</button>}
                     <button
                       type="button"
                       aria-label={`Edit ${item.title}`}
@@ -1138,6 +1124,8 @@ export function AgendasScreen() {
 function AgendasBody() {
   const qc = useQueryClient()
 
+  const meetingsQuery = useQuery({ queryKey: ['agenda-meetings'], queryFn: listAgendaMeetings, refetchInterval: 10000 })
+  const meetings = meetingsQuery.data ?? []
   const agendasQuery = useQuery({
     queryKey: ['meeting-agendas'],
     queryFn: () => listMeetingAgendas(),
@@ -1190,6 +1178,7 @@ function AgendasBody() {
       agenda_id: createForm.agenda_id.trim(),
       station_id: DEFAULT_STATION_ID,
       meeting_asset_id: createForm.meeting_asset_id.trim(),
+      source_recording_job_id: meetings.find((meeting) => meeting.meeting_asset_id === createForm.meeting_asset_id)?.source_recording_job_id ?? null,
       source_doc_url:
         createForm.source_doc_url.trim() === '' ? null : createForm.source_doc_url.trim(),
     }
@@ -1220,6 +1209,7 @@ function AgendasBody() {
         >
           <AgendaPicker
             agendas={agendas}
+            meetings={meetings}
             loading={agendasQuery.isLoading}
             value={selectedAgendaId}
             onChange={setPickedAgendaId}
@@ -1232,7 +1222,9 @@ function AgendasBody() {
         onChange={setCreateForm}
         onSubmit={handleSubmitCreate}
         pending={createAgendaMut.isPending}
+        meetings={meetings}
       />
+      {meetingsQuery.isError && <Banner tone="warn">Meeting choices could not be loaded. Refresh after recording or library storage recovers.</Banner>}
       {createAgendaMut.isError && (
         <Banner tone="warn">
           {apiMessage(createAgendaMut.error, 'Could not create the agenda.')}
@@ -1248,6 +1240,7 @@ function AgendasBody() {
         <SelectedAgendaSection
           key={selectedAgenda.agenda_id}
           agenda={selectedAgenda}
+          meeting={meetings.find((meeting) => selectedAgenda.source_recording_job_id ? meeting.source_recording_job_id === selectedAgenda.source_recording_job_id : meeting.meeting_asset_id === selectedAgenda.meeting_asset_id)}
           onAgendaDeleted={() => setPickedAgendaId(null)}
         />
       ) : (
@@ -1271,13 +1264,19 @@ function AgendasBody() {
  */
 function SelectedAgendaSection({
   agenda,
+  meeting,
   onAgendaDeleted,
 }: {
+  meeting?: AgendaMeetingOption
   agenda: MeetingAgenda
   onAgendaDeleted: () => void
 }) {
   const qc = useQueryClient()
   const agendaId = agenda.agenda_id
+  const markNow = useMutation({
+    mutationFn: (itemId: string) => markAgendaItemNow(agendaId, itemId),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['agenda-items', agendaId] }) },
+  })
 
   const invalidateAgendas = () => qc.invalidateQueries({ queryKey: ['meeting-agendas'] })
   const invalidateItems = () => qc.invalidateQueries({ queryKey: ['agenda-items', agendaId] })
@@ -1367,7 +1366,7 @@ function SelectedAgendaSection({
   const handleSubmitItem = () => {
     const order = parseOptionalInt(itemForm.order)
     if (!order.ok || order.value == null) return
-    const tc = parseOptionalInt(itemForm.video_timecode_s)
+    const tc = parseAgendaTime(itemForm.video_timecode_s)
     if (!tc.ok) return
     if (itemForm.editingItemId != null) {
       const patch: AgendaItemUpdate = {
@@ -1415,6 +1414,7 @@ function SelectedAgendaSection({
     <>
       <SelectedAgendaCard
         agenda={agenda}
+        meetingTitle={meeting?.title}
         itemCount={items.length}
         onPublish={() => publishMut.mutate('published')}
         onUnpublish={() => publishMut.mutate('draft')}
@@ -1427,6 +1427,9 @@ function SelectedAgendaSection({
         deleteError={deleteAgendaError}
       />
 
+      <p className="text-sm">{meeting?.title ?? 'Recording unavailable'} — {meeting?.state ?? 'awaiting library linkage'}. {agenda.source_recording_job_id ? 'Times refer to the original source recording and adjust for packaged trims.' : 'Times refer to packaged playback and remain unchanged when publishing chapters.'} Publish the recording and agenda when ready; draft markers remain private.</p>
+      {markNow.isError && <Banner tone="warn">{apiMessage(markNow.error, 'Recording time is unavailable. Enter a reviewed time instead.')}</Banner>}
+      {markNow.isSuccess && <Banner tone="ok">Marked the recorded-media position. Correct the time with Edit if needed.</Banner>}
       <section
         aria-label="Agenda items"
         className="space-y-3 rounded-md p-4 text-sm"
@@ -1439,7 +1442,8 @@ function SelectedAgendaSection({
           onSubmit={handleSubmitItem}
           onCancelEdit={() => setItemForm(EMPTY_ITEM_FORM)}
           pending={createItemMut.isPending || patchItemMut.isPending}
-          publicPortalUrl={publicWatchUrlFor(agenda.meeting_asset_id)}
+          publicPortalUrl={meeting && !meeting.can_mark_now ? publicWatchUrlFor(meeting.meeting_asset_id) : null}
+          sourceTime={Boolean(agenda.source_recording_job_id)}
         />
         {createItemMut.isError && (
           <Banner tone="warn">
@@ -1488,6 +1492,8 @@ function SelectedAgendaSection({
             )}
             <ItemsTable
               items={items}
+              onMarkNow={meeting?.can_mark_now ? (itemId) => markNow.mutate(itemId) : undefined}
+              marking={markNow.isPending}
               onEdit={(item) => setItemForm(formFromItem(item))}
               onArmDelete={(itemId) =>
                 setConfirmDeleteItem((prev) => ({ ...prev, [itemId]: true }))
@@ -1662,11 +1668,13 @@ function SelectedAgendaSection({
 
 function AgendaPicker({
   agendas,
+  meetings,
   loading,
   value,
   onChange,
 }: {
   agendas: MeetingAgenda[]
+  meetings: AgendaMeetingOption[]
   loading: boolean
   value: string | null
   onChange: (id: string) => void
@@ -1691,7 +1699,7 @@ function AgendaPicker({
         </option>
         {agendas.map((a) => (
           <option key={a.agenda_id} value={a.agenda_id}>
-            {a.meeting_asset_id} — {a.agenda_id} ({a.status ?? 'draft'})
+            {meetings.find((meeting) => a.source_recording_job_id ? meeting.source_recording_job_id === a.source_recording_job_id : meeting.meeting_asset_id === a.meeting_asset_id)?.title ?? 'Recording unavailable'} ({a.status ?? 'draft'})
           </option>
         ))}
       </select>

@@ -141,8 +141,8 @@ export function WatchScreen({ assetId, startSeconds }: { assetId: string; startS
              PDF iframe rendered inside the sidebar (UX-2 fix) is readable
              without crowding the player on narrower desktops. */}
           {/* S26 §6 + §9: wrap the player and transcript in the paywall gate; the
-             MeetingAgendaSidebar (S25) sits OUTSIDE so a paywalled meeting
-             still shows its public agenda. When the deployment has no
+             MeetingAgendaSidebar fetches its own server-authorized projection;
+             restricted agenda text follows current viewer access. When the deployment has no
              paywall configured the gate's access check returns allowed=true
              and the player renders unchanged (DC-1 default-off). */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_minmax(320px,440px)]">

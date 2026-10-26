@@ -3513,10 +3513,25 @@ def _wire_durable_stores(app: FastAPI) -> None:
         return AgendaStore(_session_factory)
 
     def _resolve_agenda_service() -> AgendaService:
+        from civiccast.captions.vod import package_source_range
+        from civiccast.stream.media_router import _package_dir_for_asset
+
         asset_store = PostgresAssetStore(_session_factory)
+
+        def playback_window(asset_id: str):
+            with _session_factory() as session:
+                try:
+                    package = _package_dir_for_asset(asset_id, session)
+                except HTTPException as exc:
+                    if exc.status_code == 404:
+                        return None
+                    raise
+            return package_source_range(package)
+
         return AgendaService(
             AgendaStore(_session_factory),
             asset_chapter_provider=_make_agenda_chapter_provider(asset_store),
+            playback_window_provider=playback_window,
         )
 
     app.dependency_overrides[get_agenda_store] = _resolve_agenda_store

@@ -116,9 +116,11 @@ class AgendaService:
         store: AgendaStore,
         *,
         asset_chapter_provider: AssetChapterProvider | None = None,
+        playback_window_provider: Callable[[str], tuple[float, float | None] | None] | None = None,
     ) -> None:
         self._store = store
         self._chapter_provider = asset_chapter_provider
+        self._playback_window = playback_window_provider
 
     # --- publish gate ---------------------------------------------------
 
@@ -176,6 +178,11 @@ class AgendaService:
             item.order: item for item in self._store.list_items(agenda_id, order_by="order")
         }
         chapters = self._chapter_provider(agenda.meeting_asset_id)
+        source_offset = 0.0
+        if agenda.source_recording_job_id and self._playback_window is not None:
+            window = self._playback_window(agenda.meeting_asset_id)
+            if window is not None:
+                source_offset = window[0]
         written: list[AgendaItem] = []
         skipped: list[AgendaChapterSyncSkip] = []
         for idx, chapter in enumerate(chapters):
@@ -194,7 +201,7 @@ class AgendaService:
                 agenda_id=agenda_id,
                 order=idx,
                 title=chapter.name,
-                video_timecode_s=int(chapter.t),
+                video_timecode_s=int(chapter.t + source_offset),
             )
             written.append(self._store.upsert_item(item))
         return AgendaChapterSyncResult(
@@ -338,6 +345,11 @@ class AgendaService:
             )
         return chapters
 
+    def playback_duration_seconds(self, asset_id: str) -> float | None:
+        """Published player duration, when an immutable package range is known."""
+        window = self._playback_window(asset_id) if self._playback_window else None
+        return window[1] - window[0] if window and window[1] is not None else None
+
     def public_view(
         self,
         station_id: str,
@@ -353,9 +365,34 @@ class AgendaService:
         if agenda is None or agenda.status != "published":
             return None
         items = self._store.list_items(agenda.agenda_id, order_by="order")
+        start, end = 0.0, None
+        if self._playback_window is not None:
+            window = self._playback_window(meeting_asset_id)
+            if window is None:
+                return None
+            if agenda.source_recording_job_id:
+                start, end = window
+        # A chapter spans until the next timed item. Keep the chapter active at
+        # a trimmed package's beginning, rebased to zero, and omit clipped items.
+        timed = sorted(
+            {item.video_timecode_s for item in items if item.video_timecode_s is not None}
+        )
+        mapped = []
+        for item in items:
+            point = item.video_timecode_s
+            if point is not None:
+                following = next((value for value in timed if value > point), end)
+                if (end is not None and point >= end) or (
+                    following is not None and following <= start
+                ):
+                    continue
+                item = item.model_copy(
+                    update={"video_timecode_s": max(float(point), start) - start}
+                )
+            mapped.append(item)
         return PublicMeetingAgenda(
             agenda_id=agenda.agenda_id,
-            meeting_asset_id=agenda.meeting_asset_id,
+            meeting_asset_id=meeting_asset_id,
             source_doc_url=agenda.source_doc_url,
             items=[
                 PublicAgendaItem(
@@ -366,7 +403,7 @@ class AgendaService:
                     video_timecode_s=item.video_timecode_s,
                     doc_anchor=item.doc_anchor,
                 )
-                for item in items
+                for item in mapped
             ],
         )
 

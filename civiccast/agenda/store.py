@@ -27,7 +27,7 @@ from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ from civiccast.agenda.models import (
     MeetingAgenda,
     MeetingAgendaDb,
 )
+from civiccast.recording.models import RecordingJobDb
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 
@@ -120,6 +121,7 @@ class AgendaStore:
                 session.add(row)
             row.station_id = agenda.station_id
             row.meeting_asset_id = agenda.meeting_asset_id
+            row.source_recording_job_id = agenda.source_recording_job_id
             row.source_doc_url = agenda.source_doc_url
             row.status = agenda.status
             row.updated_at = _now()
@@ -131,23 +133,41 @@ class AgendaStore:
                     f"An agenda already exists for "
                     f"(station_id={agenda.station_id!r}, meeting_asset_id={agenda.meeting_asset_id!r})."
                 ) from exc
-            return _agenda_to_model(row)
+            return _agenda_to_model(row, session)
 
     def get_agenda(self, agenda_id: str) -> MeetingAgenda | None:
         with self._session() as session:
             row = session.get(MeetingAgendaDb, agenda_id)
-            return _agenda_to_model(row) if row is not None else None
+            return _agenda_to_model(row, session) if row is not None else None
 
     def get_agenda_by_asset(self, station_id: str, meeting_asset_id: str) -> MeetingAgenda | None:
         """One-shot resolver for the public endpoint."""
         with self._session() as session:
             stmt = (
                 select(MeetingAgendaDb)
+                .outerjoin(
+                    RecordingJobDb, MeetingAgendaDb.source_recording_job_id == RecordingJobDb.job_id
+                )
                 .where(MeetingAgendaDb.station_id == station_id)
-                .where(MeetingAgendaDb.meeting_asset_id == meeting_asset_id)
+                .where(
+                    or_(
+                        MeetingAgendaDb.meeting_asset_id == meeting_asset_id,
+                        RecordingJobDb.asset_id == meeting_asset_id,
+                    )
+                )
             )
             row = session.execute(stmt).scalar_one_or_none()
-            return _agenda_to_model(row) if row is not None else None
+            return _agenda_to_model(row, session) if row is not None else None
+
+    def get_agenda_by_recording_job(self, station_id: str, job_id: str) -> MeetingAgenda | None:
+        with self._session() as session:
+            row = session.execute(
+                select(MeetingAgendaDb).where(
+                    MeetingAgendaDb.station_id == station_id,
+                    MeetingAgendaDb.source_recording_job_id == job_id,
+                )
+            ).scalar_one_or_none()
+            return _agenda_to_model(row, session) if row is not None else None
 
     def list_agendas(
         self,
@@ -164,7 +184,7 @@ class AgendaStore:
             )
             if status is not None:
                 stmt = stmt.where(MeetingAgendaDb.status == status)
-            return [_agenda_to_model(r) for r in session.execute(stmt).scalars().all()]
+            return [_agenda_to_model(r, session) for r in session.execute(stmt).scalars().all()]
 
     def set_status(self, agenda_id: str, status: AgendaStatus) -> MeetingAgenda:
         """Toggle the publish gate. Dedicated surface so a generic patch
@@ -176,7 +196,7 @@ class AgendaStore:
             row.status = status
             row.updated_at = _now()
             session.commit()
-            return _agenda_to_model(row)
+            return _agenda_to_model(row, session)
 
     def publish_if_nonempty(self, agenda_id: str) -> MeetingAgenda:
         """Atomic publish gate: items-exist check + status flip in ONE
@@ -206,7 +226,7 @@ class AgendaStore:
             row.status = "published"
             row.updated_at = _now()
             session.commit()
-            return _agenda_to_model(row)
+            return _agenda_to_model(row, session)
 
     def delete_agenda(self, agenda_id: str) -> None:
         """Delete an agenda AND every item that referenced it.
@@ -297,11 +317,17 @@ class AgendaStore:
 # --- row → model converters --------------------------------------------------
 
 
-def _agenda_to_model(row: MeetingAgendaDb) -> MeetingAgenda:
+def _agenda_to_model(row: MeetingAgendaDb, session: Session) -> MeetingAgenda:
+    asset_id = row.meeting_asset_id
+    if row.source_recording_job_id:
+        job = session.get(RecordingJobDb, row.source_recording_job_id)
+        if job is not None and job.station_id == row.station_id and job.asset_id:
+            asset_id = job.asset_id
     return MeetingAgenda(
         agenda_id=row.agenda_id,
         station_id=row.station_id,
-        meeting_asset_id=row.meeting_asset_id,
+        meeting_asset_id=asset_id,
+        source_recording_job_id=row.source_recording_job_id,
         source_doc_url=row.source_doc_url,
         status=row.status,  # type: ignore[arg-type]
         created_at=_as_utc(row.created_at),  # type: ignore[arg-type]

@@ -160,7 +160,7 @@ Public read: published meeting agenda for one meeting asset.
 - Access: public
 - Parameters: `meeting_asset_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `PublicMeetingAgenda`; 404 No published agenda for this meeting asset; 503 Durable storage is not ready yet.
+- Responses: 200 `PublicMeetingAgenda`; 403 Viewer access required; 404 No published agenda for this meeting asset; 503 Durable storage is not ready yet.
 
 ### `POST /api/public/app/analytics/events`
 
@@ -819,6 +819,15 @@ Read ActivityPub federation status and policy.
 - Request body: none
 - Responses: 200 `ActivityPubStatusResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/agenda-meetings`
+
+Agenda Meetings.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<AgendaMeetingOption>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/agenda-sources/js-portal/posture`
 
 Report whether the optional js_portal (crawl4ai/Playwright) runtime is installed.
@@ -935,6 +944,15 @@ Patch an agenda item (absent keys unchanged).
 - Parameters: `agenda_id` (path, required): `string`; `item_id` (path, required): `string`
 - Request body: `AgendaItemUpdate`
 - Responses: 200 `AgendaItem`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda item not found; 409 Another item already occupies (agenda_id, order); 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
+
+### `POST /api/staff/agendas/{agenda_id}/items/{item_id}/mark-now`
+
+Mark Item Now.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `item_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `AgendaItem`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `POST /api/staff/agendas/{agenda_id}/sync-from-chapters`
 
@@ -5004,6 +5022,15 @@ Read CivicCast local federation metadata.
 - `title` (optional): `string | null`
 - `video_timecode_s` (optional): `number | null`
 
+### `AgendaMeetingOption`
+
+- `can_mark_now` (optional): `boolean`
+- `duration_seconds` (optional): `number | null`
+- `meeting_asset_id` (required): `string`
+- `source_recording_job_id` (optional): `string | null`
+- `state` (required): `string`
+- `title` (required): `string`
+
 ### `AiDefaultSelection`
 
 - `basis` (required): `'ram-12b' | 'ram-e4b' | 'forced-cpu' | 'cpu-only'`
@@ -7570,6 +7597,7 @@ rule (S13 §5.1).
 - `created_at` (optional): `string`
 - `meeting_asset_id` (required): `string`
 - `source_doc_url` (optional): `string | null`
+- `source_recording_job_id` (optional): `string | null`
 - `station_id` (required): `string`
 - `status` (optional): `'draft' | 'published'`
 - `updated_at` (optional): `string`
@@ -7579,6 +7607,7 @@ rule (S13 §5.1).
 - `agenda_id` (required): `string`
 - `meeting_asset_id` (required): `string`
 - `source_doc_url` (optional): `string | null`
+- `source_recording_job_id` (optional): `string | null`
 - `station_id` (required): `string`
 
 ### `MeetingAgendaUpdate`

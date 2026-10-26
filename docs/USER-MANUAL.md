@@ -950,16 +950,11 @@ An agenda belongs to one recording. Each recording can have only one agenda. Age
 #### Create an agenda
 
 1. In the left menu, under **Review Records**, click **Agendas**.
-2. In the **Create new agenda** card, type an **Agenda ID (slug)** such as `council-2026-01`. Use only lowercase letters, digits, hyphens and underscores, starting with a letter or digit.
-3. Type the **Meeting asset ID**: the ID of the recording this agenda belongs to. Find it on the **Assets** screen, in small type under the recording's title. Type it exactly, in lowercase.
-4. If the agenda also exists as a document, type its web address in **Source doc URL (optional)**. Residents can read it next to the video.
-5. Click **Create agenda**.
+2. Choose the named **Meeting or recording**. Active captures include their date and recording state; completed recordings use their title. No asset code is needed.
+3. If the agenda also exists as a document, enter **Source doc URL (optional)**.
+4. Click **Create agenda**. The selected card shows the recording title and **draft** status. Choose an existing agenda with **Pick an agenda** if this recording already has one.
 
-You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: &lt;id&gt;". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
-
-> **Known issue (beta.11):** The IDs are made-up codes, and a wrong character (for example a capital letter) shows raw technical text instead of a plain message. There is no list of recordings to choose from. We could not confirm whether the station checks that the recording exists.
-
-> **Known issue (beta.11):** If you press **Create agenda** for a recording that already has an agenda, you see "An agenda already exists for (station_id='…', meeting_asset_id='…')." Select the existing one with **Pick an agenda**.
+An agenda created during capture follows that capture's finalized recording automatically. While the capture is active, add its items and use **Mark current item now** on the relevant row when discussion changes. This samples media actually written, including reconnect segments; it does not use the wall clock or start a recording. If media time is unavailable, retry after capture recovers or enter a reviewed time. Once capture stops, correct times manually with **Edit**.
 
 #### Add items by hand
 
@@ -968,7 +963,7 @@ You should see the new agenda selected. Its card shows the ID, a **draft** label
    - **Order**: the item's position in the list, as a whole number from 0 up.
    - **Number (label, optional)**: what residents see, such as `1.a`.
    - **Title**: the item's name.
-   - **Video timecode (seconds, optional)**: the moment in the video where the item starts, in whole seconds. For 1 hour 5 minutes, type 3900.
+   - **Source recording time** or **Packaged playback time**: enter `hh:mm:ss`, such as `01:05:00`. Whole seconds remain accepted. A blank time leaves the item without a seek link. For an agenda linked to a capture, use its original recording clock; CivicCast adjusts those markers to the immutable trim actually packaged. For an existing/direct recording agenda, use the public player's clock; those saved times are preserved.
    - **Doc anchor (optional)**: a place in the source document, such as `#item-1a`.
    - **Notes (optional)**: private to staff. The box says they are not shown to viewers.
 2. Click **Add item**.
@@ -1005,13 +1000,13 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 > **Known issue (beta.11):** If the station refuses to publish an empty agenda, the message ends with "Add at least one item (DC-1) before publishing." The "DC-1" is an internal code; ignore it.
 
-> **Known issue (beta.11):** The screen does not tell you that changes to items of an agenda that is **already published** go live as soon as you save. Only a PDF or external import reopens it as a draft. Edit a published agenda only when you are sure.
+Changes to an already published agenda are public as soon as they are saved; viewers see them when they load the page again. Unpublish first if a correction needs private review. PDF or external import reopens the agenda as a draft. Invalid times or times beyond the available video are refused with a message. If duration is not available yet, wait for recording finalization. An agenda may be prepared or published before video packaging, but residents cannot retrieve it until the recording has a published playback package and their current viewer access allows it.
 
 #### What residents see
 
 On the recording's watch page, residents see a card headed "Agenda" beside the video. It shows each item's number, title and time. Clicking an item that has a time jumps the video to it. An item with no time shows "—" and cannot be clicked. If you gave a **Source doc URL**, there is an "Agenda document" link, and if the address ends in `.pdf`, the document appears in a viewer. Residents never see your **Notes**. While the agenda is a draft, residents see nothing at all.
 
-> **Known issue (beta.11):** The operator screen does not say where residents see the agenda, and it only links to the public page when the station was built with a public portal address set. Open the recording on the resident portal ([Chapter 6](#ch-publishing)) to check how it looks.
+After capture finalizes, **View on public portal** opens the linked recording on the installed resident portal (or the configured portal address). Package and publish the recording through the existing Assets/Publish steps, then open the link to verify the chapter seeks. Draft agendas, unpublished recordings and restricted playback remain unavailable to unauthorized residents.
 
 ### Review programs sent in by the community (Contributors)
 

@@ -161,6 +161,15 @@ export interface AgendaItemUpdate {
   confidence?: number | null
 }
 
+export interface AgendaMeetingOption {
+  meeting_asset_id: string
+  title: string
+  source_recording_job_id?: string | null
+  state: string
+  duration_seconds?: number | null
+  can_mark_now?: boolean
+}
+
 export interface AiDefaultSelection {
   summary_model: string
   translate_model: string
@@ -2721,6 +2730,7 @@ export interface MeetingAgenda {
   agenda_id: string
   station_id: string
   meeting_asset_id: string
+  source_recording_job_id?: string | null
   source_doc_url?: string | null
   status?: 'draft' | 'published'
   created_at?: string
@@ -2731,6 +2741,7 @@ export interface MeetingAgendaInput {
   agenda_id: string
   station_id: string
   meeting_asset_id: string
+  source_recording_job_id?: string | null
   source_doc_url?: string | null
 }
 

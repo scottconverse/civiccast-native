@@ -738,3 +738,38 @@ test('built embed plays captions on an external origin and clears withdrawn play
   await expect(player.locator('video')).toHaveCount(0, { timeout: 12000 })
   await expect(player.getByRole('status')).toContainText('unavailable or restricted')
 })
+
+
+test('published agenda chapters seek the selected recording after a correction', async ({ page }) => {
+  await mockPortal(page)
+  await mockCaptionedHls(page)
+  await page.route('**/api/public/assets/meeting', async (route) => {
+    await route.fulfill({ json: { asset_id: 'meeting', title: 'January Council',
+      description: '', manifest_url: '/captioned/playlist.m3u8', duration_seconds: 2,
+      published_at: '2026-01-01T00:00:00Z', chapters: [] } })
+  })
+  await page.route('**/api/public/paywall/access?**', async (route) => {
+    await route.fulfill({ json: { allowed: true, has_access: true } })
+  })
+  await page.route('**/api/public/assets/meeting/transcript', async (route) => {
+    await route.fulfill({ status: 404, json: { detail: 'No transcript' } })
+  })
+  // Projected source markers in a package starting at 1.5s: active chapter zero,
+  // and the corrected decision at source 2s becomes player 0.5s.
+  await page.route('**/api/public/agendas/meeting', async (route) => {
+    await route.fulfill({ json: { agenda_id: 'network-agenda', meeting_asset_id: 'meeting',
+      source_doc_url: null, items: [
+        { item_id: 'marker-1', order: 1, title: 'Public comment', video_timecode_s: 0 },
+        { item_id: 'marker-2', order: 2, title: 'Decision', video_timecode_s: 0.5 },
+      ] } })
+  })
+  await page.goto('/#/watch/meeting')
+  const video = page.locator('video')
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(1)
+  await video.evaluate((node: HTMLVideoElement) => { node.muted = true; void node.play() })
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(3)
+  await video.evaluate((node: HTMLVideoElement) => node.pause())
+  await page.getByRole('button', { name: 'Jump to Decision' }).press('Enter')
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(0.5, 1)
+  await expect(page.getByRole('heading', { name: 'January Council' })).toBeVisible()
+})

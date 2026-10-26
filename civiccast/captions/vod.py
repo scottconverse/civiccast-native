@@ -533,19 +533,15 @@ def resolve_vod_package(package_dir: Path) -> VodPackageResult:
     )
 
 
-def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[CaptionCue]:
-    """Clip and rebase copies using the range actually encoded in this package.
-
-    Older preview packages keep that range in a sibling packaging receipt.
-    Never infer it from mutable asset metadata or alter source review records.
-    """
+def package_source_range(package_dir: Path) -> tuple[float, float | None]:
+    """Read the immutable source interval actually encoded into an F1 package."""
     timeline = package_dir / "playback-timeline.json"
     legacy = not timeline.exists()
     if legacy:
         digest = hashlib.sha256(package_dir.name.encode()).hexdigest()[:20]
         timeline = package_dir.parent / f".civiccast-preview-{digest}.json"
         if not timeline.exists():
-            return cues
+            return 0.0, None
     try:
         data = json.loads(timeline.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -572,6 +568,17 @@ def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[
             raise ValueError("invalid source range")
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise OfflineCaptionPackageError(f"Cannot read packaged playback timeline: {exc}") from exc
+
+    return float(start), None if end is None else float(end)
+
+
+def caption_cues_for_package(package_dir: Path, cues: list[CaptionCue]) -> list[CaptionCue]:
+    """Clip and rebase copies using the range actually encoded in this package.
+
+    Older preview packages keep that range in a sibling packaging receipt.
+    Never infer it from mutable asset metadata or alter source review records.
+    """
+    start, end = package_source_range(package_dir)
 
     mapped: list[CaptionCue] = []
     for cue in cues:

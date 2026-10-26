@@ -26,6 +26,8 @@ vi.mock('../api/client', () => ({
   },
   getStaffIdentity: vi.fn(),
   listMeetingAgendas: vi.fn(),
+  listAgendaMeetings: vi.fn(),
+  markAgendaItemNow: vi.fn(),
   createMeetingAgenda: vi.fn(),
   patchMeetingAgenda: vi.fn(),
   deleteMeetingAgenda: vi.fn(),
@@ -53,6 +55,8 @@ import {
   listAgendaItems,
   listExternalAgendaMeetings,
   listMeetingAgendas,
+  listAgendaMeetings,
+  markAgendaItemNow,
   patchAgendaItem,
   patchMeetingAgenda,
   syncAgendaFromChapters,
@@ -112,6 +116,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
   vi.mocked(listMeetingAgendas).mockResolvedValue([agenda()])
+  vi.mocked(listAgendaMeetings).mockResolvedValue([{
+    meeting_asset_id: 'asset-council-2026-01', title: 'January Council',
+    state: 'recorded', duration_seconds: 7200, can_mark_now: false, source_recording_job_id: null,
+  }])
+  vi.mocked(markAgendaItemNow).mockResolvedValue(item({ video_timecode_s: 125 }))
   vi.mocked(listAgendaItems).mockResolvedValue([])
   vi.mocked(createMeetingAgenda).mockImplementation(async (p) =>
     agenda({ agenda_id: p.agenda_id, meeting_asset_id: p.meeting_asset_id }),
@@ -169,7 +178,7 @@ describe('AgendasScreen access', () => {
     // The agenda id renders in BOTH the picker option and the card heading;
     // we just assert at least one match (the card binds publish + delete to
     // it, so finding two is the happy path).
-    const matches = await findAllByText(/council-2026-01/)
+    const matches = await findAllByText(/January Council/)
     expect(matches.length).toBeGreaterThan(0)
   })
 })
@@ -252,12 +261,10 @@ describe('AgendasScreen list failures (T-8)', () => {
 describe('AgendasScreen create agenda', () => {
   it('submits the create payload with station + slug fields', async () => {
     vi.mocked(listMeetingAgendas).mockResolvedValue([])
-    const { findByLabelText, getByRole } = renderScreen()
-    fireEvent.change(await findByLabelText('Agenda ID'), {
-      target: { value: 'planning-2026-02' },
-    })
-    fireEvent.change(await findByLabelText('Meeting asset ID'), {
-      target: { value: 'asset-planning-2026-02' },
+    const { findByLabelText, findByRole, getByRole } = renderScreen()
+    await findByRole('option', { name: /January Council/ })
+    fireEvent.change(await findByLabelText('Meeting or recording'), {
+      target: { value: 'asset-council-2026-01' },
     })
     fireEvent.change(await findByLabelText('Source doc URL'), {
       target: { value: 'https://example.gov/p.pdf' },
@@ -265,9 +272,10 @@ describe('AgendasScreen create agenda', () => {
     fireEvent.click(getByRole('button', { name: /create agenda/i }))
     await waitFor(() =>
       expect(vi.mocked(createMeetingAgenda)).toHaveBeenCalledWith({
-        agenda_id: 'planning-2026-02',
+        agenda_id: expect.stringMatching(/^agenda-/),
         station_id: 'civiccast-station',
-        meeting_asset_id: 'asset-planning-2026-02',
+        meeting_asset_id: 'asset-council-2026-01',
+        source_recording_job_id: null,
         source_doc_url: 'https://example.gov/p.pdf',
       }),
     )
@@ -333,8 +341,8 @@ describe('AgendasScreen item create', () => {
     fireEvent.change(await findByLabelText('Item ID'), { target: { value: 'item-77' } })
     fireEvent.change(await findByLabelText('Order'), { target: { value: '3' } })
     fireEvent.change(await findByLabelText('Title'), { target: { value: 'Public comment' } })
-    fireEvent.change(await findByLabelText('Video timecode (seconds)'), {
-      target: { value: '420' },
+    fireEvent.change(await findByLabelText('Packaged playback time (hh:mm:ss)'), {
+      target: { value: '00:07:00' },
     })
     fireEvent.click(getByRole('button', { name: /^add item$/i }))
     await waitFor(() =>
@@ -703,5 +711,22 @@ describe('AgendasScreen CivicSuite bridge card', () => {
     expect(importerHeading.textContent).not.toMatch(/CivicSuite/i)
     const bridgeHeading = await findByText(/CivicSuite event bridge — coming in a future release/i)
     expect(bridgeHeading.textContent).not.toMatch(/Import from an external agenda system/i)
+  })
+})
+
+
+describe('recording marker workflow', () => {
+  it('marks a named active recording and shows the source clock', async () => {
+    vi.mocked(listMeetingAgendas).mockResolvedValue([agenda({ source_recording_job_id: 'capture-job' })])
+    vi.mocked(listAgendaMeetings).mockResolvedValue([{
+      meeting_asset_id: 'asset-council-2026-01', title: 'January Council',
+      state: 'recording', duration_seconds: null, can_mark_now: true, source_recording_job_id: 'capture-job',
+    }])
+    vi.mocked(listAgendaItems).mockResolvedValue([item()])
+    const { findByRole, findByText, findByLabelText } = renderScreen()
+    expect(await findByText('January Council', { selector: 'strong' })).toBeTruthy()
+    expect(await findByLabelText('Source recording time (hh:mm:ss)')).toBeTruthy()
+    fireEvent.click(await findByRole('button', { name: 'Mark Call to order now' }))
+    await waitFor(() => expect(markAgendaItemNow).toHaveBeenCalledWith('council-2026-01', 'item-01'))
   })
 })

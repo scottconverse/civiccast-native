@@ -112,6 +112,7 @@ class MeetingAgenda(BaseModel):
     agenda_id: Slug
     station_id: Slug
     meeting_asset_id: Slug
+    source_recording_job_id: Slug | None = None
     # Optional source PDF / URL displayed beside the player when present.
     # The validator enforces an http/https scheme allowlist (E-1 / Q-3) and
     # coerces the empty string to ``None`` (E-4).
@@ -134,6 +135,7 @@ class MeetingAgendaInput(BaseModel):
     agenda_id: Slug
     station_id: Slug
     meeting_asset_id: Slug
+    source_recording_job_id: Slug | None = None
     source_doc_url: Annotated[str | None, Field(default=None, max_length=2000)] = None
     # New agendas are always drafts — the publish gate lives on the dedicated
     # PATCH path so a single create cannot bypass review (DC-1 + DC-6).
@@ -262,7 +264,7 @@ class PublicAgendaItem(BaseModel):
     order: int
     number: str | None = None
     title: str
-    video_timecode_s: int | None = None
+    video_timecode_s: float | None = None
     doc_anchor: str | None = None
 
 
@@ -300,6 +302,9 @@ class MeetingAgendaDb(Base):
         UniqueConstraint(
             "station_id", "meeting_asset_id", name="meeting_agendas_station_asset_unique"
         ),
+        UniqueConstraint(
+            "station_id", "source_recording_job_id", name="meeting_agendas_station_job_unique"
+        ),
         Index("ix_meeting_agendas_station", "station_id"),
         Index("ix_meeting_agendas_asset", "meeting_asset_id"),
     )
@@ -307,6 +312,7 @@ class MeetingAgendaDb(Base):
     agenda_id: Mapped[str] = mapped_column(String(120), primary_key=True)
     station_id: Mapped[str] = mapped_column(String(120), nullable=False)
     meeting_asset_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_recording_job_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     source_doc_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     created_at: Mapped[datetime] = mapped_column(

@@ -27,6 +27,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI, Request, Response
@@ -39,6 +41,8 @@ from sqlalchemy.pool import StaticPool
 from civiccast.agenda.router import (
     get_agenda_service,
     get_agenda_store,
+    get_asset_store,
+    get_paywall_service,
     public_router,
     staff_router,
 )
@@ -88,6 +92,13 @@ def _build(
             )
         return await call_next(request)
 
+    assets = Mock()
+    assets.get_staff_row.return_value = SimpleNamespace(duration_seconds=7200)
+    paywall = Mock()
+    paywall.viewer_email.return_value = None
+    paywall.has_access.return_value = True
+    app.dependency_overrides[get_asset_store] = lambda: assets
+    app.dependency_overrides[get_paywall_service] = lambda: paywall
     app.include_router(staff_router)
     app.include_router(public_router)
     if wire_store:
@@ -817,7 +828,7 @@ def test_create_agenda_duplicate_station_asset_returns_409_not_500() -> None:
     # Same station + meeting_asset_id, different agenda_id.
     b = client.post("/api/staff/agendas", json=_agenda_payload("ag-b"))
     assert b.status_code == 409
-    assert "meeting-jan-2026" in b.text
+    assert "already exists" in b.text
 
 
 # --- E-3 / Q-1 — /import 415 on missing Content-Type + invalid UTF-8 -------
@@ -878,3 +889,27 @@ def test_public_404_detail_does_not_echo_meeting_asset_id() -> None:
     # And every 404 returns the SAME detail — no probing surface.
     assert len(seen_details) == 1
     assert "Meeting agenda not found." in seen_details
+
+
+def test_marker_bounds_and_current_viewer_access():
+    app, _store, service = _build()
+    client = TestClient(app)
+    assert client.post("/api/staff/agendas", json=_agenda_payload()).status_code == 201
+    base = "/api/staff/agendas/ag-jan-2026/items"
+    assert client.post(base, json=_item_payload(video_timecode_s=-1)).status_code == 422
+    assert client.post(base, json=_item_payload(video_timecode_s=7200)).status_code == 422
+    # Direct player markers validate against the actual published package, not source duration.
+    service._playback_window = lambda _: (12.5, 72.5)
+    assert client.post(base, json=_item_payload(video_timecode_s=60)).status_code == 422
+    assert client.post(base, json=_item_payload(video_timecode_s=30)).status_code == 201
+    assert client.post(base + "/it-1/mark-now").status_code == 409
+    service.publish("ag-jan-2026")
+    public = "/api/public/agendas/meeting-jan-2026"
+    response = client.get(public)
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    paywall = app.dependency_overrides[get_paywall_service]()
+    paywall.has_access.return_value = False
+    assert client.get(public).status_code == 403
+    service.unpublish("ag-jan-2026")
+    assert client.get(public).status_code == 404

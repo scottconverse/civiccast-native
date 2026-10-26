@@ -24507,6 +24507,130 @@
         ]
       }
     },
+    "/api/staff/agenda-meetings": {
+      "get": {
+        "tags": [
+          "staff",
+          "agenda"
+        ],
+        "summary": "Agenda Meetings",
+        "operationId": "agenda_meetings_api_staff_agenda_meetings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgendaMeetingOption"
+                  },
+                  "type": "array",
+                  "title": "Response Agenda Meetings Api Staff Agenda Meetings Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agendas/{agenda_id}/items/{item_id}/mark-now": {
+      "post": {
+        "tags": [
+          "staff",
+          "agenda"
+        ],
+        "summary": "Mark Item Now",
+        "operationId": "mark_item_now_api_staff_agendas__agenda_id__items__item_id__mark_now_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/agendas": {
       "get": {
         "tags": [
@@ -25394,6 +25518,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Viewer access required"
           },
           "404": {
             "description": "No published agenda for this meeting asset"
@@ -34131,6 +34258,56 @@
         "type": "object",
         "title": "AgendaItemUpdate",
         "description": "Patch-an-item request body (absent keys unchanged).\n\n``item_id`` / ``agenda_id`` are set at creation and not editable here."
+      },
+      "AgendaMeetingOption": {
+        "properties": {
+          "meeting_asset_id": {
+            "type": "string",
+            "title": "Meeting Asset Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source_recording_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Recording Job Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "can_mark_now": {
+            "type": "boolean",
+            "title": "Can Mark Now",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "meeting_asset_id",
+          "title",
+          "state"
+        ],
+        "title": "AgendaMeetingOption"
       },
       "AiDefaultSelection": {
         "properties": {
@@ -50841,6 +51018,20 @@
             "pattern": "^[a-z0-9][a-z0-9_-]*$",
             "title": "Meeting Asset Id"
           },
+          "source_recording_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Recording Job Id"
+          },
           "source_doc_url": {
             "anyOf": [
               {
@@ -50905,6 +51096,20 @@
             "minLength": 1,
             "pattern": "^[a-z0-9][a-z0-9_-]*$",
             "title": "Meeting Asset Id"
+          },
+          "source_recording_job_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Recording Job Id"
           },
           "source_doc_url": {
             "anyOf": [
@@ -54998,7 +55203,7 @@
           "video_timecode_s": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "number"
               },
               {
                 "type": "null"

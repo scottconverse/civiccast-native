@@ -290,7 +290,7 @@ def probe_canonical_video(path: Path, *, width: int, height: int, fps: int) -> b
         return False
 
 
-def probe_media_duration_seconds(path: Path) -> float | None:
+def probe_media_duration_seconds(path: Path, *, timeout_seconds: float = 30.0) -> float | None:
     """Return ``path``'s container duration in seconds, or ``None``.
 
     Item 66 round-5 (Opus review, point 2): the source preparer's
@@ -322,7 +322,8 @@ def probe_media_duration_seconds(path: Path) -> float | None:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=30,
+            timeout=timeout_seconds,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (subprocess.TimeoutExpired, OSError):
         return None

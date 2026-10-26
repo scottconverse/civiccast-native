@@ -10,7 +10,7 @@ Two surface families over the ``AgendaStore`` + ``AgendaService`` DI seams:
   PATCH /agendas/{id} so the publish gate (slice 2 ``AgendaService.publish``)
   runs unconditionally — a generic PATCH can never bypass the empty-agenda
   refusal (DC-1 / DC-6).
-* **Public read** (``/api/public/agendas/{meeting_asset_id}``) — no auth;
+* **Public read** (``/api/public/agendas/{meeting_asset_id}``) — current viewer access;
   the service returns ``None`` for missing / draft agendas and the router
   translates that to 404 (DC-6 cornerstone — drafts MUST NOT reach
   viewers).
@@ -26,10 +26,13 @@ role gate (same convention as S23 / S24).
 from __future__ import annotations
 
 import functools
+import hashlib
+import math
 import os
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel
 
 from civiccast.agenda.models import (
     AgendaChapterSyncResult,
@@ -57,6 +60,10 @@ from civiccast.agenda.store import (
     AgendaUniqueViolationError,
 )
 from civiccast.auth.roles import require_any_role
+from civiccast.metadata.router import _transcript_access
+from civiccast.paywall.router import get_paywall_service
+from civiccast.recording.router import get_recording_service, get_recording_store
+from civiccast.schedule.router import get_asset_store
 
 _DB_NOT_READY = "Durable storage is not ready yet."
 
@@ -111,6 +118,136 @@ staff_router = APIRouter(prefix="/api/staff", tags=["staff", "agenda"])
 public_router = APIRouter(prefix="/api/public", tags=["public", "agenda"])
 
 
+class AgendaMeetingOption(BaseModel):
+    meeting_asset_id: str
+    title: str
+    source_recording_job_id: str | None = None
+    state: str
+    duration_seconds: float | None = None
+    can_mark_now: bool = False
+
+
+def _recording_reference(job_id: str) -> str:
+    return "recording-" + hashlib.sha256(job_id.encode()).hexdigest()[:32]
+
+
+@staff_router.get(
+    "/agenda-meetings",
+    response_model=list[AgendaMeetingOption],
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def agenda_meetings(
+    assets: Any = Depends(get_asset_store), recordings: Any = Depends(get_recording_store)
+) -> list[AgendaMeetingOption]:
+    if assets is None:
+        raise HTTPException(503, _DB_NOT_READY)
+    jobs = recordings.list_jobs(_station_id()) if recordings is not None else []
+    by_asset = {job.asset_id: job for job in jobs if job.asset_id}
+    options = []
+    for asset in assets.list_all():
+        job = by_asset.get(asset.asset_id)
+        options.append(
+            AgendaMeetingOption(
+                meeting_asset_id=asset.asset_id,
+                title=asset.title,
+                source_recording_job_id=job.job_id if job else None,
+                state=asset.state,
+                duration_seconds=asset.duration_seconds,
+            )
+        )
+    for job in jobs:
+        if job.asset_id or job.state in {"failed", "skipped", "done"}:
+            continue
+        schedule = recordings.get_schedule(job.schedule_id) if job.schedule_id else None
+        name = schedule.name if schedule else (job.target_series or "Recording")
+        options.append(
+            AgendaMeetingOption(
+                meeting_asset_id=_recording_reference(job.job_id),
+                title=f"{name} — {job.planned_start.strftime('%Y-%m-%d %H:%M')}",
+                source_recording_job_id=job.job_id,
+                state=job.state,
+                can_mark_now=job.state == "recording",
+            )
+        )
+    return sorted(options, key=lambda option: option.title.casefold())
+
+
+def _validate_marker(
+    agenda: MeetingAgenda,
+    point: int | None,
+    assets: Any,
+    recordings: Any,
+    capture: Any,
+    service: AgendaService | None,
+) -> None:
+    if point is None:
+        return
+    if assets is None:
+        raise HTTPException(503, _DB_NOT_READY)
+    job = (
+        recordings.get_job(agenda.source_recording_job_id)
+        if recordings is not None and agenda.source_recording_job_id
+        else None
+    )
+    asset = assets.get_staff_row(job.asset_id if job and job.asset_id else agenda.meeting_asset_id)
+    duration = asset.duration_seconds if asset is not None else None
+    if job and job.state == "recording":
+        if capture is None:
+            raise HTTPException(503, "Recording time is unavailable; retry after capture recovers.")
+        try:
+            duration = capture.recorded_position_seconds(job.job_id)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    elif duration is None and job:
+        duration = (job.planned_end - job.planned_start).total_seconds()
+    if not agenda.source_recording_job_id and service is not None:
+        playback_duration = service.playback_duration_seconds(agenda.meeting_asset_id)
+        if playback_duration is not None:
+            duration = playback_duration
+    if duration is None or not math.isfinite(duration) or duration <= 0:
+        raise HTTPException(
+            409,
+            "Recording duration is unavailable. Wait for finalization before setting item times.",
+        )
+    if point >= duration:
+        raise HTTPException(422, "Item time must be within the recorded video duration.")
+
+
+@staff_router.post(
+    "/agendas/{agenda_id}/items/{item_id}/mark-now",
+    response_model=AgendaItem,
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def mark_item_now(
+    agenda_id: str,
+    item_id: str,
+    store: AgendaStore | None = Depends(get_agenda_store),
+    capture: Any = Depends(get_recording_service),
+) -> AgendaItem:
+    resolved = _require_store(store)
+    agenda = resolved.get_agenda(agenda_id)
+    item = resolved.get_item(item_id)
+    if agenda is None or item is None or item.agenda_id != agenda_id:
+        raise HTTPException(404, "Agenda item not found.")
+    if not agenda.source_recording_job_id:
+        raise HTTPException(
+            409, "This agenda is not linked to a current recording. Enter a reviewed time instead."
+        )
+    if capture is None:
+        raise HTTPException(503, "Recording service is unavailable.")
+    try:
+        point = capture.recorded_position_seconds(agenda.source_recording_job_id)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not math.isfinite(point) or point <= 0:
+        raise HTTPException(409, "Recording time is not available yet.")
+    return resolved.upsert_item(
+        item.model_copy(update={"video_timecode_s": max(0, math.floor(point - 0.001))})
+    )
+
+
 # --- agenda CRUD -------------------------------------------------------------
 
 
@@ -148,6 +285,7 @@ def list_agendas(
 def create_agenda(
     payload: MeetingAgendaInput,
     store: AgendaStore | None = Depends(get_agenda_store),
+    recordings: Any = Depends(get_recording_store),
 ) -> MeetingAgenda:
     """Create one agenda in draft status. Publishing rides PATCH
     ``status=published`` so the empty-agenda gate (slice 2) runs.
@@ -162,6 +300,17 @@ def create_agenda(
             status.HTTP_409_CONFLICT,
             detail=f"Meeting agenda {payload.agenda_id!r} already exists. Use PATCH to update.",
         )
+    if payload.source_recording_job_id:
+        job = recordings.get_job(payload.source_recording_job_id) if recordings else None
+        if job is None or job.station_id != _station_id():
+            raise HTTPException(404, "Recording not found.")
+        payload = payload.model_copy(
+            update={"meeting_asset_id": job.asset_id or _recording_reference(job.job_id)}
+        )
+        if resolved.get_agenda_by_recording_job(_station_id(), job.job_id):
+            raise HTTPException(409, "An agenda already exists for this recording.")
+    if resolved.get_agenda_by_asset(_station_id(), payload.meeting_asset_id):
+        raise HTTPException(409, "An agenda already exists for this recording.")
     try:
         return resolved.upsert_agenda(MeetingAgenda(**payload.model_dump()))
     except AgendaUniqueViolationError as exc:
@@ -340,6 +489,10 @@ def create_item(
     agenda_id: str,
     payload: AgendaItemInput,
     store: AgendaStore | None = Depends(get_agenda_store),
+    assets: Any = Depends(get_asset_store),
+    recordings: Any = Depends(get_recording_store),
+    capture: Any = Depends(get_recording_service),
+    svc: AgendaService | None = Depends(get_agenda_service),
 ) -> AgendaItem:
     """Create one item under ``agenda_id``.
 
@@ -369,6 +522,9 @@ def create_item(
             status.HTTP_409_CONFLICT,
             detail=f"Agenda item {payload.item_id!r} already exists. Use PATCH to update.",
         )
+    _validate_marker(
+        resolved.get_agenda(agenda_id), payload.video_timecode_s, assets, recordings, capture, svc
+    )
     try:
         return resolved.upsert_item(AgendaItem(**payload.model_dump()))
     except AgendaItemOrderConflictError as exc:
@@ -392,6 +548,10 @@ def patch_item(
     item_id: str,
     payload: AgendaItemUpdate,
     store: AgendaStore | None = Depends(get_agenda_store),
+    assets: Any = Depends(get_asset_store),
+    recordings: Any = Depends(get_recording_store),
+    capture: Any = Depends(get_recording_service),
+    svc: AgendaService | None = Depends(get_agenda_service),
 ) -> AgendaItem:
     """Patch semantics: absent key unchanged, explicit ``null`` clears.
     ``item_id`` / ``agenda_id`` are set at creation. A PATCH that moves the
@@ -403,6 +563,9 @@ def patch_item(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=f"Agenda item {item_id!r} not found.")
     updates = payload.model_dump(exclude_unset=True)
     merged = current.model_copy(update=updates)
+    if "video_timecode_s" in updates:
+        agenda = resolved.get_agenda(agenda_id)
+        _validate_marker(agenda, merged.video_timecode_s, assets, recordings, capture, svc)
     try:
         return resolved.upsert_item(merged)
     except AgendaItemOrderConflictError as exc:
@@ -548,13 +711,17 @@ async def import_from_doc(
     response_model=PublicMeetingAgenda,
     summary="Public read: published meeting agenda for one meeting asset",
     responses={
+        403: {"description": "Viewer access required"},
         404: {"description": "No published agenda for this meeting asset"},
         503: {"description": _DB_NOT_READY},
     },
 )
 def get_public_agenda(
     meeting_asset_id: str,
+    request: Request,
+    response: Response,
     svc: AgendaService | None = Depends(get_agenda_service),
+    paywall: Any = Depends(get_paywall_service),
 ) -> PublicMeetingAgenda:
     """Public projection: only ``status="published"`` agendas surface.
 
@@ -573,6 +740,11 @@ def get_public_agenda(
             status.HTTP_404_NOT_FOUND,
             detail="Meeting agenda not found.",
         )
+    if paywall is None:
+        raise HTTPException(503, "Playback access policy is unavailable.")
+    if not _transcript_access(request, paywall, meeting_asset_id):
+        raise HTTPException(403, "This recording requires viewer access.")
+    response.headers["Cache-Control"] = "no-store"
     return view
 
 

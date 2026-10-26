@@ -1,38 +1,38 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N4 / PR269 CI - October 26, 2026
+## Active N5 / PR269 CI - October 26, 2026
 
-- PR269 https://github.com/scottconverse/civiccast-native/pull/269 frozen at
-  bfc4dc620b3958cbe839a63450fece84f2129a66; reviewed N1-N3 delivered, required CI
-  run40283658614 active. Sole waiter69829 started07:08UTC (expected ~65m, terminal CI exit);
-  next consume at natural boundaries; cancel watcher only with Ctrl+C in69829.
-- N4 restored from named stash on feat/n4-embed-scheduled-youtube only, child
-  fast-forwarded to PR269 base. Stash retained for recovery. CURRENT was sole
-  restoration conflict; active checkpoint updated and committed history retained.
-- N4 implemented dedicated server-checked public asset/channel embed player and
-  copy controls, narrow framing exception, responsive native caption controls and
-  ten-second withdrawal/restriction refresh. Public build/typecheck passed after
-  correcting render branch placement. Built external-origin workflow PASS13.3s:
-  actual TS playback, parsed Spanish VTT cue, keyboard selection,375px layout,
-  access403 removes video. Existing preview proxy fixture serves built index;
-  VTT fixture maps local0 to retained TS start1.4s, no production caption change.
-- N4 scheduled YouTube uses existing Publish start/end and selected channel, saved
-  event/stream IDs, same-event retry/edit, app restoration, expiry guard, isolated
-  delayed sender/timed stop and update-failure receipt retention. Per-destination
-  persistence failure blocks that launch while other due events advance. Real
-  transmission/account activation explicitly deferred/unverified.
-- N4 focused102backend pass13.26s includes durable receipt JSON + real provider
-  simulator retry/restart/update503/live/timed-stop and Portal isolation. Dashboard
-  32pass2.21s; both portal typechecks/affected ESLint and Ruff passed. API/manual/
-  resident help regenerated (67998 exit0). Parent material review and isolation
-  correction recheck complete. Startup restoration now also contains unavailable
-  storage reads, preserving station startup and an actionable warning.
-- PDF/DOCX render51605 terminal0; generated API/manual/help/PDF/DOCX included.
-  N4 ready for DCO commit after parent review; no local jobs live. Sole hosted CI
-  watcher69829 owns frozen PR269 run40283658614, last state Unit/Windows running.
-  Next commit N4 (do not push before predecessor merge), then serial N5 child.
-  N5 exact plan read: named meeting/recording linkage, hh:mm:ss, live current-item
-  markers/correction, published resident chapters, draft privacy. No N5 edits yet.
+- Parent owns roadmap/merge. PR269 frozen bfc4dc620b3958cbe839a63450fece84f2129a66,
+  required CI run40283658614, sole watcher69829 started07:08UTC (~65min prior
+  baseline). Last natural-boundary state Unit and Windows running; no other CI
+  watcher. Cancel watcher only Ctrl+C in69829; next consume at N5 check boundary.
+- N4 reviewed/local DCO50cbb23a02de954ccf625711be0cdcb743c976a7 unpushed pending
+  predecessor delivery. API/help/manual/PDF/DOCX generated; no local jobs live.
+  Focused102backend13.26s,32dashboard2.21s,both portals typecheck/affected ESLint,
+  Ruff, built external-origin TS/Spanish parsed cue/keyboard/375px/access403
+  workflow13.3s passed. Actual YouTube transmission/account activation deferred.
+- Active child feat/n5-live-agenda-markers based N4. N5 implementation now adds
+  nullable source_recording_job_id in existing agenda row (0096), named recording
+  choices, measured capture-media position including reconnect segments with a
+  five-second bounded probe, mark-now/item bounds. Existing RecordingJob.asset_id
+  resolves content-derived final recording; no finalizer/capture rewrite.
+- N5 behavior complete/reviewed: only capture-linked markers rebase through F1;
+  legacy/direct player times stay unchanged. Resolved final asset reads support
+  existing chapter sync; imported player chapters convert back to source basis.
+  Direct marker bounds use immutable packaged duration; public chapter text
+  checks current published package and N1 viewer proof/grants. No new controls,
+  inference, services, live station changes or capture restart.
+- Evidence: affected backend188 passed23.94s incl real UDP/FFmpeg capture,
+  measured mark-now, final asset linkage, correction and draft/publish behavior;
+  source trim/import + legacy preservation + bounds/access regressions. Operator
+  44 passed3.01s, typecheck/affected ESLint passed. Actual built resident HLS
+  playback/keyboard chapter seek to corrected0.5s passed3.2s. Browser initially
+  awaited play() on a pre-access-check element; waiting for media metadata fixed
+  that fixture race. API/help/manual/PDF/DOCX generated successfully (20037 exit0);
+  Ruff and regenerated operator types/affected ESLint passed. N5 ready for DCO
+  commit, then authorized serial N6 child (confidence/metadata/storage review).
+- No local jobs live; sole CI watcher69829 retained. Last consumed Windows
+  121442261136 SUCCESS; unit121442261074 still running. F5,N6-N8 pending.
 
 ## N1-N3 combined delivery receipts - October 26, 2026
 
