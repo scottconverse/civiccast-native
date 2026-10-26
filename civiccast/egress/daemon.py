@@ -2089,6 +2089,7 @@ class EgressDaemon:
         pts_seconds: float,
         duration_seconds: float,
         delivery_id: str,
+        program_token: str | None = None,
     ) -> bool:
         """Send a cue through the encoder strategy that owns the live worker.
 
@@ -2111,6 +2112,7 @@ class EgressDaemon:
                 pts_seconds=pts_seconds,
                 duration_seconds=duration_seconds,
                 delivery_id=delivery_id,
+                **({"program_token": program_token} if program_token is not None else {}),
             )
         )
 

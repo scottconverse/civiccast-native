@@ -95,6 +95,7 @@ from civiccast.captions.tap_batch_diagnostic import (
     batch_diagnostic_from_env,
 )
 from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker, ReviewPersistenceMode
+from civiccast.egress.gst.audio_tap import read_program_boundary
 
 if TYPE_CHECKING:
     from civiccast.translate.service import TranslationProvider
@@ -681,6 +682,7 @@ class CaptionTapWorker:
         # exact all-zero PCM is reported as digital silence rather than inferred
         # from the absence of recognized words.
         self._last_seen_segment_index: dict[str, int] = {}
+        self._program_tokens: dict[str, str] = {}
         self._last_input_at: dict[str, datetime] = {}
         self._last_processed_at: dict[str, datetime] = {}
         self._pending_since_at: dict[str, datetime] = {}
@@ -1364,6 +1366,10 @@ class CaptionTapWorker:
         for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
             channel_id = channel_dir.name
             with self._session_lock(channel_id):
+                token, _first_segment = read_program_boundary(channel_dir)
+                if token != self._program_tokens.get(channel_id, ""):
+                    self._clear_channel_captions(channel_id)
+                    self._program_tokens[channel_id] = token
                 if channel_id in self._failed_sessions:
                     # The daemon inhibits this session's audio tap, but discard
                     # any settled leftovers even if sidecar storage stays broken.
@@ -2465,10 +2471,14 @@ class CaptionTapWorker:
     def _settled_segments(self, channel_dir: Path) -> list[tuple[int, Path]]:
         """Numbered segments with a newer sibling (ffmpeg moved past them)."""
 
+        _token, first_segment = read_program_boundary(channel_dir)
         numbered: list[tuple[int, Path]] = []
         for path in channel_dir.iterdir():
             match = _SEGMENT_RE.match(path.name)
             if match is not None and path.is_file():
+                if int(match.group(1)) < first_segment:
+                    path.unlink(missing_ok=True)
+                    continue
                 numbered.append((int(match.group(1)), path))
         numbered.sort()
         # GStreamer publishes through ``.wav.partial -> .wav`` atomically, so
@@ -2652,8 +2662,10 @@ class CaptionTapWorker:
         """
 
         with self._session_lock(channel_id), self._retention_lock:
+            token, _first_segment = read_program_boundary(self._tap_root / channel_id)
             if (
                 generation != self._session_generation.get(channel_id, 0)
+                or token != self._program_tokens.get(channel_id, "")
                 or channel_id in self._failed_sessions
                 or (not self._retention_ready and not self._retention_in_flight)
             ):
@@ -2667,6 +2679,10 @@ class CaptionTapWorker:
                     self._retention_ready,
                 )
                 return False
+            if token:
+                cues = [
+                    cue.model_copy(update={"cue_id": f"{token}-{cue.cue_id}"[:160]}) for cue in cues
+                ]
             self._publisher_for(channel_id).publish(cues)
             return True
 

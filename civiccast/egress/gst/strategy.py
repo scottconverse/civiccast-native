@@ -1608,6 +1608,7 @@ class GstPlayoutStrategy:
         pts_seconds: float,
         duration_seconds: float,
         delivery_id: str | None = None,
+        program_token: str | None = None,
     ) -> bool:
         """Push one timed-text caption cue to the running worker (S11a).
 
@@ -1624,6 +1625,6 @@ class GstPlayoutStrategy:
         return self.send_command(
             work_dir,
             channel_id,
-            f"caption {pts_ms} {dur_ms} {payload}",
+            f"caption {pts_ms} {dur_ms} {payload}" + (f" {program_token}" if program_token else ""),
             command_id=delivery_id,
         )

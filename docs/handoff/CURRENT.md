@@ -1,5 +1,48 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Active F4/F6/F7 checkpoint — October 25, 2026
+
+- Scott explicitly resumed this work in the parent Codex chat; the earlier chat
+  remains paused and must not be messaged. Parent owns the complete roadmap;
+  this directly controlled worker owns only F4/F6/F7. F1–F3 are merged; F5 and
+  N1–N8 remain pending. No tags, publication, installer build or station changes.
+- N7 selection for later work: Spanish, Chinese, Tagalog/Filipino, Vietnamese,
+  Arabic (top five US languages besides English). Preserve existing Spanish;
+  specify supported Chinese written variants honestly during N7 implementation.
+- Candidate: `fix/f4-f6-f7-transitions-preview-captions` in
+  `C:\Dev\civiccast-f4-f6-f7`, based on current main
+  `6f1e13a0b0954d525829fe3f562a73b99ddb6f26`; PR #267 confirmed merged.
+- F4 remains unresolved: first-attempt run40165319415 replacement filesrc11
+  stream error aborts the replacement safely; Gst debug detail was discarded.
+  Exact log: C:\Users\scott\AppData\Local\Temp\civiccast-f4-historical.log.
+  Baseline native session51334 passed, as did one bounded scheduling probe;
+  neither proves a fix. Pending-reload log now preserves URI-redacted Gst detail.
+- F6 implemented: standalone CG HLS explicitly unavailable (503, null paths,
+  truthful UI/help), layout preview and on-air graphics preserved. Focused checks
+  passed in affected batch140 tests (six expected platform skips).
+- F7 implemented program fencing for WAV/ASR/WebVTT/feed/embedded commands at
+  actual reload switch. Native decode caught233 ms outgoing-caption carryover;
+  direct cc_data erase reduced it to100 ms but still failed session49269.
+  Packet capture proves erase arrives three frames late. cccombiner retains its
+  scheduling FIFO across request-pad replacement (upstream gstcccombiner.c).
+- Current correction disables the extra FIFO only for live appsrc captions;
+  timestamp aggregation remains. Same interval proof session43974 PASSED in25.33s,
+  output C:\Users\scott\AppData\Local\Temp\civiccast-f7-native5.
+  No owned background process remains. Public sidecar9pass; operator13pass;
+  caption/tap/feed126pass; strategy80pass6POSIX-skips; ordering/ack142pass2runtime-skips.
+  Strategy initially20 gi-import failures when runtime env omitted, corrected
+  by declaring the existing runtime. API/manual artifacts generated, including
+  in-product/PDF/DOCX. Parent final material review found a missing daemon token passthrough; fixed
+  and verified real feed-to-daemon-to-owned-strategy integration (1pass).
+  Remaining DCO push/PR and required CI; F4 stays open.
+  Earlier failing captures native3/native4 remain beside it. No push or PR yet.
+- Remaining: finish F7 proof and focused checks, generated API/manual artifacts,
+  one parent material review, DCO commit/push, review-ready PR and required CI.
+  No station/endurance operation was changed; leave it running.
+- Prior F1–F3 records below are historical. Latest local PR #267 closure/merge
+  receipts remain preserved in `C:\Dev\civiccast-f1-f3\docs\handoff\CURRENT.md`.
+
+
 ## Active F1–F3 delivery checkpoint — October 25, 2026
 - OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
   subsequently explicitly approved creating its YouTube channel. Created Google

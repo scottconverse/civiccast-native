@@ -489,6 +489,9 @@ def test_start_does_not_hold_the_pass_on_caption_retention_discovery(tmp_path: P
 
 
 def test_daemon_caption_sender_uses_its_running_encoder_strategy(tmp_path: Path) -> None:
+    from civiccast.captions.models import CaptionCue
+    from civiccast.egress.caption_feed import CaptionFeedWorker
+
     class _CaptionStrategy:
         def __init__(self) -> None:
             self.calls: list[dict[str, object]] = []
@@ -502,6 +505,7 @@ def test_daemon_caption_sender_uses_its_running_encoder_strategy(tmp_path: Path)
             pts_seconds: float,
             duration_seconds: float,
             delivery_id: str,
+            program_token: str | None = None,
         ) -> bool:
             self.calls.append(
                 {
@@ -511,6 +515,7 @@ def test_daemon_caption_sender_uses_its_running_encoder_strategy(tmp_path: Path)
                     "pts_seconds": pts_seconds,
                     "duration_seconds": duration_seconds,
                     "delivery_id": delivery_id,
+                    "program_token": program_token,
                 }
             )
             return True
@@ -542,8 +547,30 @@ def test_daemon_caption_sender_uses_its_running_encoder_strategy(tmp_path: Path)
             "pts_seconds": 3.0,
             "duration_seconds": 1.5,
             "delivery_id": "caption-page-1",
+            "program_token": None,
         }
     ]
+    # app.py binds the feed to the daemon, rather than directly to the strategy.
+    # After a switch this real forwarding seam must retain the program token.
+    feed = CaptionFeedWorker(
+        work_dir=tmp_path,
+        on_air_channels=lambda: ["gov"],
+        caption_cue_provider=lambda _channel: [
+            CaptionCue(
+                cue_id="gov-incoming-1",
+                start_seconds=0,
+                end_seconds=1,
+                text="Incoming program",
+                confidence=1,
+                low_confidence=False,
+            )
+        ],
+        program_token_provider=lambda _channel: "incoming",
+        send_caption_cue=daemon.send_caption_cue,
+    )
+    assert feed.run_once().cues_sent == 1
+    assert strategy.calls[-1]["program_token"] == "incoming"
+    assert strategy.calls[-1]["text"] == "Incoming program"
 
 
 def test_daemon_reports_the_workers_initial_control_connection(tmp_path: Path) -> None:

@@ -326,12 +326,12 @@ Read the multi-zone CG bulletin-board snapshot.
 
 ### `GET /api/public/cg/channels/{channel_id}/stream.m3u8`
 
-Read the CG HLS manifest.
+Standalone CG video preview is unavailable.
 
 - Access: public
 - Parameters: `channel_id` (path, required): `string`
 - Request body: none
-- Responses: 200 Successful Response
+- Responses: 200 Successful Response; 503 No standalone CG encoder or segments are available
 
 ### `GET /api/public/cg/channels/{channel_id}/templates`
 
@@ -5748,13 +5748,15 @@ Read CivicCast local federation metadata.
 
 ### `CgHlsRenderPlan`
 
+- `available` (optional): `boolean`
 - `channel_id` (required): `string`
 - `linear_overlay_contract_url` (required): `string`
-- `manifest_url` (required): `string`
+- `manifest_url` (required): `string | null`
 - `proof_boundary` (required): `string`
-- `segment_pattern` (required): `string`
+- `segment_pattern` (required): `string | null`
 - `snapshot_url` (required): `string`
 - `target_duration_seconds` (required): `number`
+- `unavailable_reason` (optional): `string`
 
 ### `CgOverlayContract`
 
@@ -7595,7 +7597,7 @@ rule (S13 §5.1).
 
 - `channel_id` (required): `string`
 - `generated_at` (required): `string`
-- `hls_render_path` (required): `string`
+- `hls_render_path` (required): `string | null`
 - `portal_render_path` (required): `string`
 - `proof_boundary` (required): `string`
 - `snapshot_id` (required): `string`

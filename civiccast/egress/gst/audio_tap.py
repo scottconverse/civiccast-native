@@ -58,6 +58,7 @@ the caption side-channel to take the channel off air.
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
@@ -110,6 +111,18 @@ _LOG_INTERVAL_S: Final[float] = 60.0
 _DEFAULT_STOP_TIMEOUT_S: Final[float] = 5.0
 
 DrainStatus = Literal["drained", "abandoned"]
+
+
+def read_program_boundary(tap_dir: Path) -> tuple[str, int]:
+    """Read the selected-audio writer's atomic program fence (legacy: no fence)."""
+    try:
+        payload = json.loads((tap_dir / "program-boundary.json").read_text())
+    except FileNotFoundError:
+        return "", 0
+    token, first_segment = payload["token"], payload["first_segment"]
+    if not isinstance(token, str) or not token or not isinstance(first_segment, int):
+        raise ValueError("invalid caption program boundary")
+    return token, first_segment
 
 
 class SegmentWriterThread(threading.Thread):
@@ -336,6 +349,7 @@ class RollingWavSegmentWriter:
         self._segment_bytes = frames * 2
         self._next_index = self._discover_next_index()
         self._buffer = bytearray()
+        self._program_token: str | None = None
         self._closed = False
         self._lock = threading.Lock()  # guards ONLY the in-memory buffer/index bookkeeping
         self._writer_thread = SegmentWriterThread(
@@ -376,7 +390,26 @@ class RollingWavSegmentWriter:
         self._next_index += 1
         self._writer_thread.submit(index, segment)
 
-    def write_pcm_s16le(self, pcm: bytes | bytearray | memoryview) -> None:
+    def begin_program(self, token: str) -> None:
+        """Fence old queued WAVs and discard audio straddling a program change.
+
+        The engine rejects queued samples below the switch running-time boundary.
+        Indices keep increasing; delayed disk writes from the outgoing program
+        remain below this fence. The token also rejects an already-mapped sample
+        whose callback races this reset before taking the buffer lock.
+        """
+        with self._lock:
+            self._buffer.clear()
+            self._program_token = token
+            first_segment = self._next_index
+        target = self.tap_dir / "program-boundary.json"
+        temporary = target.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"token": token, "first_segment": first_segment}))
+        temporary.replace(target)
+
+    def write_pcm_s16le(
+        self, pcm: bytes | bytearray | memoryview, *, program_token: str | None = None
+    ) -> None:
         """Append whole mono s16le samples, rotating at the configured duration.
 
         Non-blocking: this method only touches the in-memory buffer and the
@@ -389,6 +422,8 @@ class RollingWavSegmentWriter:
         if not body:
             return
         with self._lock:
+            if program_token != self._program_token:
+                return
             if self._closed:
                 raise RuntimeError("caption audio tap writer is closed")
             self._buffer.extend(body)

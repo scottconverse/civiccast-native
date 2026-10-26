@@ -669,9 +669,9 @@ export function OutputPanel({ display }: { display: CgPortalDisplay | undefined 
           </div>
         </div>
         <div className="rounded-md p-3" style={insetStyle}>
-          <div className="font-semibold">HLS channel output</div>
+          <div className="font-semibold">Standalone video preview unavailable</div>
           <div className="cc-mono mt-1 break-all text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-            {display?.render_plan.manifest_url ?? 'Loading…'}
+            {display?.render_plan.unavailable_reason ?? 'Preview the board layout here; watch channel graphics in the channel monitor.'}
           </div>
         </div>
         <div className="rounded-md p-3" style={insetStyle}>

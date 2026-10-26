@@ -277,7 +277,10 @@ def _dispatch_control_with_ack(
         if verb == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")
             pushed = engine_instance.push_caption_cue(
-                text=text, pts_seconds=command[1] / 1000.0, duration_seconds=command[2] / 1000.0
+                text=text,
+                pts_seconds=command[1] / 1000.0,
+                duration_seconds=command[2] / 1000.0,
+                **({"program_token": command[4]} if len(command) == 5 else {}),
             )
             if not pushed:
                 return "error", "no live caption source"

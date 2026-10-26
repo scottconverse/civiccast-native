@@ -29,7 +29,11 @@ from civiccast.cable.channel import (
     resolve_live_outputs,
 )
 from civiccast.captions.live_sidecar import active_caption_sidecar
+from civiccast.captions.tap import build_audio_tap_plan
+from civiccast.captions.webvtt import render_webvtt
 from civiccast.egress.automation import default_egress_work_dir
+from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
+from civiccast.egress.gst.audio_tap import read_program_boundary
 from civiccast.egress.models import EgressStateRow
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import EgressStore
@@ -127,6 +131,15 @@ def public_channel_captions_vtt(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Live captions for channel {channel_id!r} are not available.",
         ) from exc
+    plan = build_audio_tap_plan(channel_id)
+    if plan is not None:
+        token, _first_segment = read_program_boundary(plan.tap_dir)
+        if token:
+            cues = load_caption_cues_from_timed_text(sidecar, source_id=channel_id)
+            cues = [cue for cue in cues if cue.cue_id.startswith(f"{channel_id}-{token}-")]
+            if read_program_boundary(plan.tap_dir)[0] != token:
+                cues = []
+            content = render_webvtt(cues).encode("utf-8")
     return Response(
         content=content,
         media_type="text/vtt",

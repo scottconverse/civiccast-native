@@ -1,6 +1,27 @@
 # Beta 20 current-source review tripwire renewal
 
 
+## October 25 F6/F7 caption boundary and preview correction
+
+The current-source tripwires for worker, engine, control, audio tap, native test
+file and workflow now bind the F6/F7 candidate. Live program changes fence queued
+ASR, WAVs, public WebVTT and embedded commands with a program token. The sparse
+caption source is replaced at selector handoff and emits CEA-608 erase through
+the existing cc_data path. Live cccombiner uses timestamp aggregation without
+its optional scheduling FIFO: native packet inspection found the retained FIFO
+delayed erase three frames after request-pad replacement. The decoded boundary
+regression passed locally in25.33 seconds with continuous TS/audio and incoming
+captions. It joins the existing Windows media job; registered producer nodes,
+controls and verifier enforcement are unchanged. Existing production-pressure
+encoder settings do not decode on the older local probe runtime; this focused
+caption proof uses the existing standard encoder settings, not a repaired encoder.
+
+F4 remains unresolved. Its first-attempt replacement flow error has no preserved
+Gst debug cause; the abort-before-commit log now records URI-redacted detail for
+a future recurrence. Passing unchanged baseline/probe runs do not establish a fix.
+These source bindings do not renew historical installed, hardware, pre-login or
+release acceptance. Completed required hosted CI remains necessary.
+
 ## October 24 checker-integration workflow binding
 
 PR265's collection-floor correction changed only comments and the two native

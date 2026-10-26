@@ -79,8 +79,10 @@ const DISPLAY = {
   render_plan: {
     channel_id: 'public',
     snapshot_url: 'https://cdn.example.org/public/snapshot.json',
-    manifest_url: 'https://cdn.example.org/public/live.m3u8',
-    segment_pattern: 'seg-%05d.ts',
+    manifest_url: null,
+    available: false,
+    unavailable_reason: 'Standalone CG video preview is unavailable.',
+    segment_pattern: null,
     target_duration_seconds: 6,
     linear_overlay_contract_url: 'https://cdn.example.org/public/overlay.json',
     proof_boundary: 'S6 V1',
@@ -148,14 +150,14 @@ describe('LayoutPreview', () => {
 describe('OutputPanel', () => {
   it('shows human-readable loading copy before data arrives', () => {
     const { getAllByText, queryByText } = render(<OutputPanel display={undefined} />)
-    expect(getAllByText('Loading…')).toHaveLength(3)
+    expect(getAllByText('Loading…')).toHaveLength(2)
     expect(queryByText('loading')).toBeNull()
   })
 
   it('shows the real output paths once loaded', () => {
     const { getByText } = render(<OutputPanel display={DISPLAY} />)
     expect(getByText('/var/civiccast/portal/public/board.json')).toBeTruthy()
-    expect(getByText('https://cdn.example.org/public/live.m3u8')).toBeTruthy()
+    expect(getByText('Standalone CG video preview is unavailable.')).toBeTruthy()
     expect(getByText('https://cdn.example.org/public/overlay.json')).toBeTruthy()
   })
 })

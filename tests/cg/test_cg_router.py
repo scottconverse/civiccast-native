@@ -48,7 +48,7 @@ def test_multi_zone_snapshot_public_route(monkeypatch: MonkeyPatch) -> None:
     payload = response.json()
     assert payload["channel_id"] == "public"
     assert payload["template"]["template_id"] == "standard-community-board"
-    assert payload["hls_render_path"] == "/api/public/cg/channels/public/stream.m3u8"
+    assert payload["hls_render_path"] is None
     assert {zone["kind"] for zone in payload["zones"]} >= {
         "primary",
         "ticker",
@@ -797,7 +797,9 @@ def test_production_app_factory_exposes_no_example_feed(monkeypatch: MonkeyPatch
         # route.path already carries the router's own "/api/public/cg" prefix
         # (confirmed against civiccast.cg.router.public_router's routes).
         response = client.get(path)
-        expected_status = 404 if name == "emergency_overlay" else 200
+        expected_status = (
+            404 if name == "emergency_overlay" else 503 if name == "hls_manifest" else 200
+        )
         assert response.status_code == expected_status, (
             f"{name} ({path}) returned {response.status_code}"
         )
@@ -824,6 +826,10 @@ def test_production_app_factory_never_shows_invented_zone_content(monkeypatch: M
         if name == "emergency_overlay":
             assert response.status_code == 404
             assert response.json()["detail"] == "No emergency overlay is active for this channel."
+            continue
+        if name == "hls_manifest":
+            assert response.status_code == 503
+            assert "Standalone CG video preview is unavailable" in response.json()["detail"]
             continue
         assert response.status_code == 200
         try:
@@ -863,7 +869,7 @@ def test_template_library_and_portal_display_routes(monkeypatch: MonkeyPatch) ->
     ticker = next(z for z in display_payload["snapshot"]["zones"] if z["kind"] == "ticker")
     assert ticker["content"]["items"] == []
     assert ticker["content"]["empty"] is True
-    assert display_payload["render_plan"]["manifest_url"].endswith("/stream.m3u8")
+    assert display_payload["render_plan"]["manifest_url"] is None
 
     alternate = client.get(
         "/api/public/cg/channels/public/display?template_id=schedule-forward-board"
@@ -930,12 +936,13 @@ def test_hls_render_plan_and_manifest_routes(monkeypatch: MonkeyPatch) -> None:
     manifest = client.get("/api/public/cg/channels/public/stream.m3u8")
 
     assert plan.status_code == 200
-    assert plan.json()["manifest_url"] == "/api/public/cg/channels/public/stream.m3u8"
+    assert plan.json()["manifest_url"] is None
+    assert plan.json()["available"] is False
+    assert plan.json()["segment_pattern"] is None
     assert plan.json()["linear_overlay_contract_url"].endswith("/overlay-contract")
-    assert manifest.status_code == 200
-    assert manifest.headers["content-type"].startswith("application/vnd.apple.mpegurl")
-    assert "#EXTM3U" in manifest.text
-    assert "/api/public/cg/channels/public/segments/cg-00001.ts" in manifest.text
+    assert manifest.status_code == 503
+    assert "Standalone CG video preview is unavailable" in manifest.json()["detail"]
+    assert "#EXTM3U" not in manifest.text
 
     overlay_contract = client.get("/api/public/cg/channels/public/overlay-contract")
     assert overlay_contract.status_code == 200

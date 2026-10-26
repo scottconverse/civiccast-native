@@ -24,7 +24,9 @@ import signal
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from itertools import count, pairwise
 from pathlib import Path
 from typing import Any, ClassVar
@@ -1470,9 +1472,13 @@ class GstPlayoutEngine:
 
         source.connect("pad-added", _on_pad_added)
 
-    def _build_chain(self, specs: tuple[ElementSpec, ...]) -> tuple[Gst.Element, Gst.Element]:
+    def _build_chain(
+        self, specs: tuple[ElementSpec, ...], *, collected: list[Gst.Element] | None = None
+    ) -> tuple[Gst.Element, Gst.Element]:
         """Build a linear chain (decodebin links dynamically). Returns (first, last)."""
         elements = [self._make(spec) for spec in specs]
+        if collected is not None:
+            collected.extend(elements)
         for upstream, downstream in pairwise(elements):
             if upstream.get_factory().get_name() in self._DECODERS:
                 self._link_dynamic_video(upstream, downstream)
@@ -1570,10 +1576,33 @@ class GstPlayoutEngine:
         serializes it as A/53 SEI. Returns the inserter chain's tail (its src feeds the
         mux). A live ``appsrc`` source is captured into ``self.caption_appsrc`` so the
         daemon can push cues. The live SEI presence is POSIX/LPM-validated."""
-        combiner = self._make(leg.combiner)
+        combiner_spec = leg.combiner
+        if leg.caption_source[0].factory == "appsrc":
+            # Live cc_data is already timestamped and padded by ccconverter.
+            # cccombiner's optional scheduler retains its private FIFO when a
+            # caption request pad is replaced, delaying the program-boundary
+            # erase behind outgoing padding. Keep timestamp-based aggregation
+            # without that additional FIFO for the live source.
+            combiner_spec = replace(combiner_spec, props={**combiner_spec.props, "schedule": False})
+        combiner = self._make(combiner_spec)
         self._link(video_prev, combiner)  # encoded H.264 → cccombiner 'sink' (video) pad
 
         # Caption text chain → cccombiner's request 'caption' pad.
+        self._caption_combiner = combiner
+        self._caption_source_leg = leg
+        self._build_caption_source(leg, combiner)
+
+        # cccombiner → h264ccinserter (→ h264parse) → [mux, linked by the caller].
+        prev = combiner
+        for spec in leg.inserter_chain:
+            element = self._make(spec)
+            self._link(prev, element)
+            prev = element
+        return prev
+
+    def _build_caption_source(
+        self, leg: CaptionEmbedLeg, combiner: Gst.Element, *, clear_at_ns: int | None = None
+    ) -> None:
         caption_specs = leg.caption_source
         if caption_specs[0].factory == "appsrc":
             # Separate serialized GAP forwarding from appsrc's source task.
@@ -1593,10 +1622,20 @@ class GstPlayoutEngine:
                 ),
                 *caption_specs[1:],
             )
-        cap_first, cap_last = self._build_chain(caption_specs)
+        token = getattr(self, "_caption_program_token", "")
+        if token:
+            caption_specs = tuple(
+                replace(spec, name=f"{spec.name}_{token}" if spec.name else None)
+                for spec in caption_specs
+            )
+        collected: list[Gst.Element] = []
+        cap_first, cap_last = self._build_chain(caption_specs, collected=collected)
+        self._caption_source_elements = collected
         if cap_first.get_factory().get_name() == "appsrc":
             self.caption_appsrc = cap_first  # daemon pushes cues here (push_caption_cue)
-            queue = self.pipeline.get_by_name("caption_flow_queue")
+            queue = self.pipeline.get_by_name(
+                f"caption_flow_queue_{token}" if token else "caption_flow_queue"
+            )
             if queue is None:
                 raise RuntimeError("live caption forwarding queue was not built")
             pad = queue.get_static_pad("src")
@@ -1612,6 +1651,34 @@ class GstPlayoutEngine:
 
             probe_id = pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, _entered_caption_downstream)
             self._caption_gap_probe = (pad, probe_id)
+        if clear_at_ns is not None:
+            # A blank timed-text page needs several CEA control frames before
+            # it displays. Put EDM directly on the existing cc_data path so an
+            # outgoing caption is erased on the first incoming video frame.
+            erase = self._make(
+                ElementSpec(
+                    "appsrc",
+                    f"caption_erase_{token}",
+                    {
+                        "is-live": True,
+                        "format": 3,
+                        "caps": "closedcaption/x-cea-708,format=(string)cc_data,framerate=(fraction)30/1",
+                    },
+                )
+            )
+            concat = self._make(
+                ElementSpec("concat", f"caption_reset_{token}", {"adjust-base": False})
+            )
+            self._link(erase, concat)
+            self._link(cap_last, concat)
+            collected.extend((erase, concat))
+            cap_last = concat
+            clear = Gst.Buffer.new_allocate(None, 3, None)
+            clear.fill(0, b"\xfc\x94\x2c")  # valid field-1 CEA-608 EDM, with parity
+            clear.pts = clear_at_ns
+            clear.duration = Gst.SECOND // 30
+            erase.emit("push-buffer", clear)
+            erase.emit("end-of-stream")
         caption_pad = combiner.request_pad_simple("caption")
         if (
             caption_pad is None
@@ -1619,21 +1686,83 @@ class GstPlayoutEngine:
         ):
             raise RuntimeError("failed to link caption source into cccombiner 'caption' pad")
 
-        # cccombiner → h264ccinserter (→ h264parse) → [mux, linked by the caller].
-        prev = combiner
-        for spec in leg.inserter_chain:
-            element = self._make(spec)
-            self._link(prev, element)
-            prev = element
-        return prev
+        self._caption_request_pad = caption_pad
 
-    def push_caption_cue(self, *, text: str, pts_seconds: float, duration_seconds: float) -> bool:
+    def _begin_caption_program(self, cutoff_ns: int | None = None) -> None:
+        """Replace only the sparse caption source at the actual selector switch.
+
+        The live combiner has no additional scheduling FIFO. The
+        encoder, mux, selected video/audio and graphics stay in place. A new
+        source also discards appsrc/queue/converter state; late commands must
+        carry the new token and cannot refill it with the outgoing program.
+        """
+        writer = getattr(self, "audio_tap_writer", None)
+        if getattr(self, "caption_appsrc", None) is None and writer is None:
+            return
+        token = uuid.uuid4().hex
+        self._caption_program_token = token
+        if cutoff_ns is None:
+            cutoff_ns = self._pipeline_running_time_ms() * Gst.MSECOND
+        self._caption_audio_cutoff_ns = cutoff_ns
+        if writer is not None:
+            writer.begin_program(token)
+        if getattr(self, "caption_appsrc", None) is None:
+            return
+        old_elements = self._caption_source_elements
+        combiner = self._caption_combiner
+        pad = self._caption_request_pad
+        old_src = old_elements[-1].get_static_pad("src")
+        old_src.add_probe(
+            Gst.PadProbeType.BUFFER
+            | Gst.PadProbeType.BUFFER_LIST
+            | Gst.PadProbeType.EVENT_DOWNSTREAM,
+            _drop_everything_probe,
+        )
+        old_src.unlink(pad)
+        combiner.release_request_pad(pad)
+        probe = self._caption_gap_probe
+        if probe is not None:
+            probe[0].remove_probe(probe[1])
+        self._caption_gap_gate.close()
+        self._caption_gap_gate = CaptionGapGate()
+        self.caption_appsrc = None
+        now_ms = cutoff_ns // Gst.MSECOND
+        self._build_caption_source(
+            self._caption_source_leg, combiner, clear_at_ns=now_ms * Gst.MSECOND
+        )
+        self._caption_stream_position_ms = now_ms
+        for element in reversed(self._caption_source_elements):
+            element.sync_state_with_parent()
+        self._send_live_caption_gap(now_ms, LIVE_CAPTION_LEAD_MS)
+        thread = threading.Thread(
+            target=self._dispose_elements_best_effort,
+            args=(old_elements,),
+            name="cc-caption-retire",
+            daemon=True,
+        )
+        self._abort_retire_threads = [
+            item for item in self._abort_retire_threads if item.is_alive()
+        ]
+        self._abort_retire_threads.append(thread)
+        thread.start()
+        print(f"CTRL caption program changed: {token}", flush=True)
+
+    def push_caption_cue(
+        self,
+        *,
+        text: str,
+        pts_seconds: float,
+        duration_seconds: float,
+        program_token: str | None = None,
+    ) -> bool:
         """Push one timed-text caption cue into the live caption appsrc (S11a).
 
         Returns False if no live caption source is built (no-op). The daemon calls this
         via the ``caption`` control command to feed continuous captions from the channel
         caption pipeline; the buffer carries PTS+duration so cccombiner schedules the
         cue against the video. Live behavior is POSIX/LPM-validated."""
+        if (program_token or "") != getattr(self, "_caption_program_token", ""):
+            return False
         appsrc = self.caption_appsrc
         if appsrc is None:
             return False
@@ -1946,7 +2075,14 @@ class GstPlayoutEngine:
             if not mapped:
                 return Gst.FlowReturn.ERROR
             try:
-                writer.write_pcm_s16le(map_info.data)
+                token = getattr(self, "_caption_program_token", None)
+                cutoff_ns = getattr(self, "_caption_audio_cutoff_ns", None)
+                if cutoff_ns is not None:
+                    segment = sample.get_segment()
+                    running_ns = segment.to_running_time(Gst.Format.TIME, buffer.pts)
+                    if running_ns == Gst.CLOCK_TIME_NONE or running_ns < cutoff_ns:
+                        return Gst.FlowReturn.OK
+                writer.write_pcm_s16le(map_info.data, program_token=token)
             except Exception as exc:
                 self._error = f"caption audio tap failed: {exc}"
                 print(f"ERROR: {self._error}", flush=True)
@@ -1960,6 +2096,12 @@ class GstPlayoutEngine:
         appsink.connect("new-sample", _on_new_sample)
         self.audio_tap_appsink = appsink
         self.audio_tap_writer = writer
+        # A restarted worker must not reuse a prior worker's program fence.
+        if (writer.tap_dir / "program-boundary.json").exists():
+            token = uuid.uuid4().hex
+            self._caption_program_token = token
+            writer.begin_program(token)
+            print(f"CTRL caption program changed: {token}", flush=True)
 
     @staticmethod
     def _tag_audio_language(element: Gst.Element, language: str) -> None:
@@ -2366,7 +2508,10 @@ class GstPlayoutEngine:
                     source_name = message.src.get_name()
                 print(
                     "CTRL reload aborted: new program errored before commit "
-                    f"(source={source_name}): {err}",
+                    f"(source={source_name}): {err}; debug="
+                    + re.sub(
+                        r"[A-Za-z][A-Za-z0-9+.-]*://\S+", "[source URI redacted]", str(_debug)
+                    ),
                     flush=True,
                 )
                 self._abort_pending_reload("error")
@@ -5058,6 +5203,7 @@ class GstPlayoutEngine:
                     text=text,
                     pts_seconds=command[1] / 1000.0,
                     duration_seconds=command[2] / 1000.0,
+                    **({"program_token": command[4]} if len(command) == 5 else {}),
                 )
                 if not pushed:
                     print("CTRL caption dropped: no live caption source", flush=True)
@@ -7141,6 +7287,7 @@ class GstPlayoutEngine:
         # input-selector can observe the buffer/serialized event that applies its
         # pending active-pad transition. Teardown is still gated by notify plus
         # exact property readback in ``_confirm_reload_selector_handoff``.
+        self._begin_caption_program(pending.get("old_tail_cutoff_ns"))
         self._release_hold_probes(pending)
         pending["replacement_released"] = True
         print("CTRL reload: holds released", flush=True)
