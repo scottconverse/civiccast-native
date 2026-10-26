@@ -2,19 +2,45 @@
 
 ## Current consolidated N4-N8/F5 source delivery - October 26, 2026
 
-- PR270 typing head e7e113bd required Windows121495510573 and integration
-  SUCCESS; lint/types/operator build/reproducibility and other completed checks
-  SUCCESS. At correction boundary:17SUCCESS/3SKIP, Unit121495510430,
-  public-a11y121494944327 and informational randomized still live.
-- Operator a11y121494944632 failed18 strict-selector assertions: Assets h1
-  also matched new Edit selected assets h2. Exact existing heading selectors
-  corrected in asset-detail/assets-upload; both files19PASS7.7s including axe.
-  No product behavior change. Log %TEMP%/civiccast-pr270-operator-a11y.log.
-  First local npm-owned preview disappeared after10passes; explicitly owned
-  existing Vite preview supplied the same checks, then stopped (32928).
-- Sole CI reader cell729 owns watcher10784 for40299903713 until supersession
-  or terminal result; no duplicate watcher. Next DCO fixture correction/push,
-  then one current-head waiter. Listener86662/PID14068 owned, no build.
+- PR270 branch fix/f5-installed-authenticode-signing: consolidated correction
+  ready for DCO push on3074f2b6. Parent material review accepted narrow static-PNG
+  correction; remaining unit failures were exact fixture/collection contracts.
+-40302184786 terminal FAILURE, sole67973/cell747 consumedexit1. Unit121502756357
+ 58m22s:3failed/11798passed/106skipped/5deselected. Exact native collection now
+ 2084pure/2326total/2323Windows(nonintegration); workflowfloors2034/2273 retain
+  margin50. Schedule embed fixture now supplies explicit allowed access policy,
+  matching existing VOD fixture; production fail-closed policy unchanged.
+  Three exact failed testsPASS27.76s. Log %TEMP%/civiccast-pr270-unit-current.log.
+- Required Windows121502756712 failed only static-PNG compositing (56other
+  native-mediaPASS). Local original scenarioFAIL6.37s, retained33frames allmissing,
+  decoderexit0: %TEMP%/civiccast-pr270-overlay-diagnosis/test_graphics_overlay_composit0.
+  Gst1.28 VideoAggregator skips sole PTS0/40ms PNG buffer arriving after live
+  deadline before repeat-after-eos can retain it. Debug probe captured40ms+EOS;
+  timing changed/pass is diagnostic, not a fix. Static repeat-after-eos PNG-only
+  writable pad probe now makes duration indefinite; live-layer timing unchanged.
+  Existing scenario forces200ms PNG admission: without fixFAIL4.83s, with fix
+  PASS4.61s (logo/banner pixels,continuity,clean teardown), settled lastframe.
+  Initial fixture exclusive image_path/source_chain violation corrected; direct
+  setter rejected immutable buffer, diagnosed bundled writable_object API used.
+  Ruff/format/diffPASS. %TEMP%/civiccast-pr270-windows-current.log retained.
+- Other current required checksPASS, including both a11y and docs retry
+ 121509027854 (10:01:47-10:06:13UTC). Original docs apt/TeX provisioning silent
+ 10min timeout occurred before render; one failed-job-only retry cleared it.
+  Informational randomized121502712534 failed apt on all3mirrors beforepytest;
+  no product finding, no new gate/rerun. Exact logs %TEMP%/civiccast-pr270-{docs,
+  randomized}-current.log. Whole rollup18SUCCESS/3SKIP, unit/Windows and consequent
+  claimsFAIL; randomizedFAIL is informational. Next one correctionpush/newwaiter.
+- Candidate40303350129 at3074f2b6 CANCELLED for named artifact-affecting PNG
+  defect before installer signing/kit;78803/cell757 consumedexit1. Verified signed
+  station reuse121506336646 and exactmanual121506336342PASS. Both large uploads
+  false; station used existing complete beta20-documentation-revision/kit/station,
+  model acquisition skipped. Automatic GateA40304402239 completed neutral/skip,
+  no Sandbox install. Corrected signed candidate and installed-signature acceptance
+  remain; no release/tag/publication. Existing runnerlistener86662/PID14068 owned.
+- GateA template requires16384MB vs free~9091MB at candidate launch. Preserve
+  existing vmwp27068 (sinceOct18,parentvmcompute5428) and station. Parent requested
+  app cleanup; recheck headroom before isolated acceptance, cancel only our queued
+  automatic GateA before Sandbox launch if still insufficient. No VM changes.
 
 ### Historical PR270 initial candidate and typing correction
 
