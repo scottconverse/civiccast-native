@@ -157,7 +157,7 @@ function App() {
               page={route.page}
             />
           ) : route.view === 'watch' ? (
-            <WatchScreen assetId={route.assetId} />
+            <WatchScreen assetId={route.assetId} startSeconds={route.startSeconds} />
           ) : route.view === 'redeem' ? (
             <MagicLinkRedeemScreen />
           ) : route.view === 'schedule' ? (

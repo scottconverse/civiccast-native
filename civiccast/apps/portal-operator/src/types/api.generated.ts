@@ -3458,6 +3458,8 @@ export interface PublicSearchAsset {
   duration_seconds?: number | null
   published_at?: string | null
   custom_fields?: Array<PublicCustomFieldValue>
+  transcript_matches?: Array<PublicTranscriptCue>
+  transcript_available?: boolean | null
 }
 
 export type PublicStorageSetupRequest = Record<string, never>
@@ -3471,6 +3473,19 @@ export interface PublicSubmissionStatus {
   status_message: string
   decline_reason?: string | null
   schedule_handoff?: ScheduleHandoff | null
+}
+
+export interface PublicTranscript {
+  asset_id: string
+  available: boolean
+  cues?: Array<PublicTranscriptCue>
+}
+
+export interface PublicTranscriptCue {
+  cue_id: string
+  start_seconds: number
+  end_seconds: number
+  text: string
 }
 
 export interface PublishApprovalRequest {

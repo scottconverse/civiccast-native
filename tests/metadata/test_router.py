@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI, Request, Response
@@ -54,16 +55,19 @@ _PUBLIC_ASSETS = [
     AssetMetadata(
         asset_id="council-2025-01",
         title="City Council — January",
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
         manifest_url="https://cdn.example.org/council-2025-01/index.m3u8",
     ),
     AssetMetadata(
         asset_id="council-2025-02",
         title="City Council — February",
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
         manifest_url="https://cdn.example.org/council-2025-02/index.m3u8",
     ),
     AssetMetadata(
         asset_id="planning-2025-01",
         title="Planning Commission — January",
+        published_at=datetime(2026, 1, 1, tzinfo=UTC),
         manifest_url="https://cdn.example.org/planning-2025-01/index.m3u8",
     ),
 ]

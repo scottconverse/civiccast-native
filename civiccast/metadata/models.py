@@ -212,6 +212,19 @@ class PublicCustomFieldValue(BaseModel):
     value: str
 
 
+class PublicTranscriptCue(BaseModel):
+    cue_id: str
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+    text: str
+
+
+class PublicTranscript(BaseModel):
+    asset_id: str
+    available: bool
+    cues: list[PublicTranscriptCue] = Field(default_factory=list)
+
+
 class PublicSearchAsset(AssetMetadata):
     """A public asset plus its exposed custom-field values.
 
@@ -222,6 +235,8 @@ class PublicSearchAsset(AssetMetadata):
     """
 
     custom_fields: list[PublicCustomFieldValue] = Field(default_factory=list)
+    transcript_matches: list[PublicTranscriptCue] = Field(default_factory=list)
+    transcript_available: bool | None = None
 
 
 # ---------------------------------------------------------------------------

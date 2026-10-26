@@ -22,7 +22,7 @@ export type PortalRoute =
       cf: Record<string, string>
       page: number
     }
-  | { view: 'watch'; assetId: string }
+  | { view: 'watch'; assetId: string; startSeconds?: number }
   | { view: 'redeem' }
   | { view: 'schedule'; channel: string }
 
@@ -47,7 +47,10 @@ export function parseHashRoute(hash: string): PortalRoute {
     }
   }
   if (segments[0] === 'watch' && segments[1]) {
-    return { view: 'watch', assetId: decodeURIComponent(segments[1]) }
+    const value = new URLSearchParams(queryString).get('t')
+    const seconds = value === null ? NaN : Number(value)
+    return { view: 'watch', assetId: decodeURIComponent(segments[1]),
+      ...(Number.isFinite(seconds) && seconds >= 0 ? { startSeconds: seconds } : {}) }
   }
   if (segments[0] === 'redeem') return { view: 'redeem' }
   if (segments[0] === 'schedule') {
@@ -78,8 +81,9 @@ export function buildRecordingsHash(state: {
   return suffix ? `#/recordings?${suffix}` : '#/recordings'
 }
 
-export function buildWatchHash(assetId: string): string {
-  return `#/watch/${encodeURIComponent(assetId)}`
+export function buildWatchHash(assetId: string, seconds?: number): string {
+  return `#/watch/${encodeURIComponent(assetId)}` +
+    (seconds !== undefined && Number.isFinite(seconds) && seconds >= 0 ? `?t=${seconds}` : '')
 }
 
 export function buildScheduleHash(channel?: string): string {

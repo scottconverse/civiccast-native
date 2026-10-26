@@ -30,7 +30,7 @@ service is a 503 — never a silent 200 against storage that is not there.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from civiccast.auth.roles import require_any_role
 from civiccast.metadata.models import (
@@ -40,6 +40,7 @@ from civiccast.metadata.models import (
     CustomFieldDefUpdate,
     CustomFieldValue,
     PublicSearchAsset,
+    PublicTranscript,
 )
 from civiccast.metadata.service import CustomFieldService, FieldReferenceError
 from civiccast.metadata.store import (
@@ -49,6 +50,8 @@ from civiccast.metadata.store import (
     FieldValidationError,
     FieldValuesExistError,
 )
+from civiccast.paywall.router import get_paywall_service
+from civiccast.paywall.service import PaywallService
 
 _DB_NOT_READY = "Durable storage is not ready yet."
 
@@ -73,6 +76,13 @@ _VALUE_WRITE_ROLES_EXTRA = {"x-required-roles": list(_VALUE_WRITE)}
 # dynamic ``cf.<key>`` family (the same seam the staff routes use for ``x-required-roles``).
 _PUBLIC_SEARCH_PARAMS_EXTRA = {
     "parameters": [
+        {
+            "name": "q",
+            "in": "query",
+            "required": False,
+            "schema": {"type": "string", "maxLength": 200},
+            "description": "Search titles, descriptions and accessible published reviewed transcript passages.",
+        },
         {
             "name": "cf.<key>",
             "in": "query",
@@ -323,7 +333,9 @@ def put_asset_custom_fields(
 )
 def public_search(
     request: Request,
+    response: Response,
     svc: CustomFieldService | None = Depends(get_custom_field_service),
+    paywall: PaywallService | None = Depends(get_paywall_service),
 ) -> list[PublicSearchAsset]:
     """Filter packaged public assets by ``cf.<key>`` facets / ``cf.<key>_gte|_lte`` ranges.
 
@@ -332,10 +344,53 @@ def public_search(
     only its exposed custom-field values.
     """
     service = _require_service(svc)
+    response.headers["Cache-Control"] = "no-store"
     return service.search_public_assets(
         station_id=_station_id(),
         query_params=dict(request.query_params),
+        transcript_access=lambda asset_id: _transcript_access(request, paywall, asset_id),
     )
+
+
+def _transcript_access(request: Request, paywall: PaywallService | None, asset_id: str) -> bool:
+    if paywall is None:
+        return False
+    sid = _station_id()
+    email = paywall.viewer_email(sid, request.cookies.get("civiccast_viewer"))
+    return paywall.has_access(sid, email, "asset", asset_id)
+
+
+@public_router.get(
+    "/assets/{asset_id}/transcript",
+    response_model=PublicTranscript,
+    summary="Read the current published reviewed transcript",
+    responses={
+        403: {"description": "Viewer access required"},
+        404: {"description": "Recording not published"},
+        503: {"description": _DB_NOT_READY},
+    },
+)
+def public_transcript(
+    asset_id: str,
+    request: Request,
+    response: Response,
+    svc: CustomFieldService | None = Depends(get_custom_field_service),
+    paywall: PaywallService | None = Depends(get_paywall_service),
+) -> PublicTranscript:
+    service = _require_service(svc)
+    if paywall is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_DB_NOT_READY)
+    try:
+        transcript = service.public_transcript(
+            asset_id,
+            transcript_access=lambda current: _transcript_access(request, paywall, current),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    if transcript is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Recording not published.")
+    response.headers["Cache-Control"] = "no-store"
+    return transcript
 
 
 __all__ = [

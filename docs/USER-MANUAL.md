@@ -2227,7 +2227,7 @@ The Home page reads the real emergency notice for its current channel automatica
 #### Recordings: search and filters
 
 1. Click **Recordings**.
-2. Type words in **Search recordings** and click **Search** (pressing Enter works too). The search looks only at the title and the description, not at captions, agendas or the spoken words. It matches any part of a word, and capital letters do not matter.
+2. Type words in **Search recordings** and click **Search** (pressing Enter works too). Search matches titles, descriptions and spoken words in the current published, reviewed transcript. It matches any part of a word, and capital letters do not matter. Matching spoken passages show a timestamp and excerpt; choose one to open the recording at that moment. Recordings without a published transcript still appear in browsing and title/description search.
 3. To narrow results, use **Year** (the years of published recordings), **Meeting body** (the meeting body on the recording, such as "City Council") and any extra menus your station has made.
 4. Use **Previous**, the page numbers and **Next** to move through the results. There are 12 recordings per page.
 
@@ -2238,6 +2238,10 @@ Meeting body and extra fields are set by staff on the video's detail page. A rec
 ![The Recordings page with the search box, the Year and Meeting body menus, and recording cards.](manual/images/portal-recordings.png){width=90%}
 
 *Figure: the Recordings page.*
+
+The Watch page includes a keyboard-accessible **Transcript** with timestamp links. Choose a line to seek to that passage. These times follow the published video's trimmed playback timeline. **Refresh transcript** reads the latest published corrections. A missing transcript is labeled honestly; it does not mean the recording is unavailable.
+
+For a recording that requires access, transcript text and search excerpts require a verified magic-link session and a current grant. An email typed into the browser is not sufficient proof. Reopen a valid magic link if the transcript asks you to sign in again. Withdrawal removes the recording and transcript from these public endpoints. This text access check does not change the pre-existing media or paywall authorization behavior.
 
 #### Schedule
 

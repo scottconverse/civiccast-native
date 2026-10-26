@@ -3,7 +3,7 @@
 // Portal home: live now, coming up, newest recordings, follow + contribute.
 
 import { useEffect, useState, type FormEvent } from 'react'
-import { fetchJson, formatDateTime, formatDuration, postForm, postJson } from '../api'
+import { fetchJson, formatDateTime, formatDuration, formatTranscriptTime, postForm, postJson } from '../api'
 import { HlsPlayer } from '../HlsPlayer'
 import { buildRecordingsHash, buildWatchHash } from '../router'
 import {
@@ -865,6 +865,19 @@ export function RecordingCard({ asset }: { asset: AssetMetadata }) {
       <p className="mt-3 text-xs text-stone-400">
         Published {formatDateTime(asset.published_at)}
       </p>
+      {asset.transcript_available === false && <p className="mt-2 text-sm text-stone-300">Transcript not available.</p>}
+      {asset.transcript_available === null && <p className="mt-2 text-sm text-stone-300">Transcript requires recording access.</p>}
+      {(asset.transcript_matches ?? []).length > 0 && (
+        <ul aria-label="Matching spoken passages" className="mt-3 space-y-3 text-sm">
+          {asset.transcript_matches!.map((cue) => (
+            <li key={cue.cue_id}>
+              <a href={buildWatchHash(asset.asset_id, cue.start_seconds)} className="text-emerald-100 underline focus:outline-none focus:ring-2 focus:ring-emerald-200">
+                {formatTranscriptTime(cue.start_seconds)} — {cue.text}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
       <a
         href={buildWatchHash(asset.asset_id)}
         className="mt-4 inline-flex rounded-md border border-emerald-300/50 px-3 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-300/10 focus:outline-none focus:ring-2 focus:ring-emerald-200"

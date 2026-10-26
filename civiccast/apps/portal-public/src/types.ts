@@ -17,6 +17,21 @@ export interface AssetMetadata {
   // public-exposure boundary is enforced server-side; the client renders only
   // what arrives). Absent on /api/public/assets, present on /api/public/search.
   custom_fields?: PublicCustomFieldValue[]
+  transcript_matches?: TranscriptCue[]
+  transcript_available?: boolean | null
+}
+
+export interface TranscriptCue {
+  cue_id: string
+  start_seconds: number
+  end_seconds: number
+  text: string
+}
+
+export interface PublicTranscript {
+  asset_id: string
+  available: boolean
+  cues: TranscriptCue[]
 }
 
 // S22: one exposed custom-field value on a public asset (key + label + canonical

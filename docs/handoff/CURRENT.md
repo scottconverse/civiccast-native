@@ -1,5 +1,48 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Active N1 / PR268 delivery - October 26, 2026
+
+- Parent owns full roadmap and merge. F1-F3 merged; PR268 F4/F6/F7 at frozen
+  e615fc82abf2da0cd8ea0563f30a2edfe98fec80. N1 active on separate branch
+  feat/n1-public-transcript-search, not pushed before PR268 merge. F5,N2-N8 pending.
+- PR268 diagnostic push starts ci-test40277731000; sole blocking waiter2108,
+  started06:05 UTC October26, expected terminal required CI; stop watch Ctrl+C.
+  Last observed unit121424188386 pytest and Windows121424188792 media live;
+  optional integration passed. Old watcher20498 stopped, no remote cancellation.
+- N1 named stash applied only on N1 branch and retained as recovery. Implemented
+  current published packaged transcript/search, exact timestamp Watch links,
+  accessible transcript, signed HttpOnly identity plus current-grant text access.
+  No new service/index and no legacy media/paywall overhaul.
+- Real app/provider workflow passed source30->package28s, corrected republish,
+  absent/forged/expired proof, magic-link grant, revocation and withdrawal.
+  Backend affected230pass24.64s; public UI9pass clean incl loaded A->timestamped B
+  and access-denied refresh clears text; TypeScript and affected ESLint passed.
+  Initial UI fixture event/stub errors corrected; no product failure concealed.
+  No-transcript provider/UI checks also passed (workflow1pass/UI3pass).
+  API/manual/help/PDF/DOCX generated; renderer62811 exited0. No local jobs live.
+  Parent material review completed. Next DCO N1 commit; wait PR268 merge before
+  N1 push/PR and applicable required CI. Existing media/paywall limitation remains.
+
+## Historical PR268 diagnostic preparation - October 26, 2026
+
+- PR268 frozen at a5122f08 until this diagnostic-only commit is pushed.
+  Run40276241194 Windows job121419690914 failed F7 extraction: decoded text
+  empty, worker switch10.155s and clean EOS; F4 supersede passed. Exact log:
+  C:\Users\scott\AppData\Local\Temp\civiccast-pr268-windows-second.log.
+  Retained junit has no TS or decoder stderr. One local scenario15661 passed
+  25.82s (Temp/civiccast-f7-ci-diagnosis); CI cause remains unresolved.
+- Approved diagnostic change preserves decoder exit/stdout/stderr and failed
+  TS/worker log in existing caption-worker-failure artifact. No product fix
+  claimed. Ruff check/format passed. Next push and use one required CI waiter.
+- Existing waiter20498 owns run40276241194; unit job121419690772 still live
+  at last consumption. No remote cancellation. Cancel only watcher via Ctrl+C.
+- N1 source is safe in named stash 'N1 source in progress while diagnosing
+  PR268 caption CI', created on feat/n1-public-transcript-search. Restore only
+  on that branch after diagnostic push; do not mix N1 into PR268. N1 contains
+  packaged transcript search/read endpoints with current-grant signed-cookie
+  access checks, timestamp links and accessible transcript; checks pending.
+  Parent authorized N1 checks alongside hosted CI after headroom check (11GB free).
+
 ## Active F4/F6/F7 checkpoint — October 25, 2026
 
 - Scott explicitly resumed this work in the parent Codex chat; the earlier chat

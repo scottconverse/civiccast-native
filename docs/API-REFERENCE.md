@@ -270,6 +270,15 @@ Get a single asset by id.
 - Request body: none
 - Responses: 200 `AssetMetadata`; 404 Asset not found
 
+### `GET /api/public/assets/{asset_id}/transcript`
+
+Read the current published reviewed transcript.
+
+- Access: public
+- Parameters: `asset_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `PublicTranscript`; 403 Viewer access required; 404 Recording not published; 503 Durable storage is not ready yet.
+
 ### `GET /api/public/cg/channels/{channel_id}/bulletins`
 
 Read approved community bulletin-board items.
@@ -590,7 +599,7 @@ List committed (published) public premieres for the Coming Up widget.
 Public custom-field search (exposed fields only).
 
 - Access: public
-- Parameters: `cf.<key>` (query, optional): `string` -- Exact-match facet: filter to assets whose custom field <key> equals this value (canonical string compare). <key> is a field's immutable machine key. Only fields that are BOTH searchable and api_exposed are eligible; a key resolving to a hidden/unknown field is silently ignored (never a 400) so a hidden field can be neither confirmed nor used to enumerate assets (DC-5). Multiple cf.* filters compose as AND.; `cf.<key>_gte` (query, optional): `string` -- Inclusive lower bound for a number or date field (matched against the denormalized value_num / value_date). Combine with cf.<key>_lte for a closed range; either bound alone is valid. A malformed/non-finite bound is silently ignored. Same searchable+api_exposed-only / silently-ignored (DC-5) rule as the exact-match facet.; `cf.<key>_lte` (query, optional): `string` -- Inclusive upper bound for a number or date field (matched against the denormalized value_num / value_date). See cf.<key>_gte; same exposed-only / silently-ignored (DC-5) semantics.
+- Parameters: `q` (query, optional): `string` -- Search titles, descriptions and accessible published reviewed transcript passages.; `cf.<key>` (query, optional): `string` -- Exact-match facet: filter to assets whose custom field <key> equals this value (canonical string compare). <key> is a field's immutable machine key. Only fields that are BOTH searchable and api_exposed are eligible; a key resolving to a hidden/unknown field is silently ignored (never a 400) so a hidden field can be neither confirmed nor used to enumerate assets (DC-5). Multiple cf.* filters compose as AND.; `cf.<key>_gte` (query, optional): `string` -- Inclusive lower bound for a number or date field (matched against the denormalized value_num / value_date). Combine with cf.<key>_lte for a closed range; either bound alone is valid. A malformed/non-finite bound is silently ignored. Same searchable+api_exposed-only / silently-ignored (DC-5) rule as the exact-match facet.; `cf.<key>_lte` (query, optional): `string` -- Inclusive upper bound for a number or date field (matched against the denormalized value_num / value_date). See cf.<key>_gte; same exposed-only / silently-ignored (DC-5) semantics.
 - Request body: none
 - Responses: 200 `Array<PublicSearchAsset>`; 503 Durable storage is not ready yet.
 
@@ -8270,6 +8279,8 @@ rule (S13 §5.1).
 - `poster_url` (optional): `string | null` -- Poster image URL shown before play (HTTPS).
 - `published_at` (optional): `string | null` -- Publication timestamp (UTC, ISO 8601).
 - `title` (required): `string`
+- `transcript_available` (optional): `boolean | null`
+- `transcript_matches` (optional): `Array<PublicTranscriptCue>`
 
 ### `PublicStorageSetupRequest`
 
@@ -8285,6 +8296,19 @@ rule (S13 §5.1).
 - `submission_id` (required): `string`
 - `title` (required): `string`
 - `updated_at` (required): `string`
+
+### `PublicTranscript`
+
+- `asset_id` (required): `string`
+- `available` (required): `boolean`
+- `cues` (optional): `Array<PublicTranscriptCue>`
+
+### `PublicTranscriptCue`
+
+- `cue_id` (required): `string`
+- `end_seconds` (required): `number`
+- `start_seconds` (required): `number`
+- `text` (required): `string`
 
 ### `PublishApprovalRequest`
 

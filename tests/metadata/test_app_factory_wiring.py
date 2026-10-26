@@ -422,3 +422,147 @@ def test_public_search_op_documents_cf_params(durable_app_env: Path) -> None:
     joined = " ".join(p.get("description", "") for p in params)
     assert "api_exposed" in joined
     assert "silently ignored" in joined.lower()
+
+
+def test_published_transcript_search_correction_withdrawal_and_access(durable_app_env, monkeypatch):
+    import json
+    from datetime import timedelta
+
+    from sqlalchemy import update
+
+    from civiccast.app import create_app
+    from civiccast.captions.models import CaptionCue
+    from civiccast.captions.vod import attach_reviewed_captions
+    from civiccast.metadata.models import AssetMetadata
+    from civiccast.paywall.router import get_paywall_service
+    from civiccast.paywall.service import _encode_token
+    from civiccast.schedule.models import Asset
+    from civiccast.schedule.paths import resolve_vod_package_root
+    from civiccast.stream.config import ABR_LADDER, SLATE_RENDITION
+
+    root = durable_app_env / "uploads"
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(root))
+    monkeypatch.delenv("CIVICCAST_VOD_PACKAGE_DIR", raising=False)
+    aid = "transcript-meeting"
+    package = resolve_vod_package_root(root) / aid
+    for rendition in (*ABR_LADDER, SLATE_RENDITION):
+        playlist = package / rendition.name / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n#EXT-X-ENDLIST\n")
+    (package / "playlist.m3u8").write_text("#EXTM3U\n")
+    (package / "playback-timeline.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_start_seconds": 2,
+                "source_end_seconds": 65,
+            }
+        )
+    )
+
+    def publish(text):
+        attach_reviewed_captions(
+            package,
+            [
+                CaptionCue(
+                    cue_id="matched",
+                    start_seconds=30,
+                    end_seconds=35.58,
+                    text=text,
+                    confidence=0.99,
+                )
+            ],
+        )
+
+    publish("The council approved the garden project")
+    store = _store_over_db()
+    store.create(
+        AssetMetadata(
+            asset_id=aid,
+            title="Council meeting",
+            manifest_url=f"/media/vod/{aid}/playlist.m3u8",
+            published_at=datetime.now(UTC),
+        )
+    )
+    with store._session_factory() as session:
+        session.execute(
+            update(Asset).where(Asset.asset_id == aid).values(file_path=str(root / "source.mp4"))
+        )
+        session.commit()
+    app = create_app()
+    with TestClient(app, base_url="https://station.example") as client:
+        path = f"/api/public/assets/{aid}/transcript"
+        store.create(
+            AssetMetadata(
+                asset_id="no-transcript",
+                title="Historical notes",
+                manifest_url="/media/vod/no-transcript/playlist.m3u8",
+                published_at=datetime.now(UTC),
+            )
+        )
+        metadata_only = client.get("/api/public/search?q=Historical").json()[0]
+        assert metadata_only["transcript_available"] is False
+        assert metadata_only["transcript_matches"] == []
+        assert (
+            client.get("/api/public/assets/no-transcript/transcript").json()["available"] is False
+        )
+        response = client.get("/api/public/search?q=garden")
+        assert response.status_code == 200, response.text
+        match = response.json()[0]["transcript_matches"][0]
+        assert match["start_seconds"] == 28
+        assert match["end_seconds"] == 33.58
+        assert client.get(path).json()["cues"][0] == match
+        publish("The council approved the library project")
+        assert client.get("/api/public/search?q=garden").json() == []
+        assert "library" in client.get(path).json()["cues"][0]["text"]
+        assert (
+            client.get("/api/public/search?q=library").json()[0]["transcript_matches"][0][
+                "start_seconds"
+            ]
+            == 28
+        )
+        secret = "viewer-proof-focused-test-secret-32-characters"
+        config = {
+            "config_id": "transcript-access",
+            "station_id": "civiccast-station",
+            "enabled": True,
+            "provider": "stripe",
+            "tiers": [],
+            "signing_secret": secret,
+        }
+        assert (
+            client.put("/api/staff/paywall/config", json=config, headers=_ADMIN_HEADERS).status_code
+            == 200
+        )
+        for cookie in (
+            None,
+            "forged.signature",
+            _encode_token(
+                {
+                    "purpose": "viewer-session",
+                    "station_id": "civiccast-station",
+                    "email": "viewer@example.com",
+                    "exp": (datetime.now(UTC) - timedelta(seconds=1)).timestamp(),
+                },
+                secret,
+            ),
+        ):
+            client.cookies.clear()
+            if cookie:
+                client.cookies.set("civiccast_viewer", cookie, path="/api/public")
+            assert client.get(path).status_code == 403
+            assert client.get("/api/public/search?q=library&email=viewer@example.com").json() == []
+        paywall = app.dependency_overrides[get_paywall_service]()
+        token = paywall.mint_magic_link("civiccast-station", "viewer@example.com", "asset", aid)
+        verified = client.get("/api/public/paywall/verify", params={"token": token})
+        assert verified.status_code == 200, verified.text
+        assert "HttpOnly" in verified.headers["set-cookie"]
+        assert "Secure" in verified.headers["set-cookie"]
+        assert client.get(path).status_code == 200
+        grant = paywall._store.list_grants_for_email("civiccast-station", "viewer@example.com")[0]
+        paywall._store.delete_grant(grant.grant_id)
+        assert client.get(path).status_code == 403
+        assert client.get("/api/public/search?q=library").json() == []
+        store.mark_unpublished(aid)
+        assert client.get(path).status_code == 404
+        assert client.get("/api/public/search?q=Council").json() == []

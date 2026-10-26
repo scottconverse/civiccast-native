@@ -1474,3 +1474,20 @@ class TestServiceLevelGuardsViaRouter:
             headers={"stripe-signature": "sig"},
         )
         assert r.status_code == 400
+
+
+@pytest.mark.parametrize("origin", ["https://station.example", "http://station.example"])
+def test_viewer_proof_cookie_stays_secure_behind_loopback_proxy(origin):
+    app, _store, service, _messages = _build()
+    with TestClient(app, base_url=origin, client=("127.0.0.1", 12345)) as client:
+        assert client.put("/api/staff/paywall/config", json=_config_payload()).status_code == 200
+        token = service.mint_magic_link(_STATION, "viewer@example.com", "asset", "vid-1")
+        response = client.get("/api/public/paywall/verify", params={"token": token})
+        assert response.status_code == 200
+        cookie = response.headers["set-cookie"]
+        assert "Secure" in cookie and "HttpOnly" in cookie
+        assert "SameSite=strict" in cookie and "Path=/api/public" in cookie
+        assert response.headers["cache-control"] == "no-store"
+        proof = response.cookies.get("civiccast_viewer")
+        assert service.viewer_email(_STATION, proof) == "viewer@example.com"
+        assert service.viewer_email("other-station", proof) is None

@@ -33,6 +33,7 @@ convention as S23 / S24 / S25).
 from __future__ import annotations
 
 import functools
+import ipaddress
 import logging
 import os
 import time
@@ -758,6 +759,7 @@ _VERIFY_GENERIC_DETAIL = "Magic link could not be verified."
 )
 def public_verify_magic_link(
     request: Request,
+    response: Response,
     token: str = Query(..., min_length=8, description="The signed token from the email link."),
     svc: PaywallService | None = Depends(get_paywall_service),
 ) -> MagicLinkVerificationResponse:
@@ -791,6 +793,25 @@ def public_verify_magic_link(
             status.HTTP_401_UNAUTHORIZED,
             detail=_VERIFY_GENERIC_DETAIL,
         ) from exc
+    peer = request.client.host if request.client else ""
+    try:
+        local = ipaddress.ip_address(peer).is_loopback and request.url.hostname in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }
+    except ValueError:
+        local = False
+    response.set_cookie(
+        "civiccast_viewer",
+        resolved.viewer_proof(grant),
+        max_age=12 * 3600,
+        path="/api/public",
+        httponly=True,
+        samesite="strict",
+        secure=request.url.scheme == "https" or not local,
+    )
+    response.headers["Cache-Control"] = "no-store"
     return MagicLinkVerificationResponse(email=grant.email)
 
 

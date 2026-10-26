@@ -85,7 +85,7 @@ function filterRecordings(
       if (value && !assetMatchesCustomField(asset, key, value)) return false
     }
     if (!needle) return true
-    const haystack = `${asset.title} ${asset.description ?? ''}`.toLowerCase()
+    const haystack = `${asset.title} ${asset.description ?? ''} ${(asset.transcript_matches ?? []).map((cue) => cue.text).join(' ')}`.toLowerCase()
     return haystack.includes(needle)
   })
 }
@@ -103,7 +103,9 @@ export function RecordingsScreen({
   cf: Record<string, string>
   page: number
 }) {
-  const [state, setState] = useState<LoadState>('loading')
+  const [loadState, setState] = useState<LoadState>('loading')
+  const [loadedQuery, setLoadedQuery] = useState<string | null>(null)
+  const state = loadedQuery === query ? loadState : 'loading'
   const [recordings, setRecordings] = useState<AssetMetadata[]>([])
   const [retryKey, setRetryKey] = useState(0)
   // The search box mirrors the hash-route query until the resident types;
@@ -117,17 +119,18 @@ export function RecordingsScreen({
     // S22: fetch the public-search projection, which carries each asset's
     // exposed (searchable && api_exposed) custom-field values — the same
     // packaged corpus /api/public/assets returns, plus custom_fields for the
-    // facets. We pull the full set once and filter in-browser, matching the
-    // existing meeting-body facet convention (the exposure boundary is enforced
-    // server-side in the response model, never client-side).
-    fetchJson<AssetMetadata[]>('/api/public/search')
+    // facets. Spoken-word matching runs on the server; browse facets filter
+    // those results in-browser. Field exposure is enforced by the server.
+    fetchJson<AssetMetadata[]>('/api/public/search' + (query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''))
       .then((result) => {
         if (cancelled) return
         setRecordings(result)
+        setLoadedQuery(query)
         setState('ready')
       })
       .catch((err: unknown) => {
         if (cancelled) return
+        setLoadedQuery(query)
         // Finding MAJOR-3: /api/public/search requires the durable search
         // index and 503s whenever it isn't ready (ephemeral/dev storage, or
         // a station whose metadata database is briefly unavailable) — by
@@ -138,6 +141,7 @@ export function RecordingsScreen({
         // whole screen; custom-field facets just won't be available (that
         // response omits custom_fields — see types.ts) until search recovers.
         if (err instanceof FetchError && err.status === 503) {
+          setState('loading')
           fetchJson<AssetMetadata[]>('/api/public/assets')
             .then((result) => {
               if (cancelled) return
@@ -154,7 +158,7 @@ export function RecordingsScreen({
     return () => {
       cancelled = true
     }
-  }, [retryKey])
+  }, [retryKey, query])
 
   function retryLoad() {
     setState('loading')
@@ -201,8 +205,8 @@ export function RecordingsScreen({
   }, [recordings])
 
   const filtered = useMemo(
-    () => filterRecordings(recordings, query, year, body, cf),
-    [recordings, query, year, body, cf],
+    () => filterRecordings(recordings, state === 'degraded' ? query : '', year, body, cf),
+    [recordings, query, state, year, body, cf],
   )
   const pageCount = Math.max(1, Math.ceil(filtered.length / RECORDINGS_PAGE_SIZE))
   const currentPage = Math.min(page, pageCount)
@@ -260,7 +264,7 @@ export function RecordingsScreen({
             onChange={(event) =>
               setSearchEdit({ base: query, value: event.currentTarget.value })
             }
-            placeholder="Search by title or description"
+            placeholder="Search titles, descriptions or spoken words"
             className="min-h-11 rounded-md border border-stone-500 bg-[#101811] px-3 py-2 text-stone-50 focus:outline-none focus:ring-2 focus:ring-emerald-200"
           />
         </label>

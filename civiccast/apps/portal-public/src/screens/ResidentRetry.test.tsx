@@ -43,6 +43,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   mockedFetchJson.mockReset()
+  mockedFetchJson.mockResolvedValue({ available: false, cues: [] })
 })
 
 describe('resident error recovery', () => {
@@ -72,7 +73,7 @@ describe('resident error recovery', () => {
     expect((screen.getByLabelText('Year') as HTMLSelectElement).value).toBe('2026')
     expect((screen.getByLabelText('Meeting body') as HTMLSelectElement).value).toBe('Council')
     expect((screen.getByLabelText('Topic') as HTMLSelectElement).value).toBe('parks')
-    expect(mockedFetchJson).toHaveBeenNthCalledWith(2, '/api/public/search')
+    expect(mockedFetchJson).toHaveBeenNthCalledWith(2, '/api/public/search?q=budget')
   })
 
   it('keeps Retry available after another failed attempt', async () => {

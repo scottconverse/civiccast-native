@@ -60,6 +60,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import re
 import uuid
 from collections.abc import Callable
@@ -264,6 +265,47 @@ class PaywallService:
     # ------------------------------------------------------------------
     # Magic-link lifecycle (DC-5)
     # ------------------------------------------------------------------
+
+    def viewer_proof(self, grant: AccessGrant) -> str:
+        """Issue browser identity only after successful magic-link redemption."""
+        secret = self._secret_getter(grant.station_id)
+        if not secret:
+            raise MagicLinkNotConfiguredError(
+                "Viewer identity requires the station signing secret."
+            )
+        return _encode_token(
+            {
+                "purpose": "viewer-session",
+                "station_id": grant.station_id,
+                "email": grant.email,
+                "exp": (self._clock() + timedelta(hours=12)).timestamp(),
+            },
+            secret,
+        )
+
+    def viewer_email(self, station_id: str, proof: str | None) -> str | None:
+        """Verify identity, not entitlement; callers must check current grants."""
+        if not proof or len(proof) > 4096:
+            return None
+        try:
+            payload, signature = _split_token(proof)
+            secret = self._secret_getter(station_id)
+            if not secret or not hmac.compare_digest(signature, _sign_payload(payload, secret)):
+                return None
+            expiry = payload.get("exp")
+            if (
+                payload.get("purpose") != "viewer-session"
+                or payload.get("station_id") != station_id
+                or isinstance(expiry, bool)
+                or not isinstance(expiry, (int, float))
+                or not math.isfinite(expiry)
+                or expiry <= self._clock().timestamp()
+            ):
+                return None
+            email = payload.get("email")
+            return _validate_email(email) if isinstance(email, str) else None
+        except (ValueError, TypeError, UnicodeError):
+            return None
 
     def mint_magic_link(
         self,

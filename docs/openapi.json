@@ -22164,6 +22164,16 @@
         },
         "parameters": [
           {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Search titles, descriptions and accessible published reviewed transcript passages."
+          },
+          {
             "name": "cf.<key>",
             "in": "query",
             "required": false,
@@ -22191,6 +22201,58 @@
             "description": "Inclusive upper bound for a number or date field (matched against the denormalized value_num / value_date). See cf.<key>_gte; same exposed-only / silently-ignored (DC-5) semantics."
           }
         ]
+      }
+    },
+    "/api/public/assets/{asset_id}/transcript": {
+      "get": {
+        "tags": [
+          "public",
+          "custom-fields"
+        ],
+        "summary": "Read the current published reviewed transcript",
+        "operationId": "public_transcript_api_public_assets__asset_id__transcript_get",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicTranscript"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Viewer access required"
+          },
+          "404": {
+            "description": "Recording not published"
+          },
+          "503": {
+            "description": "Durable storage is not ready yet."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/staff/reports/as-run": {
@@ -55230,6 +55292,24 @@
             },
             "type": "array",
             "title": "Custom Fields"
+          },
+          "transcript_matches": {
+            "items": {
+              "$ref": "#/components/schemas/PublicTranscriptCue"
+            },
+            "type": "array",
+            "title": "Transcript Matches"
+          },
+          "transcript_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript Available"
           }
         },
         "type": "object",
@@ -55328,6 +55408,61 @@
         ],
         "title": "PublicSubmissionStatus",
         "description": "Contributor-safe status payload without operator-only internals."
+      },
+      "PublicTranscript": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/PublicTranscriptCue"
+            },
+            "type": "array",
+            "title": "Cues"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id",
+          "available"
+        ],
+        "title": "PublicTranscript"
+      },
+      "PublicTranscriptCue": {
+        "properties": {
+          "cue_id": {
+            "type": "string",
+            "title": "Cue Id"
+          },
+          "start_seconds": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Start Seconds"
+          },
+          "end_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "End Seconds"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cue_id",
+          "start_seconds",
+          "end_seconds",
+          "text"
+        ],
+        "title": "PublicTranscriptCue"
       },
       "PublishApprovalRequest": {
         "properties": {
