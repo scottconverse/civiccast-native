@@ -101,6 +101,10 @@ on:
         description: Exact source SHA naming the reused station embed artifact; station inputs must be unchanged
         type: string
         default: ""
+      reuse_station_dir:
+        description: Self-hosted only; complete same-version signed local station directory to verify and reuse without model downloads
+        type: string
+        default: ""
       reviewed_pyav_release_tag:
         description: Optional existing release containing the exact pinned PyAV wheel in native-app-payload.ccpack
         type: string
@@ -1143,6 +1147,7 @@ jobs:
     timeout-minutes: 180
     env:
       PACK_SIGNING_KEY_ID: ${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}
+      REUSE_STATION_DIR: ${{ inputs.reuse_station_dir || '' }}
 
     steps:
       - name: Checkout exact candidate
@@ -1160,6 +1165,9 @@ jobs:
           }
           $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
           $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
+          if ($env:REUSE_STATION_DIR -and ($buildTarget -ne "self-hosted" -or $prepareOnly -eq "true")) {
+            throw "reuse_station_dir requires a self-hosted complete candidate build."
+          }
           "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "PREPARE_ONLY=$prepareOnly" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -1247,6 +1255,7 @@ jobs:
           "STATION_PRODUCT_VERSION=$productVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Provision the pinned Ollama model exports (summary + translation)
+        if: env.REUSE_STATION_DIR == ''
         shell: pwsh
         run: |
           # scripts/provision_native_ollama_models.py hash-verifies every
@@ -1284,6 +1293,7 @@ jobs:
           Remove-Item -Recurse -Force $ollamaModelCache
 
       - name: Provision the pinned captions-floor bundle root
+        if: env.REUSE_STATION_DIR == ''
         shell: pwsh
         run: |
           # scripts/provision_native_caption_floor_root.py (new: no CI-
@@ -1325,6 +1335,7 @@ jobs:
           Remove-Item -Recurse -Force $captionsFloorCache
 
       - name: Provision the pinned Whistle model and engine root
+        if: env.REUSE_STATION_DIR == ''
         shell: pwsh
         run: |
           # This producer fetches only the pinned Cactus Whistle model and
@@ -1360,6 +1371,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts/native-station-bundle | Out-Null
           $keyPath = Join-Path $env:RUNNER_TEMP "civiccast-station-pack-signing-key.pem"
           [System.IO.File]::WriteAllText($keyPath, $env:PACK_SIGNING_PRIVATE_KEY, [System.Text.UTF8Encoding]::new($false))
+          $reuseArgs = @()
+          if ($env:REUSE_STATION_DIR) { $reuseArgs = @("--reuse-station-dir", $env:REUSE_STATION_DIR) }
           try {
             uv run python -I -B scripts/build_native_station_bundle.py `
               --output-dir artifacts/native-station-bundle/station `
@@ -1372,7 +1385,7 @@ jobs:
               --signing-key-id $env:PACK_SIGNING_KEY_ID `
               --product-version $env:STATION_PRODUCT_VERSION `
               --channel beta `
-              --report artifacts/native-station-bundle/native-station-bundle-build-report.json
+              --report artifacts/native-station-bundle/native-station-bundle-build-report.json @reuseArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           finally {
@@ -1383,6 +1396,7 @@ jobs:
           if (Test-Path -LiteralPath $keyPath) { throw "Pack signing key cleanup failed." }
 
       - name: Free the raw provisioned model roots before upload
+        if: env.REUSE_STATION_DIR == ''
         shell: pwsh
         run: |
           # Disk mitigation: the signed station/ directory this job uploads

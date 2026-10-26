@@ -21,7 +21,63 @@
   ArtifactSigning module command contract inspected locally; actual final signed package and isolated
   installed/uninstalled signature acceptance remain, no build launched.
   Callback explicitly Hidden, module child tools NoNewWindow, inherited ConPTY.
-  Python exit failure checked before any setup copy. Source ready DCO commit.
+  Python exit failure checked before any setup copy. DCO source3cd74389.
+- Final-build feasibility metadata08:38UTC: C free237GB, E free1174GB,
+  physical RAM free~9.6GB; no owned local build/test process, sole gh watcher23640.
+  Initial blackwell-builder selfhosted sandbox-lab runner was OFFLINE/notbusy;
+  existing listener connectivity subsequently verified below, no build dispatched.
+  C:/CivicCastTester/runtime-artifact-mirror contains pinned FFmpeg70.8MB,
+  Ollama1.46GB, PostgreSQL334MB, TSDuck38.5MB archives. Prior candidate/kit-staging
+  7d61cbede contain receipts but no current setup/packs, cannot assume ready kit.
+  Complete existing beta20-documentation-revision/kit under task outputs has
+  app/server/runtime packs and station floor/Whistle/Gemma/translation packs.
+  Reuse unchanged verified assets; rebuild changed app/server/setup once against
+  final source, no LFS/spend. Signing module0.1.8 available locally.
+  Existing Run-GateA.ps1 -KitDir route avoids large downloads and keeps isolation;
+  prior C:/Dev/CivicCast-TestVM evidence also exists. One vmwp process27068 exists,
+  ownership not established; do not interrupt. No build/VM/install launched.
+  Credential/runner presence probe: Azure/pack environment values all absent,
+  Azure CLI unavailable; no local signing credential access established. Existing
+  C:/actions-runner/.runner identifies blackwell-builder; credential files exist
+  (values not read), no .service/runner service/task/listener process. Repo secrets
+  remain in Actions. Parent selected existing configured runner route: at final
+  readiness start C:/actions-runner/run.cmd in owned invisible ConPTY, record
+  session/PID, verify repo runner/notbusy/no competing queued candidate, then
+  dispatch existing workflow using local mirror/kit and no large uploads. This
+  parent superseded the wait-to-start instruction for connectivity only. Queue=[]
+  before start, config expectedrepo=true. Started existing run.cmd08:44:30UTC in
+  owned invisible ConPTY86662; ListenerPID14068 parent20564, version2.337.0.
+  Connected/listening; GitHub08:44:42 ONLINE/idle, no Worker. Stop owned listener
+  Ctrl-C86662 after verifying ownership. No build dispatch, credential copying,
+  local unsigned build, VM or station changes. CIwait23640 remains sole waiter.
+  Exact future dispatch: gh workflow run native-beta-candidate-artifacts.yml
+  --ref main -f build_target=self-hosted -f upload_large_artifacts=false
+  -f upload_candidate_binaries=false -f prepare_only=false
+  -f reuse_station_dir="C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/beta20-documentation-revision/kit/station";
+  empty reuse_station_run_id/reuse_station_source_sha
+  (hosted-only), reviewed_pyav_release_tag only if reusing an actual reviewed tag.
+  Before dispatch verify main equals approved merged final source, then verify
+  returned candidate run.headSha equals it; no tag/new release. GateA automatic
+  workflow_run completion uses local kit; manual gate-a-station-acceptance.yml
+  --ref main -f run_id=<candidateRun> -f lane=full if needed, no duplicate lane.
+  Readiness constraint from existing workflow: station model/floor/Whistle caches
+  deleted on previous success and absent under actual runner _work/_temp; build
+  root absent. Stock selfhosted dispatch would fetch them again. Existing complete
+  kit contains their packs, but no selfhosted reuse_station input exists. Resolve
+  supported local asset staging before dispatch; no new download/build performed.
+  Bounded F5 preparation delta: existing builder --reuse-station-dir option and
+  selfhosted workflow input now verify/reuse complete signed station packs through
+  verify_station_media + verify_native_pack; same-volume hardlinks, no repacking,
+  default path unchanged. Three acquisition steps/raw-rootcleanup skipped only
+  for explicit selfhosted reuse. Actual existing index signature verified against
+  current repo public key: beta20/key civiccast-production-2026-beta1/channelbeta,
+  all6 required packs named; full pack verification runs at final reuse execution.
+  Existing tiny bundle/reuse/samefile/version rejection + workflowselection2pass
+  1.70s, Ruff passed. Parent material review complete; no packagebuild/signcall.
+  Final isolated installed launcher/uninstaller Valid timestamped expected signer
+  verification plus applicable existing install/uninstall acceptance remains.
+  Consolidated PR body prepared %TEMP%/civiccast-n4-n8-f5-pr-body.md; push awaits
+  PR269 merge and required CI. Actual signed installed acceptance remains.
 
 ### Historical N8 finishing / PR269 infrastructure failure
 

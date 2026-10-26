@@ -314,6 +314,14 @@ first failure:
    the existing ArtifactSigning 0.1.8 module and Azure profile; the outer setup
    is signed afterward by the existing action. Callback failure aborts packaging.
    Credentials are inherited environment values, never generated NSIS arguments.
+   On the self-hosted lane, `reuse_station_dir` may point to an existing complete
+   same-version signed `station/` directory. This skips model/floor/Whistle
+   acquisition and repacking. The existing index and pack validators check the
+   trusted key, channel, product/stable-model identities, payload hashes and
+   pinned contracts before same-volume hardlink staging; mismatches fail closed.
+   The default provisioning path remains unchanged. Keep the original kit intact
+   outside the candidate prune roots. No large artifact upload is needed when
+   both self-hosted upload flags are false.
    Signing the outer setup alone does not prove its installed contents. On the
    final authorized candidate, verify the installed launcher and uninstaller
    each retain a Valid, timestamped Scott Converse signature, then complete the

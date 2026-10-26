@@ -1454,3 +1454,24 @@ def test_prune_script_refuses_a_current_sha_that_is_not_a_sha(tmp_path: Path) ->
 
     assert completed.returncode != 0
     assert (root / ("a" * 40)).is_dir(), "a refused prune must delete nothing"
+
+
+def test_local_station_reuse_skips_acquisition_and_keeps_existing_verification() -> None:
+    _, workflow = _workflow()
+    job = workflow["jobs"]["build-native-station-bundle"]
+    steps = {step["name"]: step for step in job["steps"]}
+    assert job["env"]["REUSE_STATION_DIR"] == "${{ inputs.reuse_station_dir || '' }}"
+    for name in [
+        "Provision the pinned Ollama model exports (summary + translation)",
+        "Provision the pinned captions-floor bundle root",
+        "Provision the pinned Whistle model and engine root",
+        "Free the raw provisioned model roots before upload",
+    ]:
+        assert steps[name]["if"] == "env.REUSE_STATION_DIR == ''"
+    assert "--reuse-station-dir" in steps["Build and sign the native station bundle"]["run"]
+    assert "@reuseArgs" in steps["Build and sign the native station bundle"]["run"]
+    assert (
+        "reuse_station_dir requires a self-hosted complete candidate build"
+        in steps["Resolve build target and local candidate root"]["run"]
+    )
+    assert "if" not in steps["Verify the signed station bundle and write checksums"]

@@ -124,6 +124,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -132,15 +133,19 @@ from pathlib import Path, PurePosixPath
 from typing import Final
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 ROOT: Final[Path] = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from civiccast.installer.native_distribution import canonical_json  # noqa: E402
+from civiccast.installer.native_distribution import (  # noqa: E402
+    canonical_json,
+    verify_station_media,
+)
 from civiccast.installer.native_packs import (  # noqa: E402
     OLLAMA_MODEL_COMPONENTS,
     build_native_pack,
+    verify_native_pack,
 )
 from civiccast.native.app_payload import (  # noqa: E402
     WHISTLE_PACK_COMPONENT,
@@ -695,6 +700,91 @@ def build_station_bundle(
     }
 
 
+def reuse_station_bundle(
+    source: Path,
+    *,
+    output_dir: Path,
+    public_key: Ed25519PublicKey,
+    signing_key_id: str,
+    product_version: str,
+    channel: str,
+) -> dict[str, object]:
+    """Verify and link a complete unchanged local bundle without provisioning."""
+    index = verify_station_media(
+        source / STATION_INDEX_FILENAME,
+        public_key=public_key,
+        expected_channel=channel,
+        expected_product_version=product_version,
+        expected_compatible_core=product_version,
+        expected_signing_key_id=signing_key_id,
+    )
+    source = index.path.parent
+    # Same verifier the installer/pack builder uses: signature, complete payload
+    # hashes, stable identities, and current pinned model/Whistle contracts.
+    for pack in index.packs:
+        identity = (
+            product_version if pack.component == "core" else STATION_MODEL_PACK_PRODUCT_VERSION
+        )
+        core = product_version if pack.component == "core" else STATION_MODEL_PACK_COMPATIBLE_CORE
+        verify_native_pack(
+            source / pack.filename,
+            public_key=public_key,
+            expected_component=pack.component,
+            expected_product_version=identity,
+            expected_compatible_core=core,
+            expected_signing_key_id=signing_key_id,
+        )
+    output_dir = output_dir.expanduser().resolve()
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise StationBundleBuildError(
+            f"refusing non-empty station bundle output directory: {output_dir}"
+        )
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.reuse-", dir=output_dir.parent))
+    try:
+        for pack in index.packs:
+            # Explicit same-volume reuse; do not silently duplicate tens of GB.
+            os.link(source / pack.filename, temporary / pack.filename)
+        shutil.copyfile(index.path, temporary / STATION_INDEX_FILENAME)
+        packs = {
+            pack.component: {
+                "filename": pack.filename,
+                "bytes": pack.bytes,
+                "sha256": pack.sha256,
+                "required": pack.required,
+            }
+            for pack in index.packs
+        }
+        report = {
+            "schema_version": 1,
+            "product": DISTRIBUTION_PRODUCT,
+            "product_version": index.product_version,
+            "compatible_core": index.compatible_core,
+            "channel": index.channel,
+            "signing_key_id": index.signing_key_id,
+            "created_epoch": index.created_epoch,
+            "packs": packs,
+            "total_pack_bytes": sum(pack.bytes for pack in index.packs),
+            "station_index": STATION_INDEX_FILENAME,
+            "reused_from": str(source),
+        }
+        (temporary / "native-station-bundle-report.json").write_text(
+            json.dumps(report, indent=2) + "\n", encoding="utf-8"
+        )
+        if output_dir.exists():
+            output_dir.rmdir()
+        temporary.replace(output_dir)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return {
+        **report,
+        "output_dir": str(output_dir),
+        "station_index": str(output_dir / STATION_INDEX_FILENAME),
+        "report": str(output_dir / "native-station-bundle-report.json"),
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -726,6 +816,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--created-epoch", type=int, default=None)
     parser.add_argument("--report", type=Path)
     parser.add_argument(
+        "--reuse-station-dir",
+        type=Path,
+        help="Verify and hardlink a complete same-version signed station directory instead of provisioning",
+    )
+    parser.add_argument(
         "--allow-development-key",
         action="store_true",
         help="explicitly allow a development-only trust root for non-release proof",
@@ -740,23 +835,33 @@ def main(argv: list[str] | None = None) -> int:
             args.signing_key_id, allow_development_key=args.allow_development_key
         )
         key = load_ed25519_private_key(args.signing_private_key)
-        result = build_station_bundle(
-            output_dir=args.output_dir,
-            captions_floor_root=args.captions_floor_root,
-            captions_whistle_root=args.captions_whistle_root,
-            gemma4_12b_root=args.gemma4_12b_root,
-            gemma4_e4b_root=args.gemma4_e4b_root,
-            translategemma_4b_root=args.translategemma_4b_root,
-            captions_large_v3_root=args.captions_large_v3_root,
-            signing_private_key=key,
-            signing_key_id=args.signing_key_id,
-            product_version=args.product_version,
-            compatible_core=args.compatible_core,
-            channel=args.channel,
-            created_epoch=args.created_epoch
-            if args.created_epoch is not None
-            else int(time.time()),
-        )
+        if args.reuse_station_dir is not None:
+            result = reuse_station_bundle(
+                args.reuse_station_dir,
+                output_dir=args.output_dir,
+                public_key=key.public_key(),
+                signing_key_id=args.signing_key_id,
+                product_version=args.product_version,
+                channel=args.channel,
+            )
+        else:
+            result = build_station_bundle(
+                output_dir=args.output_dir,
+                captions_floor_root=args.captions_floor_root,
+                captions_whistle_root=args.captions_whistle_root,
+                gemma4_12b_root=args.gemma4_12b_root,
+                gemma4_e4b_root=args.gemma4_e4b_root,
+                translategemma_4b_root=args.translategemma_4b_root,
+                captions_large_v3_root=args.captions_large_v3_root,
+                signing_private_key=key,
+                signing_key_id=args.signing_key_id,
+                product_version=args.product_version,
+                compatible_core=args.compatible_core,
+                channel=args.channel,
+                created_epoch=args.created_epoch
+                if args.created_epoch is not None
+                else int(time.time()),
+            )
     except StationBundleBuildError as exc:
         print(f"build_native_station_bundle: {exc}", file=sys.stderr)
         return 1
