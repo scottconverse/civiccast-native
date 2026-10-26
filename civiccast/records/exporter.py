@@ -105,6 +105,7 @@ class SignedRecordExporter:
                 "provenance.json",
                 "approval.json",
                 "timestamp-token.der",
+                *(["agenda-minutes.json"] if summary.agenda_minutes else []),
             ],
         )
         record_id = f"record-{uuid4().hex}"

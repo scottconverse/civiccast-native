@@ -70,6 +70,8 @@ vi.mock('../api/client', () => ({
   approveSummary: vi.fn(),
   downloadSignedRecord: vi.fn(),
   editSummary: vi.fn(),
+  editAgendaMinutes: vi.fn(),
+  listCaptionReviewItems: vi.fn(),
   exportSignedRecord: vi.fn(),
   getStaffAssetPlaybackGrant: vi.fn(),
   getStaffIdentity: vi.fn(),
@@ -81,6 +83,8 @@ vi.mock('../api/client', () => ({
 import {
   getStaffAssetPlaybackGrant,
   getStaffIdentity,
+  editAgendaMinutes,
+  listCaptionReviewItems,
   listSummaryReviewItems,
 } from '../api/client'
 import type { SummaryDraft, StaffIdentityResponse } from '../types/api.generated'
@@ -178,4 +182,39 @@ describe('SummaryReviewScreen source citations', () => {
     expect(document.body.contains(video)).toBe(true)
     await waitFor(() => expect(video.currentTime).toBe(12.5))
   })
+})
+
+
+it('blocks minutes approval for dirty or saving content and clears changed-motion confirmation', async () => {
+  const minutesSummary: SummaryDraft = { ...summary, sourced_claims: [], agenda_minutes: {
+    agenda_id: 'agenda-17', asset_id: 'asset-17', transcript_fingerprint: 'source-current',
+    content: { decisions_reviewed: true, sections: [{ item_id: 'budget', title: 'Budget', discussion: 'Cited budget discussion.',
+      transcript_ranges: [{ cue_id: 'cue-17', start_seconds: 42.5, end_seconds: 52.5 }],
+      motions: [{ text: 'Adopt budget', mover: 'Avery', outcome: 'passed', human_confirmed: true,
+        transcript_ranges: [{ cue_id: 'cue-17', start_seconds: 42.5, end_seconds: 52.5 }], votes: [{ member: 'Blake', choice: 'yes' }] }],
+    }] }, revisions: [],
+  } }
+  vi.mocked(listSummaryReviewItems).mockResolvedValue({ items: [minutesSummary] })
+  vi.mocked(listCaptionReviewItems).mockResolvedValue([{ review_item_id: 'cue-17', asset_id: 'asset-17', language: 'en', status: 'approved', original_text: 'Cited budget discussion.', low_confidence: false, created_at: '2026-10-26T00:00:00Z', updated_at: '2026-10-26T00:00:00Z',
+    cue: { cue_id: 'cue-17', start_seconds: 42.5, end_seconds: 52.5, text: 'Cited budget discussion.', confidence: 1, low_confidence: false } }])
+  let finish!: (value: SummaryDraft) => void
+  vi.mocked(editAgendaMinutes).mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+  renderScreen()
+  const approve = await screen.findByRole('button', { name: 'Approve summary' })
+  expect(approve.hasAttribute('disabled')).toBe(false)
+  fireEvent.change(screen.getByLabelText('Motion text 1-1'), { target: { value: 'Adopt revised budget' } })
+  await waitFor(() => expect(approve.hasAttribute('disabled')).toBe(true))
+  const confirmation = screen.getByLabelText('Confirm motion and votes 1-1') as HTMLInputElement
+  expect(confirmation.checked).toBe(false)
+  fireEvent.click(confirmation)
+  fireEvent.click(screen.getByLabelText(/I checked all agenda items for motions and votes/))
+  fireEvent.click(screen.getByRole('button', { name: 'Save draft minutes' }))
+  await waitFor(() => expect(vi.mocked(editAgendaMinutes)).toHaveBeenCalledTimes(1))
+  expect(approve.hasAttribute('disabled')).toBe(true)
+  const payload = vi.mocked(editAgendaMinutes).mock.calls[0][1]
+  const updated: SummaryDraft = { ...minutesSummary, audit_fingerprint: 'updated-minutes', agenda_minutes: { ...minutesSummary.agenda_minutes!, content: payload.content } }
+  vi.mocked(listSummaryReviewItems).mockResolvedValue({ items: [updated] })
+  finish(updated)
+  await waitFor(() => expect(approve.hasAttribute('disabled')).toBe(false))
+  expect((screen.getByLabelText('Motion text 1-1') as HTMLTextAreaElement).value).toBe('Adopt revised budget')
 })

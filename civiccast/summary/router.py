@@ -5,16 +5,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from civiccast.agenda.router import get_agenda_service, get_agenda_store
+from civiccast.agenda.service import AgendaService
+from civiccast.agenda.store import AgendaStore
 from civiccast.ai_runtime.ollama_client import OllamaRuntimeUnavailableError
 from civiccast.auth.roles import require_any_role
 from civiccast.captions import CaptionCue
+from civiccast.captions.review import CaptionReviewStore
+from civiccast.captions.router import get_caption_review_store
+from civiccast.captions.vod import reviewed_caption_cues
 from civiccast.platform.stores import resolve_app_store
+from civiccast.recording.router import get_recording_store
 from civiccast.summary.csv_export import render_transcript_csv
+from civiccast.summary.fingerprint import sha256_fingerprint
 from civiccast.summary.generate import SummaryGenerationPipeline, SummaryModel
 from civiccast.summary.job import (
     SUMMARY_JOB_STATE_FAILED,
@@ -25,7 +34,19 @@ from civiccast.summary.job import (
     SummaryGenerationJobStore,
     enqueue_summary_job,
 )
-from civiccast.summary.models import OperatorApproval, SummaryDraft
+from civiccast.summary.minutes import (
+    render_minutes,
+    transcript_fingerprint,
+    validate_minutes_sources,
+)
+from civiccast.summary.models import (
+    AgendaMinutes,
+    MinutesContent,
+    MinutesSection,
+    ModelProvenance,
+    OperatorApproval,
+    SummaryDraft,
+)
 from civiccast.summary.ollama import OllamaSummaryModel, SummaryResourceDeferredError
 from civiccast.summary.store import (
     SummaryStore,
@@ -106,6 +127,17 @@ class SummaryGenerateRequest(BaseModel):
 
     meeting_id: str
     cues: list[CaptionCue] = Field(default_factory=list)
+
+
+class AgendaMinutesCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_summary_id: str | None = None
+
+
+class AgendaMinutesEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_audit_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    content: MinutesContent
 
 
 class SummaryApprovalRequest(BaseModel):
@@ -220,7 +252,11 @@ def approve_summary(
     summary_id: str,
     payload: SummaryApprovalRequest,
     store: SummaryStore = Depends(get_summary_store),
+    reviews: CaptionReviewStore = Depends(get_caption_review_store),
 ) -> SummaryDraft:
+    current = store.get_summary(summary_id)
+    if current is not None and current.agenda_minutes is not None:
+        _current_minutes_cues(current, reviews)
     operator_identity = request.state.operator_identity
     approval = OperatorApproval(
         summary_id=summary_id,
@@ -404,3 +440,178 @@ def retry_summary_job(
                 f"is now active for meeting {job.meeting_id!r}."
             ),
         ) from exc
+
+
+@staff_router.post(
+    "/agendas/{agenda_id}/minutes",
+    response_model=SummaryDraft,
+    status_code=201,
+    summary="Draft agenda minutes from a cited summary or start a manual draft",
+    dependencies=[Depends(require_any_role("records_clerk"))],
+)
+def create_agenda_minutes(
+    agenda_id: str,
+    payload: AgendaMinutesCreateRequest,
+    agendas: AgendaStore | None = Depends(get_agenda_store),
+    agenda_service: AgendaService | None = Depends(get_agenda_service),
+    recordings: Any = Depends(get_recording_store),
+    reviews: CaptionReviewStore = Depends(get_caption_review_store),
+    store: SummaryStore = Depends(get_summary_store),
+) -> SummaryDraft:
+    if agendas is None:
+        raise HTTPException(
+            503, "Agenda storage is unavailable. Restore station storage and retry."
+        )
+    agenda = agendas.get_agenda(agenda_id)
+    if agenda is None:
+        raise HTTPException(404, "Agenda not found.")
+    job = (
+        recordings.get_job(agenda.source_recording_job_id)
+        if recordings and agenda.source_recording_job_id
+        else None
+    )
+    asset_id = job.asset_id if job and job.asset_id else agenda.meeting_asset_id
+    reviewed = reviewed_caption_cues(reviews, asset_id)
+    if reviewed.pending or not reviewed.cues:
+        raise HTTPException(
+            409, "Finish English caption review for this recording before creating cited minutes."
+        )
+    items = agendas.list_items(agenda_id, order_by="order")
+    if not items:
+        raise HTTPException(409, "Add agenda items before drafting minutes.")
+    source = store.get_summary(payload.source_summary_id) if payload.source_summary_id else None
+    if payload.source_summary_id and (
+        source is None
+        or source.meeting_id != asset_id
+        or source.status == "refused"
+        or source.agenda_minutes
+    ):
+        raise HTTPException(
+            409, "Select a completed cited summary for this recording, or start a manual draft."
+        )
+    if source and source.provenance.runtime_parameters.get(
+        "source_transcript_fingerprint"
+    ) != transcript_fingerprint(reviewed.cues):
+        raise HTTPException(
+            409,
+            "The summary lacks current reviewed-transcript provenance. Regenerate it after caption corrections, or start a manual draft.",
+        )
+    window = agenda_service.source_playback_window(asset_id) if agenda_service else None
+    offset = window[0] if window else 0.0
+    timed = sorted(
+        [
+            (
+                item.video_timecode_s + (0 if agenda.source_recording_job_id else offset),
+                item.item_id,
+            )
+            for item in items
+            if item.video_timecode_s is not None
+        ]
+    )
+    sections = {
+        item.item_id: MinutesSection(item_id=item.item_id, title=item.title) for item in items
+    }
+    if source:
+        for claim in source.sourced_claims:
+            if not claim.transcript_ranges:
+                continue
+            point = claim.transcript_ranges[0].start_seconds
+            owners = [identity for start, identity in timed if start <= point]
+            if not owners:
+                continue
+            section = sections[owners[-1]]
+            sections[section.item_id] = section.model_copy(
+                update={
+                    "discussion": (section.discussion + "\n" + claim.text).strip(),
+                    "transcript_ranges": [*section.transcript_ranges, *claim.transcript_ranges],
+                }
+            )
+    content = MinutesContent(sections=list(sections.values()))
+    try:
+        validate_minutes_sources(content, reviewed.cues)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    minutes = AgendaMinutes(
+        agenda_id=agenda_id,
+        asset_id=asset_id,
+        source_summary_id=source.summary_id if source else None,
+        source_summary_fingerprint=source.audit_fingerprint if source else None,
+        transcript_fingerprint=transcript_fingerprint(reviewed.cues),
+        playback_start_seconds=window[0] if window else None,
+        playback_end_seconds=window[1] if window else None,
+        content=content,
+    )
+    summary = SummaryDraft(
+        summary_id=f"minutes-{uuid4().hex}",
+        meeting_id=asset_id,
+        status="pending_review",
+        narrative=render_minutes(minutes),
+        sourced_claims=[],
+        provenance=source.provenance
+        if source
+        else ModelProvenance(
+            model_tag="manual-no-model",
+            prompt_version="manual-agenda-minutes",
+            extraction_version="reviewed-english-cues",
+            generated_at=datetime.now(UTC),
+        ),
+        audit_fingerprint=sha256_fingerprint({"minutes": minutes.model_dump(mode="json")}),
+        agenda_minutes=minutes,
+        operator_message="Draft only. Copied cited discussion follows timed agenda items; empty/unassigned items need manual drafting. Enter and confirm motions/votes; no AI decision is official.",
+    )
+    return store.create_summary(summary)
+
+
+def _current_minutes_cues(summary: SummaryDraft, reviews: CaptionReviewStore) -> list[CaptionCue]:
+    assert summary.agenda_minutes is not None
+    reviewed = reviewed_caption_cues(reviews, summary.agenda_minutes.asset_id)
+    if (
+        reviewed.pending
+        or transcript_fingerprint(reviewed.cues) != summary.agenda_minutes.transcript_fingerprint
+    ):
+        raise HTTPException(
+            409,
+            "The reviewed transcript changed. Rebuild the draft minutes from current cues before approval.",
+        )
+    try:
+        validate_minutes_sources(summary.agenda_minutes.content, reviewed.cues)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return reviewed.cues
+
+
+@staff_router.patch(
+    "/{summary_id}/minutes",
+    response_model=SummaryDraft,
+    summary="Edit sourced agenda discussion and human-entered motions/votes",
+    dependencies=[Depends(require_any_role("records_clerk"))],
+)
+def edit_agenda_minutes(
+    request: Request,
+    summary_id: str,
+    payload: AgendaMinutesEditRequest,
+    store: SummaryStore = Depends(get_summary_store),
+    reviews: CaptionReviewStore = Depends(get_caption_review_store),
+) -> SummaryDraft:
+    summary = store.get_summary(summary_id)
+    if summary is None or summary.agenda_minutes is None:
+        raise HTTPException(404, "Agenda minutes not found.")
+    cues = _current_minutes_cues(summary, reviews)
+    if [(s.item_id, s.title) for s in payload.content.sections] != [
+        (s.item_id, s.title) for s in summary.agenda_minutes.content.sections
+    ]:
+        raise HTTPException(
+            422, "Agenda identity/order is fixed in this draft. Rebuild after agenda changes."
+        )
+    try:
+        validate_minutes_sources(payload.content, cues)
+        return store.edit_minutes(
+            summary_id,
+            content=payload.content,
+            operator_id=request.state.operator_identity.operator_id,
+            expected_audit_fingerprint=payload.expected_audit_fingerprint,
+        )
+    except SummaryStoreConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc

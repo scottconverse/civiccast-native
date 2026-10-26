@@ -51,6 +51,7 @@ STANDARD_14_FONT_NAMES = {
 }
 ATTACHMENT_RELATIONSHIPS = {
     "sourced-claims.json": pikepdf.Name.Source,
+    "agenda-minutes.json": pikepdf.Name.Supplement,
     "provenance.json": pikepdf.Name.Supplement,
     "approval.json": pikepdf.Name.Supplement,
     "timestamp-token.der": pikepdf.Name.Data,
@@ -61,6 +62,7 @@ ATTACHMENT_RELATIONSHIPS = {
 # even when the file specification dictionary names the file accurately.
 EMBEDDED_FILE_SUBTYPES = {
     "sourced-claims.json": pikepdf.Name("/application/json"),
+    "agenda-minutes.json": pikepdf.Name("/application/json"),
     "provenance.json": pikepdf.Name("/application/json"),
     "approval.json": pikepdf.Name("/application/json"),
     "timestamp-token.der": pikepdf.Name("/application/octet-stream"),
@@ -151,6 +153,10 @@ def render_pdfa_record(
             ),
             "timestamp-token.der": b"CivicCast timestamp token placeholder",
         }
+        if summary.agenda_minutes is not None:
+            attachments["agenda-minutes.json"] = summary.agenda_minutes.model_dump_json().encode(
+                "utf-8"
+            )
         associated_files = []
         for name, payload in attachments.items():
             document.attachments[name] = payload

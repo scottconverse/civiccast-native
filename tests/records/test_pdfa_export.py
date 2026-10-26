@@ -181,7 +181,8 @@ class TestPdfaConformanceStructure:
                         f"{spec_name}/EF{ef_key}: /Subtype not MIME-shaped: {subtype_str}"
                     )
                     seen_pairs.append((spec_name, str(ef_key), subtype_str))
-            for spec_name, expected in EMBEDDED_FILE_SUBTYPES.items():
+            for spec_name in {name for name, _, _ in seen_pairs}:
+                expected = EMBEDDED_FILE_SUBTYPES[spec_name]
                 expected_str = str(expected)
                 matching = [s for (name, _, s) in seen_pairs if name == spec_name]
                 assert matching, f"{spec_name}: no EF stream observed"

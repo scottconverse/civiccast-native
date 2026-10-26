@@ -1,3 +1,4 @@
+import { AgendaMinutesEditor } from './AgendaMinutesEditor'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -123,7 +124,7 @@ function EmptyState() {
 
 function PartialState({ summaries }: { summaries: SummaryDraft[] }) {
   const refused = summaries.filter((summary) => summary.status === 'refused').length
-  const unsourced = summaries.filter((summary) => (summary.sourced_claims ?? []).length === 0).length
+  const unsourced = summaries.filter((summary) => !summary.agenda_minutes && (summary.sourced_claims ?? []).length === 0).length
   if (refused === 0 && unsourced === 0) return null
   return (
     <div
@@ -167,6 +168,7 @@ function SummaryCard({
   canReview: boolean
 }) {
   const [editing, setEditing] = useState(false)
+  const [minutesDirty, setMinutesDirty] = useState(false)
   const [draft, setDraft] = useState({
     fingerprint: summary.audit_fingerprint,
     narrative: summary.narrative,
@@ -182,11 +184,11 @@ function SummaryCard({
   })
 
   const ranges = useMemo<TranscriptRange[]>(
-    () => (summary.sourced_claims ?? []).flatMap((claim) => claim.transcript_ranges ?? []),
-    [summary.sourced_claims],
+    () => [...(summary.sourced_claims ?? []).flatMap((claim) => claim.transcript_ranges ?? []), ...(summary.agenda_minutes?.content.sections ?? []).flatMap((section) => [...(section.transcript_ranges ?? []), ...(section.motions ?? []).flatMap((motion) => motion.transcript_ranges)])],
+    [summary.sourced_claims, summary.agenda_minutes],
   )
   const activeRange = activeCitation?.summaryId === summary.summary_id ? activeCitation.range : null
-  const canApprove = summary.status === 'pending_review' && (summary.sourced_claims ?? []).length > 0
+  const canApprove = summary.status === 'pending_review' && (Boolean(summary.agenda_minutes) || (summary.sourced_claims ?? []).length > 0)
   const canExport = summary.status === 'approved'
   return (
     <article
@@ -208,12 +210,13 @@ function SummaryCard({
           className="rounded-md p-3 text-xs"
           style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}
         >
-          {summary.operator_message} Next step: regenerate after adding transcript evidence
-          for each quantitative claim.
+          {summary.operator_message}{!summary.agenda_minutes && <> Next step: regenerate after adding transcript evidence for each quantitative claim.</>}
         </div>
       )}
 
-      {editing ? (
+      {summary.agenda_minutes ? (
+        <AgendaMinutesEditor key={summary.audit_fingerprint} summary={summary} canReview={canReview} onSeek={onSeek} onDirtyChange={setMinutesDirty} />
+      ) : editing ? (
         <label className="grid gap-1 text-xs font-medium" htmlFor={`summary-narrative-${summary.summary_id}`}>
           Edit summary narrative
           <textarea
@@ -246,7 +249,7 @@ function SummaryCard({
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {summary.status === 'pending_review' && (
+        {summary.status === 'pending_review' && !summary.agenda_minutes && (
           editing ? (
             <>
               <button
@@ -290,7 +293,7 @@ function SummaryCard({
         <button
           type="button"
           onClick={() => onApprove(summary)}
-          disabled={!canReview || busy || !canApprove}
+          disabled={!canReview || busy || !canApprove || minutesDirty}
           className="rounded-md px-3 py-1.5 text-xs font-semibold"
           style={{
             background: canReview && canApprove ? 'var(--cc-ok-soft)' : 'var(--cc-surface-3)',

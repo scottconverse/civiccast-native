@@ -136,7 +136,7 @@ class TestSummaryStoreContract:
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "CREATE TABLE summaries (summary_id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL, "
+                    "CREATE TABLE summaries (agenda_minutes_json TEXT, summary_id TEXT PRIMARY KEY, meeting_id TEXT NOT NULL, "
                     "status TEXT NOT NULL, narrative TEXT NOT NULL, provenance_json TEXT NOT NULL, "
                     "audit_fingerprint TEXT NOT NULL, operator_message TEXT, created_at DATETIME NOT NULL)"
                 )

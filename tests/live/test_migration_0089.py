@@ -25,7 +25,7 @@ def _cfg(url: str) -> Config:
 
 def test_0089_is_linear_head() -> None:
     script = ScriptDirectory.from_config(_cfg("sqlite://"))
-    assert script.get_heads() == ["0096_agenda_recording_link"]
+    assert script.get_heads() == ["0097_agenda_minutes"]
     assert script.get_revision(REVISION).down_revision == PREVIOUS
 
 

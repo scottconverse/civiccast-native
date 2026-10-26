@@ -4590,6 +4590,15 @@ Dispatch a simulated subscription notification for local proof.
 - Request body: `NotificationPayload`
 - Responses: 200 `NotificationDispatchResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 A real mail or webhook provider is configured; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/summaries/agendas/{agenda_id}/minutes`
+
+Draft agenda minutes from a cited summary or start a manual draft.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `agenda_id` (path, required): `string`
+- Request body: `AgendaMinutesCreateRequest`
+- Responses: 201 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/summaries/generate`
 
 Generate a sourced summary draft from committed transcript cues.
@@ -4670,6 +4679,15 @@ Approve a sourced summary for signed-record export.
 - Parameters: `summary_id` (path, required): `string`
 - Request body: `SummaryApprovalRequest`
 - Responses: 200 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Summary not found; 409 Summary changed or is no longer pending; reload before approving; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PATCH /api/staff/summaries/{summary_id}/minutes`
+
+Edit sourced agenda discussion and human-entered motions/votes.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `summary_id` (path, required): `string`
+- Request body: `AgendaMinutesEditRequest`
+- Responses: 200 `SummaryDraft`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/system-resources`
 
@@ -5030,6 +5048,27 @@ Read CivicCast local federation metadata.
 - `source_recording_job_id` (optional): `string | null`
 - `state` (required): `string`
 - `title` (required): `string`
+
+### `AgendaMinutes`
+
+- `agenda_id` (required): `string`
+- `asset_id` (required): `string`
+- `content` (required): `MinutesContent`
+- `playback_end_seconds` (optional): `number | null`
+- `playback_start_seconds` (optional): `number | null`
+- `revisions` (optional): `Array<MinutesRevision>`
+- `source_summary_fingerprint` (optional): `string | null`
+- `source_summary_id` (optional): `string | null`
+- `transcript_fingerprint` (required): `string`
+
+### `AgendaMinutesCreateRequest`
+
+- `source_summary_id` (optional): `string | null`
+
+### `AgendaMinutesEditRequest`
+
+- `content` (required): `MinutesContent`
+- `expected_audit_fingerprint` (required): `string`
 
 ### `AiDefaultSelection`
 
@@ -7624,6 +7663,42 @@ rule (S13 §5.1).
 - `guest_display_name` (required): `string`
 - `role` (required): `'council_member' | 'presenter' | 'public_comment'`
 
+### `MinutesContent`
+
+- `decisions_reviewed` (optional): `boolean`
+- `sections` (required): `Array<MinutesSection>`
+
+### `MinutesMotion`
+
+- `human_confirmed` (optional): `boolean`
+- `mover` (required): `string`
+- `outcome` (required): `'passed' | 'failed' | 'withdrawn' | 'no_vote'`
+- `seconder` (optional): `string`
+- `text` (required): `string`
+- `transcript_ranges` (required): `Array<TranscriptRange>`
+- `votes` (optional): `Array<MinutesVote>`
+
+### `MinutesRevision`
+
+- `content` (required): `MinutesContent`
+- `edited_at` (required): `string`
+- `operator_id` (required): `string`
+- `previous_fingerprint` (required): `string`
+
+### `MinutesSection`
+
+- `discussion` (optional): `string`
+- `item_id` (required): `string`
+- `motions` (optional): `Array<MinutesMotion>`
+- `not_discussed` (optional): `boolean`
+- `title` (required): `string`
+- `transcript_ranges` (optional): `Array<TranscriptRange>`
+
+### `MinutesVote`
+
+- `choice` (required): `'yes' | 'no' | 'abstain' | 'absent'`
+- `member` (required): `string`
+
 ### `MissingMediaAlertRow`
 
 - `asset_id` (required): `string`
@@ -9766,6 +9841,7 @@ rule (S13 §5.1).
 
 ### `SummaryDraft`
 
+- `agenda_minutes` (optional): `AgendaMinutes | null`
 - `audit_fingerprint` (required): `string`
 - `meeting_id` (required): `string`
 - `narrative` (required): `string`

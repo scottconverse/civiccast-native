@@ -1,5 +1,29 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Active N8 finishing / PR269 infrastructure failure - October 26, 2026
+
+- Parent owns roadmap/merge. PR269 frozen4b2dfe78; sole waiter16889 consumed
+  terminal exit1, run40289108609. Unit121460108930 failed before pytest:
+  existing apt prerequisite install timed out on all three mirrors (~24min).
+  Claims verifier consequently missing JUnit, not product test evidence. Windows
+  SUCCESS; other terminal required checks SUCCESS, public-a11y still live08:25UTC.
+  Failed log %TEMP%/civiccast-pr269-correction-failed.log. Failed-job-only attempt2 requested; sole waiter23640 owns Unit121470092494
+  started08:26UTC (~64min normal baseline). Ctrl-C stops watcher only. No downstream push before merge.
+- N7 committed7ef5f5f5, reviewed; N4-N7 unpushed serial ancestors preserved.
+  Active feat/n8-agenda-draft-minutes implements cited editable agenda sections,
+  human-confirmed structured motions/votes, CAS approval and durable edit history,
+  approved PDF narrative+JSON export and manual no-model recovery. Parent material
+  review complete after dirty/save-pending approval block and constructor correction.
+- Real migrated/store/API/cited generation/offset/history/approval/export/manual
+  workflow passed4.49s; operator review+agenda37passed2.61s. Affected backend
+  batch36pass/1fail: legacy PDF assertion assumed optional minutes attachment on
+  every record; corrected actual-stream MIME check and minutes JSON MIME assertion.
+  Typed caption fixture corrected four required fields. Exact PDF case passed;
+  actual workflow4.46s passed including optional JSON MIME. TypeScript/affected
+  ESLint/Ruff/diff check passed. API/manual/help generation73857 terminal0;
+  PDF/DOCX8125 terminal0 (usual MiKTeX update warnings). N8 ready DCO commit;
+  next F5 source-only signing seam, no installer build yet.
+
 ## Active N7 finishing / PR269 CI - October 26, 2026
 
 - Parent owns roadmap/merge. PR269 frozen4b2dfe786541294fa5f92a82ed0cc8e0edf823a2.

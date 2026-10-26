@@ -1,3 +1,4 @@
+import { AgendaMinutesPanel } from './AgendaMinutesPanel'
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 //
@@ -1427,6 +1428,7 @@ function SelectedAgendaSection({
         deleteError={deleteAgendaError}
       />
 
+      <AgendaMinutesPanel key={agendaId} agendaId={agendaId} assetId={meeting?.meeting_asset_id ?? agenda.meeting_asset_id} />
       <p className="text-sm">{meeting?.title ?? 'Recording unavailable'} — {meeting?.state ?? 'awaiting library linkage'}. {agenda.source_recording_job_id ? 'Times refer to the original source recording and adjust for packaged trims.' : 'Times refer to packaged playback and remain unchanged when publishing chapters.'} Publish the recording and agenda when ready; draft markers remain private.</p>
       {markNow.isError && <Banner tone="warn">{apiMessage(markNow.error, 'Recording time is unavailable. Enter a reviewed time instead.')}</Banner>}
       {markNow.isSuccess && <Banner tone="ok">Marked the recorded-media position. Correct the time with Edit if needed.</Banner>}

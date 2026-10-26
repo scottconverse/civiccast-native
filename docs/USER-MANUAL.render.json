@@ -1,16 +1,16 @@
 {
   "source": "docs/USER-MANUAL.md",
-  "source_sha256": "e66f4becf2d84f53d6d73ae375f50deece162bb6e374997aec72ad06e8259d0d",
+  "source_sha256": "fd872a9cba5163fbe8401860bffc3ad47ab1108cd46de9e77e5f5ec4ad3fa297",
   "artifacts": [
     {
       "path": "docs/USER-MANUAL.pdf",
-      "sha256": "201546d9682b6c54ed5bb80a84ec70e65b9f2da542f26fd739898f6d693bc03b",
-      "size_bytes": 7304810
+      "sha256": "f6e7441b93f370379ae87dcfbcc23a3d779ab7e5cd72d2ad254734af29cbc918",
+      "size_bytes": 7309632
     },
     {
       "path": "docs/USER-MANUAL.docx",
-      "sha256": "387aa744df65c92aa433451b86ea3a9627aa79bc976f5a40f9b2695c639cca13",
-      "size_bytes": 5654226
+      "sha256": "10cfb203395945cffad1df710c3fa95155169bf50fdc4f110c3fc16bc0bdcb67",
+      "size_bytes": 5655576
     }
   ]
 }

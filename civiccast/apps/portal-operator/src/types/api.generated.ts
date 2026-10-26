@@ -170,6 +170,27 @@ export interface AgendaMeetingOption {
   can_mark_now?: boolean
 }
 
+export interface AgendaMinutes {
+  agenda_id: string
+  asset_id: string
+  source_summary_id?: string | null
+  source_summary_fingerprint?: string | null
+  transcript_fingerprint: string
+  playback_start_seconds?: number | null
+  playback_end_seconds?: number | null
+  content: MinutesContent
+  revisions?: Array<MinutesRevision>
+}
+
+export interface AgendaMinutesCreateRequest {
+  source_summary_id?: string | null
+}
+
+export interface AgendaMinutesEditRequest {
+  expected_audit_fingerprint: string
+  content: MinutesContent
+}
+
 export interface AiDefaultSelection {
   summary_model: string
   translate_model: string
@@ -2759,6 +2780,42 @@ export interface MintInviteInput {
   role: 'council_member' | 'presenter' | 'public_comment'
 }
 
+export interface MinutesContent {
+  sections: Array<MinutesSection>
+  decisions_reviewed?: boolean
+}
+
+export interface MinutesMotion {
+  text: string
+  mover: string
+  seconder?: string
+  outcome: 'passed' | 'failed' | 'withdrawn' | 'no_vote'
+  votes?: Array<MinutesVote>
+  transcript_ranges: Array<TranscriptRange>
+  human_confirmed?: boolean
+}
+
+export interface MinutesRevision {
+  operator_id: string
+  edited_at: string
+  previous_fingerprint: string
+  content: MinutesContent
+}
+
+export interface MinutesSection {
+  item_id: string
+  title: string
+  discussion?: string
+  transcript_ranges?: Array<TranscriptRange>
+  not_discussed?: boolean
+  motions?: Array<MinutesMotion>
+}
+
+export interface MinutesVote {
+  member: string
+  choice: 'yes' | 'no' | 'abstain' | 'absent'
+}
+
 export interface MissingMediaAlertRow {
   schedule_id: string
   asset_id: string
@@ -4906,6 +4963,7 @@ export interface SummaryDraft {
   provenance: ModelProvenance
   audit_fingerprint: string
   operator_message?: string | null
+  agenda_minutes?: AgendaMinutes | null
 }
 
 export interface SummaryEditRequest {

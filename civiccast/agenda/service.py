@@ -345,6 +345,10 @@ class AgendaService:
             )
         return chapters
 
+    def source_playback_window(self, asset_id: str) -> tuple[float, float | None] | None:
+        """Immutable package window for source-cited staff records."""
+        return self._playback_window(asset_id) if self._playback_window else None
+
     def playback_duration_seconds(self, asset_id: str) -> float | None:
         """Published player duration, when an immutable package range is known."""
         window = self._playback_window(asset_id) if self._playback_window else None

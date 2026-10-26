@@ -60,6 +60,76 @@ class ModelProvenance(BaseModel):
     generated_at: datetime
 
 
+class MinutesVote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    member: Annotated[str, Field(min_length=1, max_length=200)]
+    choice: Literal["yes", "no", "abstain", "absent"]
+
+
+class MinutesMotion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: Annotated[str, Field(min_length=1, max_length=2000)]
+    mover: Annotated[str, Field(min_length=1, max_length=200)]
+    seconder: Annotated[str, Field(max_length=200)] = ""
+    outcome: Literal["passed", "failed", "withdrawn", "no_vote"]
+    votes: list[MinutesVote] = Field(default_factory=list, max_length=100)
+    transcript_ranges: list[TranscriptRange] = Field(min_length=1, max_length=100)
+    human_confirmed: bool = False
+
+
+class MinutesSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_id: Annotated[str, Field(min_length=1, max_length=120)]
+    title: Annotated[str, Field(min_length=1, max_length=400)]
+    discussion: Annotated[str, Field(max_length=12000)] = ""
+    transcript_ranges: list[TranscriptRange] = Field(default_factory=list, max_length=100)
+    not_discussed: bool = False
+    motions: list[MinutesMotion] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def require_discussion_sources(self) -> MinutesSection:
+        if self.discussion.strip() and not self.transcript_ranges:
+            raise ValueError("Agenda discussion requires transcript/video source ranges.")
+        if self.not_discussed and (self.discussion.strip() or self.motions):
+            raise ValueError("An item marked not discussed cannot contain discussion or motions.")
+        return self
+
+
+class MinutesContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sections: list[MinutesSection] = Field(min_length=1, max_length=200)
+    decisions_reviewed: bool = False
+
+    @model_validator(mode="after")
+    def unique_items(self) -> MinutesContent:
+        if len({section.item_id for section in self.sections}) != len(self.sections):
+            raise ValueError("Minutes agenda items must be unique.")
+        return self
+
+
+class MinutesRevision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operator_id: str
+    edited_at: datetime
+    previous_fingerprint: str
+    content: MinutesContent
+
+
+class AgendaMinutes(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    agenda_id: str
+    asset_id: str
+    source_summary_id: str | None = None
+    source_summary_fingerprint: str | None = None
+    transcript_fingerprint: str
+    # Source ranges retain original recording seconds. Immutable packaged range
+    # gives the public player clock; None means no playback link is claimed.
+    playback_start_seconds: float | None = None
+    playback_end_seconds: float | None = None
+    content: MinutesContent
+    revisions: list[MinutesRevision] = Field(default_factory=list)
+
+
 class SummaryDraft(BaseModel):
     """Operator-reviewable sourced summary."""
 
@@ -73,6 +143,7 @@ class SummaryDraft(BaseModel):
     provenance: ModelProvenance
     audit_fingerprint: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
     operator_message: str | None = None
+    agenda_minutes: AgendaMinutes | None = None
 
 
 class OperatorApproval(BaseModel):
