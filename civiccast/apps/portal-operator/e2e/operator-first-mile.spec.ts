@@ -372,6 +372,21 @@ const SUPPORT_BUNDLE = {
 }
 
 async function mockSetup(page: import('@playwright/test').Page) {
+  let sampleCreated = false
+  await page.route('**/api/staff/auth/me', async (route) => {
+    const authorized = route.request().headers().authorization === `Bearer ${SETUP_RESPONSE.operator_console_token}`
+    await route.fulfill({ status: authorized ? 200 : 401, json: authorized ? {
+      operator_id: 'avery', operator_display_name: 'Avery Admin',
+      roles: ['setup_admin', 'meeting_operator', 'records_clerk', 'publish_operator', 'support_admin'],
+    } : { detail: 'Sign in required' } })
+  })
+  await page.route('**/api/staff/installer/sample-seed-status', async (route) => {
+    await route.fulfill({ json: { status: 'not_applicable', sample_content_enabled: false,
+      initial_schedule_enabled: false, message: 'No automatic sample requested.', next_step: 'Create sample media when needed.' } })
+  })
+  await page.route('**/api/staff/assets', async (route) => {
+    await route.fulfill({ json: sampleCreated ? [{ ...SAMPLE_UPLOAD, state: 'validated', manifest_url: null, published_at: null }] : [] })
+  })
   await page.route('**/api/setup/station-state', async (route) => {
     await route.fulfill({
       status: 200,
@@ -448,6 +463,7 @@ async function mockSetup(page: import('@playwright/test').Page) {
     })
   })
   await page.route('**/api/staff/installer/source-setup/sample-upload', async (route) => {
+    sampleCreated = true
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -703,7 +719,7 @@ test.describe('operator first mile', () => {
 
     await expect(page.getByRole('heading', { name: 'Camera or test media' })).toBeVisible()
     await page.getByRole('button', { name: 'Create sample media' }).click()
-    await expect(page.getByText('Ready: sample-rehearsal-test')).toBeVisible()
+    await expect(page.getByText('Saved: CivicCast sample rehearsal')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Backup destination' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Provider setup' })).toBeVisible()
     await page.getByLabel('Client ID').fill('youtube-client-id')

@@ -1,5 +1,31 @@
 # CivicCast portable handoff — October 24, 2026
 
+## Active PR269 correction - October 26, 2026
+
+- Parent owns roadmap/merge. PR268 is merged; F4/F6/F7 acceptance delivered.
+  PR269 old head bfc4dc62 has required lint/operator/public-a11y failures;
+  ci-test waiter69829 still owned (run40283658614), Windows success, unit pending.
+  This is not a full CI pass. Correction now goes to the same reviewed PR.
+- Fixed exact legacy translated-cue lookup by asset/language/cue identity,
+  retaining source-window checks and failing closed for ambiguous matches.
+  Repackage4pass4.03s, timing2pass1.48s. Server-search empty result now shows
+  no-match; query-aware public fixture and both affected browser cases passed.
+- Corrected staff array/auth/seed-status fixtures and changed setup/caption copy
+  assertions. AppStaffLogin7pass2.10s; exact publish, pending elapsed and first-admin
+  browser cases passed. First-admin fixture still asserts the issued stored token.
+  No production auth change. Explicit migration assertions advance to actual0095;
+  schema/migration20pass9.30s plus remaining2pass3.04s. Ruff9files formatted/check
+  passed; affected portal TypeScript/ESLint and builds passed. No broad rerun.
+- Parent reviewed material corrections. N4 50cbb23a, N5 7be2ab22, N6 56614c62
+  are preserved on local serial descendant branches, unpushed. After correction
+  push, merge into N6 and advance explicit head assertions to actual0096, then N7.
+  N7 selected Spanish, Chinese (written variant explicit), Tagalog/Filipino,
+  Vietnamese, Arabic. N7/N8/F5 pending; no release/install/live-transmission claim.
+- Next: DCO correction commit/push, replace superseded CI ownership with one
+  waiter for the new candidate and inspect full required rollup at boundaries.
+  Existing waiter cancellation is Ctrl-C after verified owned session; no other
+  local helper/test process is live. Named recovery stashes remain untouched.
+
 ## N1-N3 combined delivery - October 26, 2026
 
 - Parent owns roadmap/merge. PR268 merged07:03:52UTC, main5764afbcbdf757aa5b5ad6f91187283346ab2e94.

@@ -691,6 +691,15 @@ def recorded_translation_cue_id(
     legacy = translated_cue_id(cue.cue_id, language, source_text=cue.text)
     legacy_cue = cue.model_copy(update={"cue_id": legacy})
     existing = review_store.get(review_item_id_for_cue(asset_id, legacy_cue))
+    if existing is None:
+        # Review-item IDs were operator/API supplied before canonical IDs were
+        # introduced. The exact translated cue identity still binds wording.
+        matches = [
+            item
+            for item in review_store.list(asset_id=asset_id, language=language)
+            if item.cue.cue_id == legacy
+        ]
+        existing = matches[0] if len(matches) == 1 else None
     if existing is not None:
         source_start = existing.translation_source_start_seconds
         source_end = existing.translation_source_end_seconds

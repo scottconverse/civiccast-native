@@ -525,13 +525,25 @@ def test_timing_edit_persists_and_retained_audio_covers_new_interval(
     assert store.get("review-1").cue.start_seconds == 11.5
 
 
-def test_legacy_spanish_target_timing_keeps_source_provenance_after_store_restart(store: PostgresCaptionReviewStore) -> None:
+def test_legacy_spanish_target_timing_keeps_source_provenance_after_store_restart(
+    store: PostgresCaptionReviewStore,
+) -> None:
     from civiccast.translate.service import translated_cue_id
+
     _create(store)
     english = store.get("review-1")
-    legacy = english.cue.model_copy(update={"cue_id": translated_cue_id(english.cue.cue_id, "es", source_text=english.cue.text)})
-    store.create(CaptionReviewItemCreate(review_item_id="legacy-es", asset_id=english.asset_id, language="es", cue=legacy))
-    store.edit("legacy-es", CaptionReviewEdit(text="Texto revisado", start_seconds=12.25, end_seconds=14.25))
+    legacy = english.cue.model_copy(
+        update={"cue_id": translated_cue_id(english.cue.cue_id, "es", source_text=english.cue.text)}
+    )
+    store.create(
+        CaptionReviewItemCreate(
+            review_item_id="legacy-es", asset_id=english.asset_id, language="es", cue=legacy
+        )
+    )
+    store.edit(
+        "legacy-es",
+        CaptionReviewEdit(text="Texto revisado", start_seconds=12.25, end_seconds=14.25),
+    )
     restarted = PostgresCaptionReviewStore(store._session_factory)
     restored = restarted.get("legacy-es")
     assert restored.translation_source_start_seconds == 12

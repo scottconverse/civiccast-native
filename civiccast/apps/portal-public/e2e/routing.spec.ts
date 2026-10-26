@@ -56,11 +56,9 @@ async function mockPortal(page: import('@playwright/test').Page) {
     })
   })
   await page.route('**/api/public/search**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(recordings),
-    })
+    const query = new URL(route.request().url()).searchParams.get('q')?.toLowerCase() ?? ''
+    const matches = recordings.filter((asset) => `${asset.title} ${asset.description}`.toLowerCase().includes(query))
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(matches) })
   })
   await page.route('**/api/public/assets/*', async (route) => {
     const url = new URL(route.request().url())

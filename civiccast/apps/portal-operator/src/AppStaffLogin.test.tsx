@@ -29,7 +29,7 @@ function renderLogin(roles: StaffRole[], returnTo?: string) {
     const body = url === '/api/staff/auth/login'
       ? { ...identity, access_token: 'ccst_test_login', issued_at: '2026-10-17T00:00:00Z', expires_at: '2026-10-18T00:00:00Z' }
       : url === '/api/staff/auth/me' ? identity
-        : url.startsWith('/api/staff/captions/review-items') ? [] : {}
+        : url.startsWith('/api/staff/captions/review-items') || url.startsWith('/api/staff/captions/offline-jobs') || url === '/api/staff/assets' ? [] : {}
     return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } })
   })
   vi.stubGlobal('fetch', fetchMock)
