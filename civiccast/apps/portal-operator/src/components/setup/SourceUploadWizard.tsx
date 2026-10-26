@@ -15,6 +15,7 @@ import type {
   SourceSetupMutationResponse,
   SourceSetupSampleUploadResponse,
   UploadedAssetResponse,
+  StationChannelProfile,
 } from '../../types/api.generated'
 
 type WizardChoice = SourceSetupOption['id'] | 'local-upload'
@@ -95,12 +96,14 @@ function ResultPanel({
   source,
   sample,
   upload,
+  sourceName,
 }: {
   source?: SourceSetupMutationResponse
   sample?: SourceSetupSampleUploadResponse
   upload?: UploadedAssetResponse
+  sourceName: string
 }) {
-  const title = source?.live_source_id ?? sample?.asset_id ?? upload?.asset_id
+  const title = source ? sourceName : sample?.title ?? upload?.title
   const message = source?.message ?? sample?.message ?? 'Upload accepted for rehearsal.'
   const nextStep =
     source?.next_step ??
@@ -113,19 +116,28 @@ function ResultPanel({
       className="rounded-md p-3 text-sm"
       style={{ background: 'var(--cc-ok-soft)', border: '1px solid var(--cc-ok)' }}
     >
-      <div className="font-semibold">Ready: {title}</div>
+      <div className="font-semibold">Saved: {title}</div>
       <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         {message} <strong>Next step.</strong> {nextStep}
       </p>
+      <p className="m-0 mt-2">Saving media or a source does not prove playback or publish it.</p>
+      <Link to={source ? '/health' : '/assets'} className="mt-2 inline-block underline">
+        {source ? 'Check broadcast readiness' : 'Open Assets to package and publish this recording'}
+      </Link>
     </div>
   )
 }
 
-export function SourceUploadWizard() {
+export function SourceUploadWizard({ channels = [], defaultChannelId = 'government' }: {
+  channels?: StationChannelProfile[]
+  defaultChannelId?: string
+}) {
   const queryClient = useQueryClient()
   const [choice, setChoice] = useState<WizardChoice>('sample-upload')
   const [label, setLabel] = useState('Council Room Camera')
   const [endpoint, setEndpoint] = useState('')
+  const [selectedChannel, setSelectedChannel] = useState('')
+  const channelId = channels.find((channel) => channel.channel_id === selectedChannel)?.channel_id || channels.find((channel) => channel.channel_id === defaultChannelId)?.channel_id || channels[0]?.channel_id || defaultChannelId
   const [uploadTitle, setUploadTitle] = useState('CivicCast test media')
   const [uploadDescription, setUploadDescription] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
@@ -154,7 +166,7 @@ export function SourceUploadWizard() {
         kind: choice,
         label: label.trim(),
         endpoint: endpoint.trim(),
-        channel_id: 'government',
+        channel_id: channelId,
       })
     },
     onSuccess: (response) => {
@@ -255,6 +267,15 @@ export function SourceUploadWizard() {
             liveSourceMutation.mutate()
           }}
         >
+          {channels.length > 0 && (
+            <label className="grid gap-1 text-sm" htmlFor="source-channel">
+              <span className="font-semibold">Channel</span>
+              <select id="source-channel" value={channelId} onChange={(event) => setSelectedChannel(event.target.value)}
+                className="rounded-md border p-2">
+                {channels.map((channel) => <option key={channel.channel_id} value={channel.channel_id}>{channel.display_name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="grid gap-1 text-sm" htmlFor="source-label">
             <span className="font-semibold">Source name</span>
             <input
@@ -370,7 +391,7 @@ export function SourceUploadWizard() {
         </div>
       )}
 
-      <ResultPanel source={lastSource} sample={lastSample} upload={lastUpload} />
+      <ResultPanel source={lastSource} sample={lastSample} upload={lastUpload} sourceName={label} />
     </section>
   )
 }

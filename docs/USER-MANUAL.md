@@ -3482,6 +3482,21 @@ Open the **CivicCast Operator Console** shortcut (or **Open operator console**) 
 
 You should see "Setup complete" or "Signed in", the **First-run defaults** card, and the setup tools: **Camera or test media**, **Backup destination**, **Storage and viewing estimate** and **Provider setup**. Later sign-ins use **Admin sign-in** on the same page and land on the Readiness screen.
 
+#### Reach one working recording
+
+The **Your first published recording** card checks saved media, playback packages and publication from current station records. Use **Refresh recording progress** after work in another screen; a failed check has **Retry recording check**. The initial welcome sample may already be published. Choose **Check resident playback** and confirm picture, sound and available captions; publication alone does not prove playback.
+
+If no recording is published yet:
+
+1. Under **Camera or test media**, create **Bundled sample video** or upload a short test clip. **Saved** means accepted, not connected, playable or public.
+2. Open **Assets**, find the video by title and choose **Package for playback**. Wait for completion and correct any error.
+3. Open **Publish**, select that recording by title, review its metadata and approve **Portal**. External providers are optional for this local workflow. A saved provider credential is not a successful connection test; test configured destinations using their existing saved details.
+4. Refresh recording progress, open **Check resident playback**, and verify the video and audio. Use **System Health** to check actual configured components before broadcasting.
+
+For a live source, choose a **Channel** by its displayed name, enter the source details, save, then run broadcast readiness/preflight. The selection uses current station channel profiles and requires no internal channel identifier.
+
+The supported download keeps the full offline kit. Optional model acquisition is deferred: activation currently requires all six signed station components, including both summary packs and translation. A smaller installation needs a coordinated signed activation/runtime capability contract; deleting packs from the current kit is not supported. Existing upgrades preserve station data; do not uninstall to retry a failed setup.
+
 A lost password is recovered with **Use recovery code**: the first click arms it ("This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm.").
 
 > **Warning:** The saved recovery kit file contains the administrator password in plain text. Keep it off shared folders, cloud-synced folders and email. Print it, or store the file somewhere the city controls, and delete it from Downloads.

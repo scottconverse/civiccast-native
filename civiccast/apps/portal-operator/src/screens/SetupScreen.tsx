@@ -14,6 +14,7 @@ import {
   getProviderReadiness,
   getStaffIdentity,
   getStationSetupState,
+  listStaffAssets,
   hasStoredStaffToken,
   loginStationAdmin,
   preparePublicStorage,
@@ -46,6 +47,7 @@ import type {
   StationLoginRequest,
   StationRecoveryRequest,
   StationSetupState,
+  StationProfile,
 } from '../types/api.generated'
 
 // Setup-wizard provider ids that expose a live "Test connection" (CDN
@@ -1326,11 +1328,41 @@ export function CostForecastPanel() {
   )
 }
 
-function StationAdminTools({ canManageProviders }: { canManageProviders: boolean }) {
+export function FirstRecordingProgress() {
+  const assets = useQuery({ queryKey: ['staff-assets'], queryFn: listStaffAssets, retry: false })
+  const published = assets.data?.find((asset) => asset.published_at && asset.manifest_url)
+  const packaged = assets.data?.some((asset) => asset.manifest_url)
+  return (
+    <section className="grid gap-3 rounded-md border p-4" aria-labelledby="first-recording-heading">
+      <h2 id="first-recording-heading" className="m-0 text-base font-semibold">Your first published recording</h2>
+      <p className="m-0 text-sm">Start locally with a short test video. External providers are optional for this path; configure each destination only when you use it. Saved credentials alone do not prove a connection.</p>
+      {assets.isPending ? <p role="status">Checking current recordings...</p> : assets.isError ? (
+        <div role="alert">Could not check recording progress. <button type="button" onClick={() => void assets.refetch()} className="underline">Retry recording check</button></div>
+      ) : (
+        <ol className="m-0 list-decimal space-y-2 pl-5 text-sm">
+          <li>{assets.data?.length ? 'Media is saved.' : 'Create sample media or upload a short clip below.'}</li>
+          <li>{packaged ? 'A playback package exists.' : 'Open Assets, find the video by title and choose Package for playback. Wait for completion; a failed package stays unpublished.'}</li>
+          <li>{published ? `Published recording found: ${published.title}.` : 'Open Publish, choose the packaged recording by title, review its metadata and approve the Portal destination.'}</li>
+          <li>Open the resident recording and confirm picture, sound and any available captions. Publication status alone is not a playback test.</li>
+        </ol>
+      )}
+      <div className="flex flex-wrap gap-4 text-sm">
+        <Link to="/assets" className="underline">Open Assets</Link>
+        <Link to="/publish" className="underline">Open Publish</Link>
+        <Link to="/health" className="underline">Check configured components in System Health</Link>
+        {published && <a className="underline" href={`/#/watch/${encodeURIComponent(published.asset_id)}`}>Check resident playback</a>}
+      </div>
+      <button type="button" className="justify-self-start underline text-sm" onClick={() => void assets.refetch()} disabled={assets.isFetching}>Refresh recording progress</button>
+    </section>
+  )
+}
+
+function StationAdminTools({ canManageProviders, profile }: { canManageProviders: boolean; profile?: StationProfile | null }) {
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <div className="xl:col-span-2">
-        <SourceUploadWizard />
+        <FirstRecordingProgress />
+        <SourceUploadWizard channels={profile?.channel_profiles} defaultChannelId={profile?.default_channel_id} />
       </div>
       <BackupSetupPanel />
       <CostForecastPanel />
@@ -2099,7 +2131,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
       )}
       {completed && !kitGateActive && <SignedInPanel auth={{ status: 'complete', profile: completed.profile }} />}
       {authenticated && !kitGateActive && <SignedInPanel auth={authenticated} />}
-      {showAdminTools && <StationAdminTools canManageProviders={canManageProviders} />}
+      {showAdminTools && <StationAdminTools canManageProviders={canManageProviders} profile={stateQuery.data?.profile ?? completed?.profile ?? authenticated?.profile} />}
     </div>
   )
 }

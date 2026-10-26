@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 
@@ -26,7 +26,7 @@ vi.mock('../../api/client', () => ({
   uploadAssetFile: vi.fn(),
 }))
 
-import { getSourceSetup } from '../../api/client'
+import { createSetupLiveSource, getSourceSetup } from '../../api/client'
 import type { SourceSetupReport } from '../../types/api.generated'
 import { SourceUploadWizard } from './SourceUploadWizard'
 
@@ -41,13 +41,13 @@ function report(overrides: Partial<SourceSetupReport> = {}): SourceSetupReport {
   }
 }
 
-function renderWizard() {
+function renderWizard(props: Parameters<typeof SourceUploadWizard>[0] = {}) {
   vi.mocked(getSourceSetup).mockResolvedValue(report())
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <SourceUploadWizard />
+        <SourceUploadWizard {...props} />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -58,5 +58,24 @@ describe('SourceUploadWizard manual link', () => {
     renderWizard()
     const link = await screen.findByRole('link', { name: /read the full walkthrough in the manual/i })
     expect(link.getAttribute('href')).toBe('/help#ch-before-meeting')
+  })
+
+  it('saves to the named selected channel and does not claim playback readiness', async () => {
+    vi.mocked(createSetupLiveSource).mockResolvedValue({ status: 'ready', live_source_id: 'internal-source-123',
+      source_type: 'rtsp', message: 'Council Room Camera is saved.', next_step: 'Run preflight.' })
+    renderWizard({ defaultChannelId: 'gov-ch12', channels: [
+      { channel_id: 'gov-ch12', display_name: 'Government Channel 12', purpose: 'Meetings' },
+      { channel_id: 'education', display_name: 'Education Channel', purpose: 'Education' },
+    ] })
+    fireEvent.click(await screen.findByRole('button', { name: /Hardware encoder or AV system/i }))
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'education' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /Encoder stream address/ }), { target: { value: 'rtsp://encoder.example.local/live' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save meeting source' }))
+    await waitFor(() => expect(createSetupLiveSource).toHaveBeenCalledWith({ kind: 'encoder',
+      channel_id: 'education', label: 'Council Room Camera', endpoint: 'rtsp://encoder.example.local/live' }))
+    expect(await screen.findByText('Saved: Council Room Camera')).toBeTruthy()
+    expect(screen.queryByText(/internal-source-123/)).toBeNull()
+    expect(screen.getByText('Saving media or a source does not prove playback or publish it.')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Check broadcast readiness' }).getAttribute('href')).toBe('/health')
   })
 })

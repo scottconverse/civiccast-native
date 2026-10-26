@@ -1,27 +1,38 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N1 / PR268 delivery - October 26, 2026
+## Active N2 / predecessor delivery - October 26, 2026
 
-- Parent owns full roadmap and merge. F1-F3 merged; PR268 F4/F6/F7 at frozen
-  e615fc82abf2da0cd8ea0563f30a2edfe98fec80. N1 active on separate branch
-  feat/n1-public-transcript-search, not pushed before PR268 merge. F5,N2-N8 pending.
-- PR268 diagnostic push starts ci-test40277731000; sole blocking waiter2108,
-  started06:05 UTC October26, expected terminal required CI; stop watch Ctrl+C.
-  Last observed unit121424188386 pytest and Windows121424188792 media live;
-  optional integration passed. Old watcher20498 stopped, no remote cancellation.
-- N1 named stash applied only on N1 branch and retained as recovery. Implemented
-  current published packaged transcript/search, exact timestamp Watch links,
-  accessible transcript, signed HttpOnly identity plus current-grant text access.
-  No new service/index and no legacy media/paywall overhaul.
-- Real app/provider workflow passed source30->package28s, corrected republish,
-  absent/forged/expired proof, magic-link grant, revocation and withdrawal.
-  Backend affected230pass24.64s; public UI9pass clean incl loaded A->timestamped B
-  and access-denied refresh clears text; TypeScript and affected ESLint passed.
-  Initial UI fixture event/stub errors corrected; no product failure concealed.
-  No-transcript provider/UI checks also passed (workflow1pass/UI3pass).
-  API/manual/help/PDF/DOCX generated; renderer62811 exited0. No local jobs live.
-  Parent material review completed. Next DCO N1 commit; wait PR268 merge before
-  N1 push/PR and applicable required CI. Existing media/paywall limitation remains.
+- Parent owns roadmap/merge. PR268 frozen e615fc82abf2da0cd8ea0563f30a2edfe98fec80;
+  N1 DCO8f98d6f3173a9f12b9815e20ac765096d2a14633 committed, reviewed, unpushed.
+  Active child feat/n2-guided-station-setup based N1. No downstream push until
+  predecessor merge. F1-F3 merged; F5,N3-N8 pending (N7 set preserved below).
+- Sole CI waiter2108 follows PR268 run40277731000, started06:05 UTC October26.
+  Windows121424188792 PASSED12m39s, including real native F4/F7 and full native;
+  optional integration passed34s. Unit121424188386 pytest remains live. No merge
+  until applicable required CI green. Cancel watcher only with Ctrl+C in2108.
+- N2 implemented truthful first-recording progress from existing staff asset API,
+  retry/refresh and direct Assets/Publish/resident links. Sources select current
+  named channel profiles; stale selection falls back to a current profile.
+  Accepted source/media says Saved, with no playback/publication claim.
+- N2 isolated existing first-run test passed8.14s: fresh durable storage/admin/
+  recovery ack, real sample generation, Package still-private, Portal-only approve,
+  resident master/rendition/TS and actual FFmpeg video+audio decode. No providers,
+  station interruption, downloads or installer builds. Setup UI43pass with one
+  new exact-label fixture mismatch; corrected source test2pass. TypeScript and
+  affected ESLint passed. No further local test expansion needed; parent material
+  review complete. Docs/API/source checks remain as applicable.
+- README/install guide state required components, preparation100GB/models22GB,
+  progress-log and interrupted/mismatched-file recovery, preserve offline kit and
+  upgrades. Optional-model feasibility: requires coordinated signed six-component
+  activation/runtime contract; deferred, no acquisition implementation.
+- N1 evidence retained: backend230pass24.64s, public UI9pass, added no-transcript
+  workflow1pass/UI3pass, TypeScript/ESLint/Ruff. Source30->package28s correction,
+  withdrawal and signed/current-grant text checks passed. Existing media/paywall
+  limitation remains. Named N1 stash retained as recovery, restored on N1 only.
+- Renderer39855 completed0; manual/help/PDF/DOCX generated. No local jobs live.
+- N2 ready for DCO commit, reviewed by parent; keep sole CI waiter, report terminal
+  PR268 rollup for parent merge, then push predecessors in order. N3 authorized
+  next on a serial child branch after N2 commit.
 
 ## Historical PR268 diagnostic preparation - October 26, 2026
 
