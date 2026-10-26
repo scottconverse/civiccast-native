@@ -2001,6 +2001,7 @@ def test_backup_provider_source_update_and_support_contracts_are_operator_safe(
     assert {field["id"] for field in provider_items["youtube"]["credential_fields"]} == {
         "client_id",
         "client_secret",
+        "refresh_token",
     }
 
     provider_credentials = client.post(
@@ -2010,6 +2011,7 @@ def test_backup_provider_source_update_and_support_contracts_are_operator_safe(
             "values": {
                 "client_id": "youtube-client-id-for-test",
                 "client_secret": "super-secret-youtube-client-secret",
+                "refresh_token": "youtube-refresh-token-for-test",
             },
         },
     )
@@ -2020,14 +2022,9 @@ def test_backup_provider_source_update_and_support_contracts_are_operator_safe(
     assert credentials_payload["credential_handle"] == "civiccast-provider://youtube"
     assert "super-secret-youtube-client-secret" not in serialized_credentials
 
-    # rc17 D4 round 2 (CC-RC17-001): Setup-stored field names alone no longer
-    # grant readiness -- they never reach the real adapter's own env-backed
-    # loader. Set the exact variables `YouTubeSettings.from_env()` reads so
-    # this test continues to exercise the proof/redaction contract below
-    # against a genuinely satisfied real adapter, not the fixed false positive.
-    monkeypatch.setenv("CIVICCAST_YOUTUBE_CLIENT_ID", "youtube-client-id-for-test")
-    monkeypatch.setenv("CIVICCAST_YOUTUBE_CLIENT_SECRET", "super-secret-youtube-client-secret")
-    monkeypatch.setenv("CIVICCAST_YOUTUBE_REFRESH_TOKEN", "youtube-refresh-token-for-test")
+    # The protected saved values feed the real adapter directly. Keep the
+    # readiness/proof/redaction contract without duplicate environment setup.
+    assert "youtube-refresh-token-for-test" not in serialized_credentials
 
     provider_after = client.get("/api/staff/installer/provider-readiness")
     assert provider_after.status_code == 200
@@ -2041,6 +2038,7 @@ def test_backup_provider_source_update_and_support_contracts_are_operator_safe(
     assert "Upload a controlled VOD asset" in youtube_after["next_step"]
     assert youtube_after["credential_handle"] == "civiccast-provider://youtube"
     assert "super-secret-youtube-client-secret" not in json.dumps(youtube_after, sort_keys=True)
+    assert "youtube-refresh-token-for-test" not in json.dumps(youtube_after, sort_keys=True)
 
     proof_with_secret_reference = client.post(
         "/api/staff/installer/provider-proof",

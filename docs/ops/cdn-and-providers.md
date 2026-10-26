@@ -181,12 +181,40 @@ CIVICCAST_PROVIDER_MAIL             = mock (default) | real
 CIVICCAST_PROVIDER_WEBHOOK          = mock (default) | real
 ```
 
-The deterministic mock/local clients remain the defaults; real adapters ship
-for Internet Archive, YouTube, mail (Beta sprint B5), subscriber webhooks
-(issue #111), and the local-NAS archive copy (issue #112). Selecting `real`
-without that provider's credentials fails fast with the exact variable names;
-selecting a name that isn't registered fails fast listing the registered
-options. A mock is never a silent fallback.
+Without saved Setup credentials, deterministic mock/local clients remain the defaults.
+Saving Internet Archive, YouTube, local NAS, or SMTP settings in Setup selects its
+real adapter automatically, unless an explicit `CIVICCAST_PROVIDER_*` selection
+overrides it. Saved fields take precedence over environment fallback; values stay
+in the existing protected credentials file and are never copied into process
+environment variables. Setup responses expose configuration state, not secrets.
+Incomplete saved settings fail validation; there is no silent mock fallback.
+YouTube setup requires the OAuth client ID, client secret **and refresh token**.
+Existing installations with only the first two must add the refresh token.
+The user manual's [YouTube setup procedure](../manual/src/22-configuration.md#configuration-youtube)
+covers Google Cloud/OAuth clients, the desktop consent helper, channel creation,
+phone verification, first-time live activation and saving all three credentials.
+SMTP setup accepts host, from-address, port, username/password and STARTTLS;
+webhook-only setups do not need SMTP fields. A valid configuration is not proof
+of delivery. YouTube simulations remain explicitly simulated and unverified.
+
+For YouTube Live, start the desired channel, then choose it in Publish and opt in
+to YouTube Live. The channel must have fresh local HLS output. CivicCast creates
+and binds an event with the recording title, current scheduled start, configured
+privacy (unlisted by default), and automatic start/stop. A separate owned FFmpeg
+process sends that channel's existing audio/video to the private RTMPS endpoint.
+The dashboard returns a viewer watch link and `starting`; `live` requires both
+an active YouTube stream and a live broadcast reported by YouTube. Destination
+status is polled every 30 seconds; dashboard refreshes read local status. Setup alone
+never establishes live delivery. Startup times out after two minutes without
+confirmation; process exits, destination errors and disconnects report `failed`
+without disabling local portal publication. Stop YouTube output stops that
+process and closes the event. App shutdown also closes active output; after an
+unexpected restart a formerly active row is marked interrupted rather than live.
+Use YouTube Studio to inspect any event whose remote cleanup could not complete.
+Stream keys stay out of publish proofs, API responses and captured FFmpeg logs.
+Simulator results alone do not demonstrate that a YouTube viewer received the
+selected channel. Setup acceptance and a later destination/viewer rehearsal can
+be recorded separately; neither should be represented as the other.
 
 | Provider (`real`) | Credential / config variables |
 |---|---|

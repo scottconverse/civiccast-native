@@ -249,10 +249,59 @@ _PROVIDER_CREDENTIAL_FIELDS: dict[str, tuple[ProviderCredentialField, ...]] = {
             help_text="Paste the Google OAuth client secret. CivicCast stores it locally and never prints it back.",
             secret=True,
         ),
+        ProviderCredentialField(
+            id="refresh_token",
+            label="OAuth refresh token",
+            secret=True,
+            help_text="Paste the refresh token authorized for the station's YouTube channel.",
+        ),
     ),
     "subscriber-notifications": (
         ProviderCredentialField(
+            id="smtp_host",
+            required=False,
+            help_text="Enter the station SMTP relay setting; optional fields use the displayed defaults.",
+            label="SMTP host",
+            secret=False,
+        ),
+        ProviderCredentialField(
+            id="smtp_from",
+            required=False,
+            help_text="Enter the station SMTP relay setting; optional fields use the displayed defaults.",
+            label="Sender email",
+            secret=False,
+        ),
+        ProviderCredentialField(
+            id="smtp_port",
+            help_text="Enter the station SMTP relay setting; optional fields use the displayed defaults.",
+            label="SMTP port (default 587)",
+            secret=False,
+            required=False,
+        ),
+        ProviderCredentialField(
+            id="smtp_username",
+            help_text="Enter the station SMTP relay setting; optional fields use the displayed defaults.",
+            label="SMTP username",
+            secret=False,
+            required=False,
+        ),
+        ProviderCredentialField(
+            id="smtp_password",
+            help_text="Enter the station SMTP relay setting; optional fields use the displayed defaults.",
+            label="SMTP password",
+            secret=True,
+            required=False,
+        ),
+        ProviderCredentialField(
+            id="smtp_starttls",
+            help_text="Enter the station SMTP relay setting; optional fields use the displayed defaults.",
+            label="STARTTLS (1=yes, 0=no)",
+            secret=False,
+            required=False,
+        ),
+        ProviderCredentialField(
             id="webhook_secret",
+            required=False,
             label="Webhook secret",
             help_text="Paste the shared secret for signed subscriber notification webhooks.",
             secret=True,
@@ -464,10 +513,10 @@ _PROVIDERS_WITH_REAL_SETTINGS_VALIDATION = frozenset(
 
 
 def _real_provider_settings_error(provider_id: str) -> str | None:
-    """Construct the real provider's own settings from the environment.
+    """Construct the real provider's own settings from saved setup or environment.
 
     Returns the real settings loader's own actionable ``ValueError`` message
-    when the environment doesn't satisfy it, or ``None`` when it validates.
+    when the saved settings/environment don't satisfy it, or ``None`` when it validates.
     This is the exact code path :mod:`civiccast.platform.providers` uses to
     build the real adapter -- never a hand-invented message, never a network
     call. ``local-nas`` additionally confirms the archive directory exists.
@@ -509,15 +558,10 @@ def _provider_credentials_are_valid(provider_id: str) -> bool:
     to be recordable off a mere ANY-stored-field or ANY-configured-env-var
     check that had no relationship to what the real adapter required).
 
-    rc17 D4 round 2 (CC-RC17-001): for a provider with a real settings
-    loader, that loader is the ONLY source of truth -- checked first, with
-    no earlier return. Setup-stored field *names* being present used to
-    short-circuit this to True before the loader ever ran, even though
-    Setup-stored values are written to a local credentials file, never to
-    `os.environ`, so they never actually feed the adapter the readiness
-    card claimed was satisfied. Stored fields count only when they show up
-    as real, adapter-consumed environment variables and the loader accepts
-    them.
+    The real settings loader consumes protected Setup values first, with
+    environment fallback. Field names alone never establish readiness: the
+    resulting adapter configuration must validate, and delivery still needs
+    separate destination proof. No values are copied into os.environ.
     """
 
     if provider_id in _PROVIDERS_WITH_REAL_SETTINGS_VALIDATION:

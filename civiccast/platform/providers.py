@@ -23,6 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from civiccast.platform.provider_settings import PROVIDER_SETUP_IDS, saved_fields
+
 PROVIDER_KIND_INTERNET_ARCHIVE = "internet_archive"
 PROVIDER_KIND_LOCAL_NAS = "local_nas"
 PROVIDER_KIND_YOUTUBE = "youtube"
@@ -63,6 +65,17 @@ def _env_key(kind: str) -> str:
     return f"CIVICCAST_PROVIDER_{kind.upper()}"
 
 
+def selected_provider_name(kind: str) -> str:
+    explicit = os.environ.get(_env_key(kind), "").strip().lower()
+    if explicit:
+        return explicit
+    provider_id = PROVIDER_SETUP_IDS.get(kind)
+    fields = saved_fields(provider_id) if provider_id else {}
+    if kind == PROVIDER_KIND_MAIL:
+        fields = {key: value for key, value in fields.items() if key.startswith("smtp_") and value}
+    return _REAL_NAME if fields else _DEFAULT_NAME
+
+
 class ProviderRegistry:
     """Maps (kind, name) to a client factory; name selected per-kind from env."""
 
@@ -84,7 +97,7 @@ class ProviderRegistry:
                 f"Unknown provider kind {kind!r}; registered kinds: "
                 f"{', '.join(sorted(self._factories))}."
             )
-        name = os.environ.get(_env_key(kind), _DEFAULT_NAME).strip().lower() or _DEFAULT_NAME
+        name = selected_provider_name(kind)
         factory = factories.get(name)
         if factory is None:
             raise ProviderConfigurationError(
@@ -96,7 +109,7 @@ class ProviderRegistry:
         return factory()
 
 
-def default_registry() -> ProviderRegistry:
+def default_registry(*, youtube_output: Any = None) -> ProviderRegistry:
     """Registry with CivicCast's shipped (mock/local) providers registered."""
 
     from civiccast.archive.models import MockInternetArchiveClient, MockLocalNasArchiveClient
@@ -113,7 +126,7 @@ def default_registry() -> ProviderRegistry:
     # validates its credentials from the environment at resolution time, so a
     # station that never selects "real" never needs them.
     registry.register(PROVIDER_KIND_INTERNET_ARCHIVE, _REAL_NAME, _real_internet_archive)
-    registry.register(PROVIDER_KIND_YOUTUBE, _REAL_NAME, _real_youtube)
+    registry.register(PROVIDER_KIND_YOUTUBE, _REAL_NAME, lambda: _real_youtube(youtube_output))
     registry.register(PROVIDER_KIND_MAIL, _REAL_NAME, _real_mail)
     registry.register(PROVIDER_KIND_WEBHOOK, _REAL_NAME, _real_webhook)
     registry.register(PROVIDER_KIND_LOCAL_NAS, _REAL_NAME, _real_local_nas)
@@ -152,7 +165,7 @@ def describe_provider(kind: str, registry: ProviderRegistry | None = None) -> Pr
     """
 
     registry = registry or default_registry()
-    name = os.environ.get(_env_key(kind), _DEFAULT_NAME).strip().lower() or _DEFAULT_NAME
+    name = selected_provider_name(kind)
     try:
         registry.resolve(kind)
     except Exception as error:
@@ -184,10 +197,10 @@ def _real_internet_archive() -> Any:
     return InternetArchiveClient(InternetArchiveSettings.from_env())
 
 
-def _real_youtube() -> Any:
+def _real_youtube(live_output: Any = None) -> Any:
     from civiccast.syndicate.youtube import YouTubeClient, YouTubeSettings
 
-    return YouTubeClient(YouTubeSettings.from_env())
+    return YouTubeClient(YouTubeSettings.from_env(), live_output=live_output)
 
 
 def _real_mail() -> Any:

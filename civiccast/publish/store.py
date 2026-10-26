@@ -13,7 +13,7 @@ from typing import Protocol
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from civiccast.publish.models import PublishRunRecord
+from civiccast.publish.models import PublishRunRecord, PublishSurfaceStatus
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 
@@ -30,6 +30,12 @@ class PublishStore(Protocol):
     def get_run(self, asset_id: str) -> PublishRunRecord | None: ...
     def get_runs(self, asset_ids: Sequence[str]) -> dict[str, PublishRunRecord]: ...
     def upsert_run(self, record: PublishRunRecord) -> PublishRunRecord: ...
+    def replace_surfaces(
+        self,
+        asset_id: str,
+        expected: list[PublishSurfaceStatus],
+        updated: list[PublishSurfaceStatus],
+    ) -> bool: ...
 
 
 class InMemoryPublishStore:
@@ -47,6 +53,18 @@ class InMemoryPublishStore:
     def upsert_run(self, record: PublishRunRecord) -> PublishRunRecord:
         self._runs[record.asset_id] = record
         return record
+
+    def replace_surfaces(
+        self,
+        asset_id: str,
+        expected: list[PublishSurfaceStatus],
+        updated: list[PublishSurfaceStatus],
+    ) -> bool:
+        run = self._runs.get(asset_id)
+        if run is None or run.surfaces != expected:
+            return False
+        self._runs[asset_id] = run.model_copy(update={"surfaces": updated})
+        return True
 
 
 class PostgresPublishStore:
@@ -171,6 +189,36 @@ class PostgresPublishStore:
                 )
             session.commit()
             return record
+
+    def replace_surfaces(
+        self,
+        asset_id: str,
+        expected: list[PublishSurfaceStatus],
+        updated: list[PublishSurfaceStatus],
+    ) -> bool:
+        """Keep asynchronous output polling from overwriting another surface's result."""
+        with self._session_factory() as session:
+            table = self._table_prefix(session)
+            result = session.execute(
+                text(
+                    f"UPDATE {table}publish_runs SET surfaces_json = :updated, "  # noqa: S608 - fixed dialect prefix.  # nosec B608
+                    "updated_at = :at WHERE asset_id = :asset_id AND surfaces_json = :expected "
+                    "RETURNING asset_id"
+                ),
+                {
+                    "asset_id": asset_id,
+                    "expected": json.dumps(
+                        [s.model_dump(mode="json") for s in expected], sort_keys=True
+                    ),
+                    "updated": json.dumps(
+                        [s.model_dump(mode="json") for s in updated], sort_keys=True
+                    ),
+                    "at": self._datetime_param(session, datetime.now(UTC)),
+                },
+            )
+            changed = result.first() is not None
+            session.commit()
+            return changed
 
     @staticmethod
     def _table_prefix(session: Session) -> str:

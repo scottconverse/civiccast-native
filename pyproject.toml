@@ -59,7 +59,7 @@ dependencies = [
   # (civiccast/agenda/pdf_import.py, product-hole fix). Pure-Python, ships
   # inline types (py.typed), no mypy override needed. Raised 2026-10-07 to
   # clear PDF parsing/text-extraction resource exhaustion in uploaded agendas.
-  "pypdf>=6.21.1",
+  "pypdf>=6.21.2",
   "keyring==25.7.0",
   # Floor raised 2026-08-06 for PYSEC-2026-3552 / CVE-2026-69247 (Bleichenbacher
   # oracle in PKCS#7 EnvelopedData decryption, fixed in 50.0.0). We don't use
@@ -100,6 +100,9 @@ s3-cdn = [
   "urllib3>=2.8.0",
 ]
 captions-runtime = [
+  # Runtime security floors, scoped here so hash-locked native installs stay isolated.
+  "filelock>=4.2.1",
+  "setuptools>=84.1.0",
   "faster-whisper>=1.2.1,<2",
   "ctranslate2==4.8.1",
   "cactus-needle==3.1.0",
@@ -178,6 +181,7 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["civiccast"]
+
 exclude = [
   "/civiccast/apps/**",
   "**/*.cover",
@@ -216,6 +220,10 @@ artifacts = [
 
 [dependency-groups]
 dev = [
+  # Security floors for the pre-commit/virtualenv toolchain.
+  "filelock>=4.2.1",
+  "setuptools>=84.1.0",
+  "virtualenv>=21.14.10",
   "ruff>=0.6.0",
   "mypy>=1.11.0",
   "pytest>=8.3.0",

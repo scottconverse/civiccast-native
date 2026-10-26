@@ -10,6 +10,7 @@ is an obviously fake test value.
 
 from __future__ import annotations
 
+import json
 import smtplib
 import socket
 import threading
@@ -114,7 +115,7 @@ def _youtube_handler(seen: list[httpx.Request]):  # type: ignore[no-untyped-def]
                     "id": "stream-1",
                     "cdn": {
                         "ingestionInfo": {
-                            "ingestionAddress": "rtmps://a.rtmps.youtube.com/live2",
+                            "rtmpsIngestionAddress": "rtmps://a.rtmps.youtube.com/live2",
                             "streamName": "test-stream-name",
                         }
                     },
@@ -132,21 +133,74 @@ def _youtube_handler(seen: list[httpx.Request]):  # type: ignore[no-untyped-def]
 
 
 class TestYouTubeClient:
-    def test_publish_live_creates_binds_and_returns_the_ingest_url(self) -> None:
+    def test_configure_live_creates_and_binds_without_claiming_delivery(self) -> None:
         seen: list[httpx.Request] = []
         client = YouTubeClient(_YT_SETTINGS, transport=httpx.MockTransport(_youtube_handler(seen)))
 
-        proof = client.publish_live(asset_id="meeting-42")
+        broadcast, stream, ingest = client.configure_live(title="Council meeting")
 
-        assert proof.target_type == "youtube_live"
-        assert proof.url == "rtmps://a.rtmps.youtube.com/live2/test-stream-name"
+        assert (broadcast, stream) == ("bcast-1", "stream-1")
+        assert ingest == "rtmps://a.rtmps.youtube.com/live2/test-stream-name"
+        metadata = json.loads(seen[1].content)
+        assert metadata["snippet"]["title"] == "Council meeting"
+        assert metadata["contentDetails"] == {"enableAutoStart": True, "enableAutoStop": True}
+        assert datetime.fromisoformat(metadata["snippet"]["scheduledStartTime"]) > datetime(
+            2026, 1, 1, tzinfo=UTC
+        )
         # OAuth refresh happened and the API calls were bearer-authorized.
         assert "oauth2.googleapis.com" in str(seen[0].url)
         assert all(
             request.headers.get("Authorization") == "Bearer test-token" for request in seen[1:]
         )
         # The credential_key is a pointer, never the credential.
-        assert "test-refresh-token" not in proof.credential_key
+        assert "test-refresh-token" not in ingest
+
+    def test_invalid_stream_metadata_cleans_up_created_resources(self) -> None:
+        seen: list[httpx.Request] = []
+        base = _youtube_handler(seen)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "DELETE":
+                seen.append(request)
+                return httpx.Response(204)
+            response = base(request)
+            if "/liveStreams" in str(request.url):
+                body = response.json()
+                body["cdn"]["ingestionInfo"].pop("streamName")
+                return httpx.Response(200, json=body)
+            return response
+
+        client = YouTubeClient(_YT_SETTINGS, transport=httpx.MockTransport(handler))
+        with pytest.raises(RuntimeError, match="event setup failed"):
+            client.configure_live(title="Meeting")
+        assert [
+            (r.url.path.rsplit("/", 1)[-1], r.url.params["id"])
+            for r in seen
+            if r.method == "DELETE"
+        ] == [("liveBroadcasts", "bcast-1"), ("liveStreams", "stream-1")]
+
+    @pytest.mark.parametrize("state", ["ready", "live", "complete"])
+    def test_finish_live_closes_event_and_releases_stream(self, state: str) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if "oauth2" in str(request.url):
+                return httpx.Response(200, json={"access_token": "test-token"})
+            if request.method == "GET":
+                return httpx.Response(200, json={"items": [{"status": {"lifeCycleStatus": state}}]})
+            return httpx.Response(200, json={})
+
+        client = YouTubeClient(_YT_SETTINGS, transport=httpx.MockTransport(handler))
+        client.finish_live("bcast-1", "stream-1")
+        actions = [(r.method, r.url.path.rsplit("/", 1)[-1]) for r in seen[2:]]
+        expected = [("DELETE", "liveStreams")]
+        if state == "ready":
+            expected.insert(0, ("DELETE", "liveBroadcasts"))
+        elif state == "live":
+            expected.insert(0, ("POST", "transition"))
+            assert seen[2].url.params["broadcastStatus"] == "complete"
+        assert actions == expected
 
     def test_upload_vod_streams_media_through_the_resumable_session(self, tmp_path: Path) -> None:
         media = tmp_path / "meeting-42.mp4"
@@ -470,7 +524,7 @@ class TestCredentialRedaction:
             transport=httpx.MockTransport(lambda _: httpx.Response(401, text="invalid_grant")),
         )
         with pytest.raises(httpx.HTTPStatusError) as excinfo:
-            client.publish_live(asset_id="meeting-42")
+            client.configure_live(title="Council meeting")
         rendered = f"{excinfo.value!s} {excinfo.value!r}"
         assert "yt-secret-sentinel" not in rendered
         assert "yt-refresh-sentinel" not in rendered

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -679,18 +679,37 @@ def approve_publish(
         elif surface.id == "youtube-live":
             try:
                 youtube = _client(PROVIDER_KIND_YOUTUBE)
-                youtube_live_proof = youtube.publish_live(asset_id=asset.asset_id)
+                youtube_live_proof = youtube.publish_live(
+                    asset_id=asset.asset_id,
+                    title=asset.title,
+                    channel_id=request.youtube_channel_id,
+                )
             except Exception as exc:
                 updated = _provider_failure(surface, at=at, exc=exc)
             else:
                 updated = surface.model_copy(
                     update={
-                        "state": "succeeded",
+                        "state": "running"
+                        if youtube_live_proof.delivery_state == "starting"
+                        else (
+                            "succeeded"
+                            if youtube_live_proof.delivery_state == "live"
+                            else (
+                                "failed"
+                                if youtube_live_proof.delivery_state == "failed"
+                                else "unverified"
+                            )
+                        ),
                         "approval": "approved",
-                        "health": "ok",
+                        "health": "ok"
+                        if youtube_live_proof.delivery_state == "live"
+                        else "warning",
                         "url": youtube_live_proof.url,
-                        "completed_at": at,
-                        "message": "YouTube Live RTMPS fanout proof succeeded.",
+                        "completed_at": at if youtube_live_proof.delivery_state == "live" else None,
+                        "simulated": youtube_live_proof.delivery_state == "simulated",
+                        "delivery_state": youtube_live_proof.delivery_state,
+                        "channel_id": youtube_live_proof.channel_id,
+                        "message": f"YouTube Live: {youtube_live_proof.delivery_state}. Only destination-confirmed live output counts as delivery.",
                         "next_step": "Treat this as reach evidence, not the system of record.",
                     }
                 )
@@ -708,12 +727,17 @@ def approve_publish(
             else:
                 updated = surface.model_copy(
                     update={
-                        "state": "succeeded",
+                        "state": "unverified"
+                        if youtube_vod_proof.delivery_state == "simulated"
+                        else "succeeded",
                         "approval": "approved",
                         "health": "ok",
+                        "simulated": youtube_vod_proof.delivery_state == "simulated",
                         "url": youtube_vod_proof.url,
                         "completed_at": at,
-                        "message": "YouTube VOD URL is available as a reach surface.",
+                        "message": "Simulated YouTube VOD; nothing was uploaded."
+                        if youtube_vod_proof.delivery_state == "simulated"
+                        else "YouTube VOD upload confirmed.",
                         "next_step": "Treat this as reach evidence, not the system of record.",
                     }
                 )
@@ -978,6 +1002,8 @@ def retry_publish_surface(
             operator_id=request.operator_id,
             operator_display_name=request.operator_display_name,
             approved_surface_ids=[surface_id],
+            youtube_channel_id=request.youtube_channel_id
+            or next((s.channel_id for s in previous_surfaces if s.id == surface_id), None),
         ),
         store=InMemoryPublishStoreProxy(previous),
         registry=registry,
@@ -1048,6 +1074,18 @@ class InMemoryPublishStoreProxy:
     def upsert_run(self, record: PublishRunRecord) -> PublishRunRecord:
         self._record = record
         return record
+
+    def replace_surfaces(
+        self,
+        asset_id: str,
+        expected: list[PublishSurfaceStatus],
+        updated: list[PublishSurfaceStatus],
+    ) -> bool:
+        run = self._record or self.get_run(asset_id)
+        if run is None or run.asset_id != asset_id or run.surfaces != expected:
+            return False
+        self._record = run.model_copy(update={"surfaces": updated})
+        return True
 
 
 #: Reach/audience states that mean "this did not fully reach its audience".
@@ -1122,6 +1160,24 @@ def _dashboard_state(
     return "publishing", "Publishing"
 
 
+def _normalized_youtube_surface(surface: PublishSurfaceStatus) -> PublishSurfaceStatus:
+    if surface.id not in {"youtube-live", "youtube-vod"} or surface.delivery_state is not None:
+        return surface
+    # Historical success rows predate destination confirmation. Ingest URLs are
+    # private encoder configuration, never links to display to operators.
+    update: dict[str, Any] = {}
+    if surface.url and surface.url.lower().startswith(("rtmp://", "rtmps://")):
+        update["url"] = None
+    if surface.state == "succeeded":
+        update.update(
+            state="unverified",
+            health="warning",
+            message="Historical YouTube result has no destination delivery confirmation.",
+            next_step="Inspect YouTube Studio and retry if needed.",
+        )
+    return surface.model_copy(update=update) if update else surface
+
+
 def build_publish_asset_status(
     asset: StaffAssetRow,
     record: PublishRunRecord | None = None,
@@ -1132,7 +1188,7 @@ def build_publish_asset_status(
         # an operator removes an asset from the portal.
         _blocked_portal_surface(asset)
         if surface.id == "portal" and surface.state == "succeeded" and asset.published_at is None
-        else _normalized_notification_surface(surface)
+        else _normalized_notification_surface(_normalized_youtube_surface(surface))
         for surface in (record.surfaces if record is not None else build_initial_surfaces(asset))
     ]
     dashboard_state, dashboard_label = _dashboard_state(
@@ -1173,6 +1229,8 @@ def build_publish_asset_status(
 def build_publish_dashboard(
     assets: list[StaffAssetRow],
     store: PublishStore | None = None,
+    *,
+    transform_run: Callable[[PublishRunRecord], PublishRunRecord] | None = None,
 ) -> PublishDashboardResponse:
     # One batched fetch, not one query per asset. This list is unbounded (it is
     # every meeting the station has ever recorded), so a per-row lookup made the
@@ -1181,6 +1239,8 @@ def build_publish_dashboard(
     # every meeting the station has ever recorded), so a per-row lookup made the
     # dashboard's cost grow forever -- GauntletGate PE-1.
     runs = {} if store is None else store.get_runs([asset.asset_id for asset in assets])
+    if transform_run is not None:
+        runs = {asset_id: transform_run(run) for asset_id, run in runs.items()}
     rows = [build_publish_asset_status(asset, runs.get(asset.asset_id)) for asset in assets]
     summary = PublishDashboardSummary(
         total_assets=len(rows),

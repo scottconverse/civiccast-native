@@ -24,12 +24,13 @@ def test_publish_soak_runs_every_three_tier_surface() -> None:
         "reach": ["youtube-live", "youtube-vod"],
         "audience": ["podcast", "subscriber-notifications"],
     }
-    # This simulated run has no local recording for Podcast and no confirmed
+    # YouTube mocks establish no external delivery. This run also has no
+    # local recording for Podcast and no confirmed
     # subscriber recipients. Neither optional surface can claim delivery.
     expected_succeeded_surface_ids = [
         surface_id
         for surface_id in EXPECTED_SURFACE_IDS
-        if surface_id not in {"podcast", "subscriber-notifications"}
+        if surface_id not in {"podcast", "subscriber-notifications", "youtube-live", "youtube-vod"}
     ]
     for iteration in result.iterations:
         assert iteration.ready is True

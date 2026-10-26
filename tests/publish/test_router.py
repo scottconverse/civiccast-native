@@ -269,7 +269,9 @@ def test_approve_reports_optional_podcast_failure_without_hiding_verified_archiv
     assert surfaces["local-nas-rsync"]["simulated"] is True
     assert surfaces["local-nas-rsync"]["path"].endswith("council-2026-05-08.mp4")
     assert surfaces["local-nas-zfs"]["path"] == "zfs://civiccast/archive@council-2026-05-08"
-    assert surfaces["youtube-live"]["url"].startswith("rtmps://youtube.example/live/")
+    assert surfaces["youtube-live"]["url"].startswith("https://youtube.example/watch?v=")
+    assert surfaces["youtube-live"]["simulated"] is True
+    assert surfaces["youtube-live"]["state"] == "unverified"
     assert surfaces["youtube-vod"]["url"].startswith("https://youtube.example/watch")
     assert surfaces["podcast"]["state"] == "failed"
     assert surfaces["podcast"]["url"] is None
@@ -597,3 +599,37 @@ def test_unpublished_recording_returns_to_draft_without_erasing_delivery_history
     assert republished.status_code == 200
     assert republished.json()["canonical_public"] is True
     assert republished.json()["published_at"] is not None
+
+
+def test_restart_marks_unowned_live_youtube_interrupted_only(client, publish_store):
+    asset_id = "council-2026-05-08"
+    response = client.post(
+        f"/api/staff/publish/assets/{asset_id}/approve",
+        json={
+            "operator_id": "staff-1",
+            "operator_display_name": "Operator",
+            "approved_surface_ids": ["portal"],
+        },
+    )
+    assert response.status_code == 200
+    run = publish_store.get_run(asset_id)
+    surfaces = [
+        s.model_copy(
+            update={
+                "delivery_state": "live",
+                "state": "succeeded",
+                "url": "https://www.youtube.com/watch?v=old",
+            }
+        )
+        if s.id == "youtube-live"
+        else s
+        for s in run.surfaces
+    ]
+    publish_store.upsert_run(run.model_copy(update={"surfaces": surfaces}))
+    result = client.get(f"/api/staff/publish/assets/{asset_id}")
+    assert result.status_code == 200
+    rows = {row["id"]: row for row in result.json()["surfaces"]}
+    assert rows["youtube-live"]["delivery_state"] == "failed"
+    assert "interrupted" in rows["youtube-live"]["message"]
+    assert rows["portal"]["state"] == "succeeded"
+    assert client.post(f"/api/staff/publish/assets/{asset_id}/youtube/stop").status_code == 404

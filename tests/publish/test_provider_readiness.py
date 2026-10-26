@@ -264,7 +264,7 @@ def test_runtime_call_failure_after_valid_config_fails_only_that_surface() -> No
     surfaces = {s.id: s for s in record.surfaces}
     assert surfaces["internet-archive"].state == "failed"
     assert "connection reset" in (surfaces["internet-archive"].next_step or "")
-    assert surfaces["youtube-vod"].state == "succeeded", (
+    assert surfaces["youtube-vod"].state == "unverified", (
         "a runtime failure on one surface must not take down an unrelated one"
     )
 

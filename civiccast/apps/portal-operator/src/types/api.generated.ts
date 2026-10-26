@@ -3474,6 +3474,7 @@ export interface PublicSubmissionStatus {
 export interface PublishApprovalRequest {
   operator_id: string
   operator_display_name: string
+  youtube_channel_id?: string | null
   approved_surface_ids?: Array<string> | null
   overrides?: Array<PublishSurfaceOverride>
 }
@@ -3551,6 +3552,7 @@ export interface PublishPreflightResponse {
 export interface PublishRetryRequest {
   operator_id: string
   operator_display_name: string
+  youtube_channel_id?: string | null
 }
 
 export interface PublishSurfaceOverride {
@@ -3559,6 +3561,8 @@ export interface PublishSurfaceOverride {
 }
 
 export interface PublishSurfaceStatus {
+  delivery_state?: string | null
+  channel_id?: string | null
   id: string
   label: string
   kind: 'canonical' | 'archive' | 'reach' | 'record' | 'audience'

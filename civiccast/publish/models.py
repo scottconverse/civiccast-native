@@ -68,6 +68,9 @@ class PublishApprovalRequest(BaseModel):
 
     operator_id: Annotated[str, Field(min_length=1, max_length=160)]
     operator_display_name: Annotated[str, Field(min_length=1, max_length=200)]
+    youtube_channel_id: Annotated[str | None, Field(default=None, min_length=1, max_length=160)] = (
+        None
+    )
     # Omitted (``None``) means the canonical Portal surface only. It used to
     # mean EVERY surface -- Internet Archive, both NAS archives, YouTube
     # Live/VOD, cable package -- so an API approval with the field left out
@@ -117,6 +120,9 @@ class PublishRetryRequest(BaseModel):
 
     operator_id: Annotated[str, Field(min_length=1, max_length=160)]
     operator_display_name: Annotated[str, Field(min_length=1, max_length=200)]
+    youtube_channel_id: Annotated[str | None, Field(default=None, min_length=1, max_length=160)] = (
+        None
+    )
 
 
 class PublishPreflightCheck(BaseModel):
@@ -202,6 +208,8 @@ class PublishSurfaceStatus(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    delivery_state: str | None = None
+    channel_id: str | None = None
     id: Annotated[str, Field(min_length=1, max_length=80)]
     label: Annotated[str, Field(min_length=1, max_length=120)]
     kind: PublishSurfaceKindValue

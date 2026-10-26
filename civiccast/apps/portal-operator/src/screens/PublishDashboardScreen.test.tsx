@@ -24,6 +24,8 @@ vi.mock('../api/client', () => ({
   getPublishPreflight: vi.fn(),
   getStaffIdentity: vi.fn(),
   listPublishAssets: vi.fn(),
+  listChannels: vi.fn(),
+  stopYouTubeOutput: vi.fn(),
   retryPublishSurface: vi.fn(),
 }))
 
@@ -33,6 +35,8 @@ import {
   getPublishPreflight,
   getStaffIdentity,
   listPublishAssets,
+  listChannels,
+  stopYouTubeOutput,
   retryPublishSurface,
 } from '../api/client'
 import { PublishDashboardScreen } from './PublishDashboardScreen'
@@ -952,7 +956,7 @@ describe('PublishDashboardScreen default surface selection (F-23)', () => {
     const { findByRole, findByText } = renderScreen()
 
     fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
-    expect(await findByText(/1 selected surface publishes for real: Portal\./)).toBeTruthy()
+    expect(await findByText(/1 selected surface will be attempted: Portal\./)).toBeTruthy()
     expect(
       await findByText(/becomes publicly visible to residents immediately/),
     ).toBeTruthy()
@@ -985,7 +989,7 @@ describe('PublishDashboardScreen default surface selection (F-23)', () => {
 
     fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
     expect(
-      await findByText(/2 selected surfaces publish for real: Portal, Internet Archive\./),
+      await findByText(/2 selected surfaces will be attempted: Portal, Internet Archive\./),
     ).toBeTruthy()
     fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
 
@@ -995,5 +999,38 @@ describe('PublishDashboardScreen default surface selection (F-23)', () => {
         expect.objectContaining({ approved_surface_ids: ['portal', 'internet-archive'] }),
       ),
     )
+  })
+})
+
+
+describe('YouTube selected-channel output', () => {
+  it('sends the chosen source channel with approval', async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue(sevenSurfaceDashboard())
+    vi.mocked(listChannels).mockResolvedValue([{ channel_id: 'government', slug: 'Government' }] as never)
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findAllByLabelText, findByLabelText, findByRole } = renderScreen()
+    const boxes = await findAllByLabelText(/Approve this surface/i)
+    fireEvent.click(boxes.find((box) => box.closest('[data-surface-id]')?.getAttribute('data-surface-id') === 'youtube-live')!)
+    const approve = await findByRole('button', { name: 'Approve and Publish selected' })
+    expect((approve as HTMLButtonElement).disabled).toBe(true)
+    const select = await findByLabelText('Channel sent to YouTube Live')
+    await findByRole('option', { name: 'Government' })
+    fireEvent.change(select, { target: { value: 'government' } })
+    fireEvent.click(approve)
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+    await waitFor(() => expect(approvePublishAsset).toHaveBeenCalledWith('sample-asset', expect.objectContaining({ youtube_channel_id: 'government', approved_surface_ids: ['portal', 'youtube-live'] })))
+  })
+
+  it('stops only the YouTube output from a running surface', async () => {
+    const response = sevenSurfaceDashboard()
+    const surface = response.assets[0].surfaces.find((item) => item.id === 'youtube-live')!
+    surface.state = 'running'
+    surface.delivery_state = 'starting'
+    surface.channel_id = 'government'
+    vi.mocked(listPublishAssets).mockResolvedValue(response)
+    vi.mocked(stopYouTubeOutput).mockResolvedValue({ delivery_state: 'stopped' } as never)
+    const { findByRole } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: 'Stop YouTube output' }))
+    await waitFor(() => expect(stopYouTubeOutput).toHaveBeenCalledWith('sample-asset'))
   })
 })

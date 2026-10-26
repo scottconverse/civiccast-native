@@ -368,13 +368,18 @@ def _require_asset_store(postgres_store: Any) -> Any:
     responses={503: {"description": _DB_NOT_READY_DESCRIPTION}},
 )
 def list_publish_assets(
+    request: Request,
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: PublishStore = Depends(get_publish_store),
 ) -> PublishDashboardResponse:
     """Return per-asset three-tier publish status for the operator dashboard."""
     asset_store = _require_asset_store(postgres_store)
     assets = cast(list[StaffAssetRow], asset_store.list_all())
-    return build_publish_dashboard(assets, publish_store)
+    return build_publish_dashboard(
+        assets,
+        publish_store,
+        transform_run=lambda run: _mark_interrupted_youtube(request, publish_store, run),
+    )
 
 
 @staff_router.get(
@@ -388,6 +393,7 @@ def list_publish_assets(
 )
 def get_publish_asset(
     asset_id: str,
+    request: Request,
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: PublishStore = Depends(get_publish_store),
 ) -> PublishAssetStatus:
@@ -399,10 +405,57 @@ def get_publish_asset(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Asset not found: {asset_id}",
         )
-    return build_publish_asset_status(
-        cast(StaffAssetRow, asset),
-        publish_store.get_run(asset_id),
-    )
+    run = publish_store.get_run(asset_id)
+    if run is not None:
+        run = _mark_interrupted_youtube(request, publish_store, run)
+    return build_publish_asset_status(cast(StaffAssetRow, asset), run)
+
+
+def _mark_interrupted_youtube(
+    request: Request, store: PublishStore, run: PublishRunRecord
+) -> PublishRunRecord:
+    output = getattr(request.app.state, "youtube_live_output", None)
+    if output is not None and output.knows(run.asset_id):
+        return run
+    changed = False
+    surfaces = []
+    for surface in run.surfaces:
+        if surface.id == "youtube-live" and surface.delivery_state in {
+            "configured",
+            "starting",
+            "live",
+        }:
+            surface = surface.model_copy(
+                update={
+                    "state": "failed",
+                    "health": "error",
+                    "delivery_state": "failed",
+                    "message": "YouTube output was interrupted. Check YouTube Studio before retrying.",
+                    "next_step": "Confirm the old event has ended, then retry YouTube Live.",
+                }
+            )
+            changed = True
+        surfaces.append(surface)
+    if changed and store.replace_surfaces(run.asset_id, run.surfaces, surfaces):
+        return run.model_copy(update={"surfaces": surfaces})
+    return run
+
+
+@staff_router.post(
+    "/assets/{asset_id}/youtube/stop",
+    dependencies=[Depends(require_any_role("publish_operator"))],
+)
+def stop_youtube_output(asset_id: str, request: Request) -> dict[str, str]:
+    output = getattr(request.app.state, "youtube_live_output", None)
+    try:
+        proof = output.stop(asset_id) if output is not None else None
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="No owned YouTube output exists for this recording."
+        ) from exc
+    if proof is None:
+        raise HTTPException(status_code=503, detail="YouTube output is unavailable.")
+    return {"state": proof.delivery_state}
 
 
 @staff_router.get(

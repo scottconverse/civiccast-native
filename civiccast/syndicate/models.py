@@ -17,15 +17,22 @@ class YouTubePublishProof(BaseModel):
     target_type: Literal["youtube_live", "youtube_vod"]
     url: Annotated[str, Field(min_length=1)]
     credential_key: Annotated[str, Field(min_length=1)]
+    delivery_state: Literal["simulated", "configured", "starting", "live", "failed", "stopped"] = (
+        "simulated"
+    )
+    confirmed_live: bool = False
+    channel_id: str | None = None
 
 
 class MockYouTubeClient:
     """Deterministic YouTube reach client for CI and local proof."""
 
-    def publish_live(self, *, asset_id: str) -> YouTubePublishProof:
+    def publish_live(
+        self, *, asset_id: str, title: str | None = None, channel_id: str | None = None
+    ) -> YouTubePublishProof:
         return YouTubePublishProof(
             target_type="youtube_live",
-            url=f"rtmps://youtube.example/live/{asset_id}",
+            url=f"https://youtube.example/watch?v={asset_id}",
             credential_key="os-credential://civiccast/youtube/live/mock",
         )
 

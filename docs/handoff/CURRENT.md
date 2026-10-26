@@ -1,6 +1,171 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Current follow-up — targeted Brotli correction
+## Active F1–F3 delivery checkpoint — October 25, 2026
+- OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
+  subsequently explicitly approved creating its YouTube channel. Created Google
+  project `keen-apogee-512802-i5` (CivicCast YouTube), configured an external/testing
+  OAuth app and desktop client, enabled YouTube Data API, and added only this account
+  as a test user. Scott completed consent. Desktop PKCE + validated-state loopback
+  callback succeeded; OAuth refresh and channel API both return HTTP 200.
+  Credentials are local in an ACL-protected private directory, outside the repository;
+  no secret values are recorded here or in chat. The existing Setup save function
+  wrote isolated credentials; the real adapter consumed them without OAuth env vars.
+  Created channel CivicCast, handle @CivicCast1, ID `UCIsN1mKqtpMNpvoh8GPSXkQ`.
+  Scott completed phone verification; the correct-account verification screen
+  confirms it. Refreshed Studio for this exact channel/account. Its live-access
+  request is now active: requested October 25, 2026 at 9:01 PM America/Denver;
+  observed countdown "Only 23:59:51 until you can stream". Expected availability
+  October 26 around 9:01 PM Denver time, subject to Google's actual activation.
+  OAuth refresh, channels.list and now liveBroadcasts.list return HTTP 200; the
+  list response does not establish permission to start while Studio's countdown
+  remains active. No event or sender created. Scott explicitly accepted F2 setup
+  and implementation: real streaming is NOT required for sign-off and this delay
+  is NOT a blocker. A later destination/viewer/stop rehearsal remains a follow-up,
+  without touching the endurance run.
+  No active watcher, callback, test sender or automatic continuation is running.
+  No billing, station changes, installer, release, or merge. OAuth callback helper
+  session 92399 finished successfully; earlier blocked attempt 29891 was cancelled.
+
+- Delivered: review-ready PR267 https://github.com/scottconverse/civiccast-native/pull/267
+  on branch `fix/f1-f3-caption-publish-dependencies`, head
+  `29a1d373b52bf25cd6fdfd3e893308ade2c4a799`. PR is OPEN, non-draft, merge state CLEAN.
+  All new commits have DCO sign-off. **Do not merge, tag, release, rebuild an installer,
+  or update/restart the endurance station.** Scott revised F2 acceptance to accept
+  the completed setup without a real streaming check. F1/F2/F3 are accepted; finish
+  the requested setup-manual documentation and its required CI/PR delivery.
+- Worktree: `C:/Dev/civiccast-f1-f3`; original checkout and its pre-existing handoff
+  remain preserved. Baseline main `933dd657`; plan commit `7edc5500`. One executor;
+  current-agent routing skill applied; no independent reviewer was commissioned.
+- F1 VERIFIED: original review missed fixes already in main (`5c3540ec`, `5ca75521`).
+  Retained package-timeline clipping/rebasing and approved-source repackaging gates.
+  Added real FFmpeg fractional-trim + bilingual-caption regression: removed head/tail
+  excluded, retained cues align to 0–0.167 and0.467–0.567 seconds, originals unchanged.
+  Existing trim/repackage/review regressions passed; no caption engine was replaced.
+- F2 ACCEPTED BY OWNER; LIVE REHEARSAL IS FOLLOW-UP: protected Setup values now feed existing
+  IA/YouTube/NAS/SMTP adapters with environment fallback and explicit provider override.
+  Added required YouTube refresh-token and optional SMTP fields; webhook-only setup
+  remains compatible. No secrets copied into environment or returned in Setup responses.
+  Publish selects a channel with fresh HLS and sends its existing audio/video through
+  a separate owned FFmpeg RTMPS process to a configured/bound YouTube event. Current
+  start/title/privacy/auto-start/stop metadata, viewer links, destination-confirmed
+  lifecycle, two-minute startup timeout, process/destination failure, stop/shutdown,
+  restart interruption, partial setup cleanup and private ingest-link redaction are
+  covered. Thirty-second destination polling limits quota use; UI reads local status.
+  Conditional surface writes preserve concurrent publishing; dashboard reads stay
+  batched. Simulated and historical unconfirmed YouTube results remain unverified.
+  Provider/output failures leave local portal publication available.
+- F2 proof and acceptance: real Google OAuth refresh, channels.list and
+  liveBroadcasts.list return HTTP 200; the authorized channel is @CivicCast1.
+  Existing Setup save securely feeds the real adapter without OAuth environment
+  variables. Scott completed phone verification. Studio's activation countdown is
+  recorded above. Contract tests and the real local FFmpeg/RTMP receiver establish
+  local starting/live/stopped lifecycle and transport. No actual YouTube stream or
+  viewer playback is claimed. Scott explicitly removed that check as a sign-off
+  requirement and said to count F2 as a win; the earlier blocked audit is superseded.
+- Documentation follow-up: expanded the setup chapter with account/channel
+  selection, project/API setup, OAuth app/client/test-user creation, desktop PKCE
+  helper, protected three-field storage, testing-token expiry, phone verification,
+  Studio account selection/activation and later rehearsal/stop. Corrected related
+  obsolete provider/publishing claims. Regenerated the assembled, in-product and
+  downloadable manual artifacts. Helper is an IT source-checkout tool, not a new
+  installer feature; focused callback/security checks pass (4 cases).
+- F3 VERIFIED: targeted package updates only; uv changes exactly four resolved versions.
+  Native app lock changes only pypdf/filelock/setuptools, runtime lock only setuptools;
+  existing single LGPL PyAV wheel retained and app lock hash updated. Security floors
+  are scoped to captions-runtime/dev groups so global uv settings cannot contaminate
+  hash-required native staging. All four current-head CI security scans pass; both npm
+  audits are zero. Existing allowlisted NLTK PYSEC-2026-3740 remains unchanged/outside
+  selected remediation. No suppression, threshold or workflow gate was changed.
+
+| Dependency | Corrected advisory identities | New pin and exposure |
+|---|---|---|
+| pypdf | CVE-2026-115572 / GHSA-6c7f-9265-g8fw; CVE-2026-115585 / GHSA-jr96-gvgh-j3r4; CVE-2026-115580 / GHSA-gmh7-3g9r-mjh5 | 6.21.2; runtime uploaded/vendor PDF extraction, addressed first |
+| filelock | CVE-2026-112940 / GHSA-v4x8-3wr5-3wq8; CVE-2026-112913 / GHSA-9vhv-jxww-xfm5; CVE-2026-112907 / GHSA-567q-5qvw-pf92 | 4.2.4; caption model-cache dependency and dev virtualenv; local/shared-lock risks, largely POSIX |
+| setuptools | GHSA-xmj3-9gf7-h52w | 84.2.1; bundled app/runtime installer tooling; vulnerable wheel-install path, outside normal playout |
+| virtualenv | CVE-2026-113713 / GHSA-4f8h-vr72-p32c | 21.14.13; dev/pre-commit tooling |
+| Vitest / mocker | GHSA-qxg6-89mg-rqv8; GHSA-xp26-3454-mjgp | 4.1.12 family; development test server/tooling |
+| Zod | GHSA-mrhx-c7xc-m3w5 | 4.6.7; frontend development ESLint tooling |
+| Undici | GHSA-4qv8-2p9j-2685; GHSA-f72v-6w45-q472; GHSA-xjj6-f33q-929c | 7.30.1; public portal dev jsdom dependency |
+
+- Final CI, current head: **23 passed,3 installer-related checks skipped,0 failed,
+  0 pending**. ci-test40233336560 completed SUCCESS, including claims verifier.
+  Unit cross-platform:11759 passed,105 skipped,5 deselected; Linux native subset:
+  2082 passed,242 deselected; additional required captured case:1 passed, no skips.
+  Windows:2321 native passed (floor2271), plus35 installer/filesystem and56 media
+  cases, no skips. Security40233336615, lint/types40233336623, docs40233336572,
+  Windows payload reproducibility40233336536 and a11y40233336538 all pass. Existing
+  informational randomized run40233336611 also passes; it was not promoted to a gate.
+  CI URL: https://github.com/scottconverse/civiccast-native/actions/runs/40233336560
+- Focused evidence retained:190 provider/publish checks;39 sample/lifecycle checks;
+  156 publish checks;21 legacy/query-count regressions;27 restart/setup checks;
+  12 shutdown/lifecycle checks;71 native lock/closure checks;31 operator publish UI
+  and69 public UI tests; operator build and both frontend linters; pinned Ruff/mypy
+  (725 source files); generated OpenAPI/lock currency; no claims blob/marker drift.
+  A stale public test assertion was reproduced on both old/new Vitest then corrected
+  to existing wording. CI exposed two old auth/installer fixtures omitting the new
+  refresh token; both were reproduced and corrected, retaining role/redaction checks.
+  Required unit work finished before that test-only push. No broad manual rerun,
+  unrelated repair, mutation testing or new gate was added.
+- Installed environments retain current packages. Applying F3 later needs a separate
+  owner-authorized installed app/runtime update from corrected locks, including
+  caption-environment filelock where present. No installed package was changed here.
+- All owned checks, software receiver/sender, browser helpers and CLI watchers are
+  terminal. Last watcher79306 / wait179 returned0. No automatic continuation is
+  promised. Scratch receipts remain under original chat `work/f1-f3-*`.
+- Next: deliver this manual/helper follow-up on the same PR and complete its
+  required checks. F1/F2/F3 acceptance no longer waits for YouTube activation or
+  real streaming. Reuse prior passing evidence for unchanged implementation.
+  A later live rehearsal is follow-up, not a blocker. No F4-F7/N-series work,
+  merge, release, installer, LFS transfer, spending or installed-station changes.
+
+
+## Historical restart checkpoint — October 25, 2026
+
+Scott requested preparation for context compaction and a Codex app update/restart.
+This checkpoint is a local documentation change only; it has not been committed
+or pushed, and must not automatically trigger another PR or CI cycle.
+
+- Checkout: `C:\Dev\civiccast-native`, branch `fix/brotli-agenda-advisory`,
+  HEAD `0fb01b0bc51bfa648dac2fc419890fd3d18d15f2`.
+- Fetched `origin/main`: `933dd6571ab57ee5891f76c1148b79cb9c77bbc0`.
+  PR265 (checker/handoff) and PR266 (targeted Brotli) are merged. Both authorized
+  delivery tasks are complete; there is no pending merge, build or release.
+- **Leave the endurance station running.** Scott explicitly said it is a test
+  station to see how long it runs without issues. Do not update its installed
+  packages, restart its processes/services, reinstall, reboot, stress-test, or
+  interrupt it. At this checkpoint `CivicCastSupervisor` is Running, PID12084.
+- No owned CI watcher/helper remains running. Wait sessions78744,94426,19473
+  are terminal; the final watcher confirmed the PR266 merge. A process-name/
+  command-line probe found no visible Python checker/Brotli wait helper.
+- No installer rebuild, new release, LFS transfer, or installed-station package
+  update was performed. The Codex app update/restart itself was not initiated.
+- Latest requested review is complete: specs, records, current source, open
+  issues/PRs, and five related repositories were inspected read-only. Scott has
+  **not authorized implementing the resulting backlog**. Resume by reading the
+  report and the next owner instruction, not by starting repairs automatically.
+- Full review and source references:
+  `C:\Users\scott\Documents\Codex\2026-10-24\us\outputs\civiccast-unfinished-work-review-2026-10-25.md`.
+  Brotli investigation/merge receipts:
+  `C:\Users\scott\Documents\Codex\2026-10-24\us\outputs\civiccast-brotli-investigation.md`.
+- Main findings: other dependency advisories; trimmed-recording caption timeline;
+  fixed/nonexistent CG preview segments; installed native launcher unsigned
+  (read-only signature check); intermittent replacement-program test failure;
+  native-app audience beacons missing; incomplete field workflow evidence; five
+  unreconciled open PRs; stale current-status records. Distinguish confirmed
+  defects, static source gaps, missing proof and owner-deferred work.
+- TownLight integration is owner-deferred to2.0. Historical WSL/macOS/audit-role
+  obligations do not revive retired work or superseded workflow gates. No new
+  release requirements or automatic audit/delegation were authorized.
+- Scott requested the `codex-model-routing-1024` skill for this session:
+  `C:\Users\scott\.codex\skills\codex-model-routing-1024\SKILL.md`.
+  Keep the suitable current agent; no automatic delegation/model change. Keep
+  Windows helpers hidden and gh inside invisible ConPTY (`tty=true`,
+  `login=false`), preserve disabled telemetry, no host reboot, no LFS spending.
+
+The following entries retain their original preparation/history scope. This
+restart checkpoint and the confirmed merge receipts supersede pending wording.
+
+## Completed follow-up — targeted Brotli correction
 
 The checker integration below is complete: PR265 merged into main at
 `f9d380bebb15489762424f4f1293f4e6f050211a` after current-head unit tests,
@@ -21,10 +186,20 @@ absent locally); isolated Brotli 1.2.1/HTTPX 0.28.1 compressed-response decoding
 and a focused `pip-audit --no-deps --disable-pip` scan of `brotli==1.2.1` reporting
 no known vulnerabilities. No waiver or unrelated dependency upgrade is included.
 
-Next action at preparation: open the targeted PR, await applicable CI including
-the current producer/claims proof, then merge the exact candidate. PR checks may
-build an app payload for reproducibility; no installer or release workflow is
-dispatched. Existing signed artifacts and the running station are untouched.
+PR266 merged at `2026-10-25T06:32:40Z` as
+`933dd6571ab57ee5891f76c1148b79cb9c77bbc0`. Applicable CI passed, including
+unit tests, claims verification, optional agenda integration, virtual headend,
+publish soak, veraPDF and app-payload reproducibility. The Windows media job
+initially failed on an unchanged GStreamer replacement-leg stream error, then
+passed on one job-only retry without code/assertion changes. GitHub itself
+returned HTTP403 for retry while the workflow was still running; that waiting
+restriction was not a repository-configured rule. Test workflow40165319415,
+payload reproducibility40165319416. Security40165319459 installed Brotli1.2.1
+and no longer reported its advisory; independent Python/npm findings remain
+failed and are not waived. Informational randomized run40165319528 was
+cancelled, not passed. No independent agent review was required or performed.
+No installer or release workflow was dispatched. Existing signed artifacts and
+the running station are untouched.
 Installed optional-extra environments need a separate package update and process
 restart; merging this source fix does not patch running environments. Earlier
 Brotli investigation and other security findings below remain historical evidence.

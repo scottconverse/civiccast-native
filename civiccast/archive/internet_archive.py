@@ -22,6 +22,7 @@ from pathlib import Path
 import httpx
 
 from civiccast.archive.models import ArchiveProof
+from civiccast.platform.provider_settings import setting
 
 _S3_ENDPOINT = "https://s3.us.archive.org"
 _DETAILS_BASE = "https://archive.org/details"
@@ -40,8 +41,12 @@ class InternetArchiveSettings:
 
     @classmethod
     def from_env(cls) -> InternetArchiveSettings:
-        access_key = os.environ.get("CIVICCAST_IA_ACCESS_KEY", "").strip()
-        secret_key = os.environ.get("CIVICCAST_IA_SECRET_KEY", "").strip()
+        access_key = setting(
+            "internet-archive", "access_key", "CIVICCAST_IA_ACCESS_KEY", ""
+        ).strip()
+        secret_key = setting(
+            "internet-archive", "secret_key", "CIVICCAST_IA_SECRET_KEY", ""
+        ).strip()
         missing = [
             name
             for name, value in (

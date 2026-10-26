@@ -316,8 +316,10 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: urllib3 2.8.0 (fixed botocore transport dependency). The generated app-lock
 #: diff preserves all other package versions and hashes; resolver attribution
 #: comments were refreshed, and the PyAV provenance override remains intact.
+#: Re-pinned 2026-10-25 for targeted pypdf/filelock/setuptools advisories.
+#: The existing single LGPL PyAV wheel and all other application pins are retained.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "0b039c91b0df464a591abe8b446a9c6f0818ce7a90af7aac996f554bc9124eb6"
+    "06d7779dc872efc55b88bc67323f836179e38f350a946bf7b6d89838ec201aa6"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).

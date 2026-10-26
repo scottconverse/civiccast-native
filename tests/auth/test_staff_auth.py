@@ -190,14 +190,22 @@ def test_role_restricted_provider_mutation_rejects_records_clerk(
         "/api/staff/installer/provider-credentials",
         json={
             "provider_id": "youtube",
-            "values": {"client_id": "client-id", "client_secret": "client-secret"},
+            "values": {
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "refresh_token": "refresh-for-test",
+            },
         },
     )
     allowed = setup_client.post(
         "/api/staff/installer/provider-credentials",
         json={
             "provider_id": "youtube",
-            "values": {"client_id": "client-id", "client_secret": "client-secret"},
+            "values": {
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "refresh_token": "refresh-for-test",
+            },
         },
     )
 
