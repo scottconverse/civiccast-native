@@ -20203,7 +20203,8 @@
                     "pending",
                     "awaiting_review",
                     "complete",
-                    "failed"
+                    "failed",
+                    "cancelled"
                   ],
                   "type": "string"
                 },
@@ -20265,14 +20266,141 @@
         ]
       }
     },
+    "/api/staff/captions/offline-jobs/batch": {
+      "post": {
+        "tags": [
+          "staff",
+          "captions"
+        ],
+        "summary": "Queue up to ten selected recordings for caption review",
+        "operationId": "queue_caption_batch_api_staff_captions_offline_jobs_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptionBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CaptionBatchResult"
+                  },
+                  "type": "array",
+                  "title": "Response Queue Caption Batch Api Staff Captions Offline Jobs Batch Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/captions/offline-jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "staff",
+          "captions"
+        ],
+        "summary": "Cancel remaining caption work at the next audio chunk boundary",
+        "operationId": "cancel_offline_caption_job_api_staff_captions_offline_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfflineCaptionJobRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/captions/offline-jobs/{job_id}/retry": {
       "post": {
         "tags": [
           "staff",
           "captions"
         ],
-        "summary": "Manually retry a failed offline caption job (K3)",
-        "description": "Reset a failed job to pending without re-approving publish.\n\nThe existing recovery path is re-approving publish for the asset, which\nre-transcribes from scratch and requires the ``publish_operator`` role\n(see docs/ops/background-workers.md). This gives an operator who works\nthe caption queue -- and can see *why* a job died -- a direct way to\ngive it a fresh attempt budget, gated on ``records_clerk`` like the rest\nof this router's mutations.\n\nAudit finding (MAJOR): this used to call ``store.save(...)`` directly,\nwithout checking ``active_for_asset`` first -- the same one-active-job-\nper-asset invariant ``enqueue_offline_caption_job`` guards. A FAILED job\nis not \"active\" (see ``OFFLINE_CAPTION_JOB_ACTIVE_STATES``), but the\nasset can still have picked up a *different* active job in the\nmeantime (a republish, or a second operator's retry) between the failed\njob dying and this retry landing. Reopening the failed job unconditionally\nwould put two active jobs on one asset: on the durable store that trips\nthe DB-level partial-unique index\n(``ix_offline_caption_jobs_one_active_per_asset``, 0075) as an unhandled\nerror; on the in-memory store it has no guard at all and silently\ndoubles up. Defense in depth, two layers:\n\n1. Pre-check ``active_for_asset`` here and refuse with 409 when a\n   *different* job already holds the asset's active slot.\n2. ``PostgresOfflineCaptionJobStore.save`` (persistence.py) now also\n   catches the DB-level ``IntegrityError`` from the same index and\n   raises ``OfflineCaptionJobConflictError``, closing the TOCTOU window\n   between the check above and the write below; caught here too so a\n   race never surfaces as a raw 500.",
+        "summary": "Retry failed or resume cancelled offline caption work",
+        "description": "Retry failed or resume cancelled work without re-approving publication.\n\nThe existing recovery path is re-approving publish for the asset, which\nre-transcribes from scratch and requires the ``publish_operator`` role\n(see docs/ops/background-workers.md). This gives an operator who works\nthe caption queue -- and can see *why* a job died -- a direct way to\ngive it a fresh attempt budget, gated on ``records_clerk`` like the rest\nof this router's mutations.\n\nAudit finding (MAJOR): this used to call ``store.save(...)`` directly,\nwithout checking ``active_for_asset`` first -- the same one-active-job-\nper-asset invariant ``enqueue_offline_caption_job`` guards. A FAILED job\nis not \"active\" (see ``OFFLINE_CAPTION_JOB_ACTIVE_STATES``), but the\nasset can still have picked up a *different* active job in the\nmeantime (a republish, or a second operator's retry) between the failed\njob dying and this retry landing. Reopening the failed job unconditionally\nwould put two active jobs on one asset: on the durable store that trips\nthe DB-level partial-unique index\n(``ix_offline_caption_jobs_one_active_per_asset``, 0075) as an unhandled\nerror; on the in-memory store it has no guard at all and silently\ndoubles up. Defense in depth, two layers:\n\n1. Pre-check ``active_for_asset`` here and refuse with 409 when a\n   *different* job already holds the asset's active slot.\n2. ``PostgresOfflineCaptionJobStore.save`` (persistence.py) now also\n   catches the DB-level ``IntegrityError`` from the same index and\n   raises ``OfflineCaptionJobConflictError``, closing the TOCTOU window\n   between the check above and the write below; caught here too so a\n   race never surfaces as a raw 500.",
         "operationId": "retry_offline_caption_job_api_staff_captions_offline_jobs__job_id__retry_post",
         "parameters": [
           {
@@ -20300,7 +20428,7 @@
             "description": "Offline caption job not found"
           },
           "409": {
-            "description": "Only a failed job can be manually retried"
+            "description": "Only failed or cancelled jobs can be retried or resumed"
           },
           "503": {
             "description": "Offline caption job store is not configured"
@@ -38115,6 +38243,58 @@
         "title": "CanonicalProfile",
         "description": "Stable encode profile used before sources reach the persistent encoder."
       },
+      "CaptionBatchRequest": {
+        "properties": {
+          "asset_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Asset Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_ids"
+        ],
+        "title": "CaptionBatchRequest"
+      },
+      "CaptionBatchResult": {
+        "properties": {
+          "asset_id": {
+            "type": "string",
+            "title": "Asset Id"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OfflineCaptionJobRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asset_id"
+        ],
+        "title": "CaptionBatchResult"
+      },
       "CaptionCue": {
         "properties": {
           "cue_id": {
@@ -38196,6 +38376,30 @@
             "minLength": 1,
             "title": "Text"
           },
+          "start_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Seconds"
+          },
+          "end_seconds": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Seconds"
+          },
           "reviewer_note": {
             "anyOf": [
               {
@@ -38276,6 +38480,28 @@
           },
           "cue": {
             "$ref": "#/components/schemas/CaptionCue"
+          },
+          "translation_source_start_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Source Start Seconds"
+          },
+          "translation_source_end_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Source End Seconds"
           },
           "language": {
             "type": "string",
@@ -43793,6 +44019,36 @@
         ],
         "title": "CustomFieldValueInput",
         "description": "One value in a PUT-asset-values request (field_id + canonical string)."
+      },
+      "CustomVocabulary": {
+        "properties": {
+          "terms": {
+            "items": {
+              "type": "string",
+              "maxLength": 120,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Terms"
+          },
+          "initial_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial Prompt"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CustomVocabulary",
+        "description": "Station-specific captioning hints passed to the runtime adapter."
       },
       "DeckLinkEngineRef": {
         "properties": {
@@ -51560,7 +51816,8 @@
               "pending",
               "awaiting_review",
               "complete",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "title": "State"
           },
@@ -56511,6 +56768,9 @@
       },
       "RecordedCaptionSettings": {
         "properties": {
+          "vocabulary": {
+            "$ref": "#/components/schemas/CustomVocabulary"
+          },
           "enabled": {
             "type": "boolean",
             "title": "Enabled",

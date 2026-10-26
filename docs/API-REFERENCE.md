@@ -1796,18 +1796,36 @@ Add external caption appliance output to the review queue.
 List offline caption jobs (K3) for operator visibility.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
-- Parameters: `asset_id` (query, optional): `string | null`; `state` (query, optional): `'pending' | 'awaiting_review' | 'complete' | 'failed' | null`
+- Parameters: `asset_id` (query, optional): `string | null`; `state` (query, optional): `'pending' | 'awaiting_review' | 'complete' | 'failed' | 'cancelled' | null`
 - Request body: none
 - Responses: 200 `Array<OfflineCaptionJobRecord>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Offline caption job store is not configured
 
-### `POST /api/staff/captions/offline-jobs/{job_id}/retry`
+### `POST /api/staff/captions/offline-jobs/batch`
 
-Manually retry a failed offline caption job (K3).
+Queue up to ten selected recordings for caption review.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `CaptionBatchRequest`
+- Responses: 200 `Array<CaptionBatchResult>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/captions/offline-jobs/{job_id}/cancel`
+
+Cancel remaining caption work at the next audio chunk boundary.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `job_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `OfflineCaptionJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Offline caption job not found; 409 Only a failed job can be manually retried; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Offline caption job store is not configured
+- Responses: 200 `OfflineCaptionJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/captions/offline-jobs/{job_id}/retry`
+
+Retry failed or resume cancelled offline caption work.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `job_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `OfflineCaptionJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Offline caption job not found; 409 Only failed or cancelled jobs can be retried or resumed; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Offline caption job store is not configured
 
 ### `GET /api/staff/captions/review-items`
 
@@ -5602,6 +5620,16 @@ Read CivicCast local federation metadata.
 - `video_codec` (optional): `string`
 - `width` (optional): `number`
 
+### `CaptionBatchRequest`
+
+- `asset_ids` (required): `Array<string>`
+
+### `CaptionBatchResult`
+
+- `asset_id` (required): `string`
+- `error` (optional): `string | null`
+- `job` (optional): `OfflineCaptionJobRecord | null`
+
 ### `CaptionCue`
 
 - `confidence` (required): `number`
@@ -5618,7 +5646,9 @@ Read CivicCast local federation metadata.
 
 ### `CaptionReviewEdit`
 
+- `end_seconds` (optional): `number | null`
 - `reviewer_note` (optional): `string | null`
+- `start_seconds` (optional): `number | null`
 - `text` (required): `string`
 
 ### `CaptionReviewItemRequest`
@@ -5642,6 +5672,8 @@ Read CivicCast local federation metadata.
 - `reviewed_text` (optional): `string | null`
 - `reviewer_note` (optional): `string | null`
 - `status` (required): `'pending' | 'approved' | 'edited' | 'rejected'`
+- `translation_source_end_seconds` (optional): `number | null`
+- `translation_source_start_seconds` (optional): `number | null`
 - `updated_at` (required): `string`
 
 ### `CaptionStatusResponse`
@@ -6462,6 +6494,11 @@ Read CivicCast local federation metadata.
 
 - `field_id` (required): `string`
 - `value` (required): `string`
+
+### `CustomVocabulary`
+
+- `initial_prompt` (optional): `string | null`
+- `terms` (optional): `Array<string>`
 
 ### `DeckLinkEngineRef`
 
@@ -7706,7 +7743,7 @@ rule (S13 §5.1).
 - `package_dir` (required): `string`
 - `published_cue_count` (optional): `number`
 - `source_path` (required): `string`
-- `state` (required): `'pending' | 'awaiting_review' | 'complete' | 'failed'`
+- `state` (required): `'pending' | 'awaiting_review' | 'complete' | 'failed' | 'cancelled'`
 - `updated_at` (required): `string`
 
 ### `OutboxRecord`
@@ -8478,6 +8515,7 @@ rule (S13 §5.1).
 - `completion_requirement` (optional): `'all_selected_languages' | 'english_reviewed'`
 - `enabled` (optional): `boolean`
 - `languages` (optional): `Array<'en' | 'es'>`
+- `vocabulary` (optional): `CustomVocabulary`
 
 ### `RecordingInputPreset`
 

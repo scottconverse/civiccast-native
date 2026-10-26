@@ -1,3 +1,4 @@
+import { CaptionBacklogPanel } from './CaptionBacklogPanel'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -260,11 +261,13 @@ export function ReviewCard({
     item: CaptionReviewItemResponse,
     lowConfidenceAcknowledged: boolean,
   ) => void
-  onEdit: (item: CaptionReviewItemResponse, text: string) => void
+  onEdit: (item: CaptionReviewItemResponse, text: string, start: number, end: number) => void
   onReject: (item: CaptionReviewItemResponse) => void
   canReview: boolean
 }) {
   const [draft, setDraft] = useState(item.reviewed_text ?? item.original_text)
+  const [start, setStart] = useState(item.cue.start_seconds)
+  const [end, setEnd] = useState(item.cue.end_seconds)
   const [lowConfidenceAcknowledged, setLowConfidenceAcknowledged] =
     useState(false)
   const evidenceKey = `${item.review_item_id}:${item.updated_at}:${item.audio_evidence_available}`
@@ -273,7 +276,8 @@ export function ReviewCard({
   )
   const audioEvidencePlayable =
     item.audio_evidence_available && playableEvidenceKey === evidenceKey
-  const dirty = draft.trim() !== (item.reviewed_text ?? item.original_text)
+  const dirty = draft.trim() !== (item.reviewed_text ?? item.original_text) || start !== item.cue.start_seconds || end !== item.cue.end_seconds
+  const validTiming = Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start
   return (
     <article
       className="grid gap-3 rounded-md p-4"
@@ -326,6 +330,12 @@ export function ReviewCard({
             aria-label={`Reviewed text for ${item.review_item_id}`}
           />
         </label>
+      </div>
+
+      <div className="flex gap-3">
+        <label>Start (seconds)<input aria-label={`Start seconds for ${item.review_item_id}`} type="number" min="0" step="0.01" value={start} disabled={!canReview || busy} onChange={(event) => setStart(event.target.valueAsNumber)} /></label>
+        <label>End (seconds)<input aria-label={`End seconds for ${item.review_item_id}`} type="number" min="0" step="0.01" value={end} disabled={!canReview || busy} onChange={(event) => setEnd(event.target.valueAsNumber)} /></label>
+        {!validTiming && <span role="alert">End must be after a non-negative start.</span>}
       </div>
 
       {item.reviewer_note && (
@@ -391,8 +401,8 @@ export function ReviewCard({
         </button>
         <button
           type="button"
-          onClick={() => onEdit(item, draft)}
-          disabled={!canReview || busy || !dirty || draft.trim().length === 0}
+          onClick={() => onEdit(item, draft, start, end)}
+          disabled={!canReview || busy || !dirty || !validTiming || draft.trim().length === 0}
           className="rounded-md px-3 py-1.5 text-xs font-semibold"
           style={{
             background: canReview && dirty ? 'var(--cc-brand)' : 'var(--cc-surface-3)',
@@ -468,9 +478,9 @@ export function ReviewQueueScreen() {
     onSuccess: invalidate,
   })
   const editMutation = useMutation({
-    mutationFn: ({ item, text }: { item: CaptionReviewItemResponse; text: string }) =>
+    mutationFn: ({ item, text, start, end }: { item: CaptionReviewItemResponse; text: string; start: number; end: number }) =>
       editCaptionReviewItem(item.review_item_id, {
-        text,
+        text, start_seconds: start, end_seconds: end,
         reviewer_note: 'Edited in operator console.',
       }),
     onSuccess: invalidate,
@@ -511,6 +521,7 @@ export function ReviewQueueScreen() {
 
   return (
     <div className="flex flex-col gap-4">
+      <CaptionBacklogPanel canReview={canReview} />
       <header className="px-6 pb-2 pt-6">
         <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
           Caption review
@@ -611,8 +622,7 @@ export function ReviewQueueScreen() {
         {spanishTabIsEmpty && (
           <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
             Spanish cues appear here after English captions are approved and translated. The
-            recording is public immediately; captions attach after review — both languages
-            together, never English alone.
+            caption tracks attach only after review, following the station’s recorded-caption completion setting.
           </span>
         )}
       </div>
@@ -669,7 +679,7 @@ export function ReviewQueueScreen() {
                   },
                 )
               }
-              onEdit={(target, text) => editMutation.mutate({ item: target, text })}
+              onEdit={(target, text, start, end) => editMutation.mutate({ item: target, text, start, end })}
               onReject={(target) => rejectMutation.mutate(target)}
               canReview={canReview}
             />

@@ -112,6 +112,7 @@ def translated_cue_id(
     target_language: str,
     *,
     source_text: str | None = None,
+    source_window: tuple[float, float] | None = None,
 ) -> str:
     """Return the cue id a translation of ``source_cue_id`` carries.
 
@@ -139,6 +140,9 @@ def translated_cue_id(
     re-queued, and the row carrying the superseded wording is no longer
     among the ids the publisher will attach.
 
+    Recorded review may also bind ``source_window`` so a timing correction
+    requires review of the replacement translation interval. Live callers omit it.
+
     Omitting ``source_text`` yields the plain ``<cue>:<lang>`` form, which is
     what the live translated-track path (:func:`translate_caption_cues`)
     uses -- live cues are rendered straight to a track and never matched
@@ -148,6 +152,10 @@ def translated_cue_id(
     base = f"{source_cue_id}:{target_language}"
     if source_text is None:
         return base
+    if source_window is not None:
+        source_text = (
+            f"{source_text}\0{float(source_window[0]).hex()}:{float(source_window[1]).hex()}"
+        )
     digest = sha256(source_text.encode("utf-8")).hexdigest()[:8]
     return f"{base}:{digest}"
 

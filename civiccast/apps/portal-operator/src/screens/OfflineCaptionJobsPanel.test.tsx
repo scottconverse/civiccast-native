@@ -127,7 +127,7 @@ describe('OfflineCaptionJobsView (presentational)', () => {
       <OfflineCaptionJobsView jobs={[]} canRetry onRetry={vi.fn()} />,
     )
     expect(
-      getByText("Approving this recording's portal surface on the Publish dashboard is what starts it"),
+      getByText(/Publishing queues captions when enabled.*Caption selected/),
     ).toBeTruthy()
   })
 
@@ -140,7 +140,7 @@ describe('OfflineCaptionJobsView (presentational)', () => {
         onRetry={vi.fn()}
       />,
     )
-    expect(getByText('Transcribing… (2m)', { selector: 'span' })).toBeTruthy()
+    expect(getByText('Queued or transcribing… (2m)', { selector: 'span' })).toBeTruthy()
     expect(
       getByText(/several minutes for a full meeting recording, not seconds/),
     ).toBeTruthy()

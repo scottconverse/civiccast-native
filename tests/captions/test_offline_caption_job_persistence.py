@@ -405,3 +405,12 @@ class TestDurability:
         assert due[0].next_attempt_at is not None
         assert due[0].next_attempt_at.tzinfo is not None
         assert due[0].created_at.tzinfo is not None
+
+
+def test_cancelled_job_survives_stale_worker_completion(store: OfflineCaptionJobStore) -> None:
+    pending = store.enqueue(_record())
+    cancelled = store.save(pending.model_copy(update={"state": "cancelled"}))
+    stale = pending.model_copy(update={"state": "complete", "published_cue_count": 4})
+    assert store.save(stale, preserve_cancelled=True) == cancelled
+    assert store.get(pending.job_id) == cancelled
+    assert store.due(now=_NOW) == []

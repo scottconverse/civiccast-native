@@ -507,3 +507,34 @@ class TestRealPostgres:
                 assert item.reviewed_text == "edited on pg"
             finally:
                 eng.dispose()
+
+
+def test_timing_edit_persists_and_retained_audio_covers_new_interval(
+    store: PostgresCaptionReviewStore, tmp_path: Path
+) -> None:
+    _create(store, audio_evidence=_covering_evidence(tmp_path / "evidence.wav"))
+    changed = store.edit(
+        "review-1", CaptionReviewEdit(text="Corrected name", start_seconds=11.5, end_seconds=14.75)
+    )
+    assert changed.cue.start_seconds == 11.5
+    assert store.get("review-1").cue.end_seconds == 14.75
+    with pytest.raises(CaptionReviewAudioEvidenceRequiredError):
+        store.edit(
+            "review-1", CaptionReviewEdit(text="Outside audio", start_seconds=1, end_seconds=20)
+        )
+    assert store.get("review-1").cue.start_seconds == 11.5
+
+
+def test_legacy_spanish_target_timing_keeps_source_provenance_after_store_restart(store: PostgresCaptionReviewStore) -> None:
+    from civiccast.translate.service import translated_cue_id
+    _create(store)
+    english = store.get("review-1")
+    legacy = english.cue.model_copy(update={"cue_id": translated_cue_id(english.cue.cue_id, "es", source_text=english.cue.text)})
+    store.create(CaptionReviewItemCreate(review_item_id="legacy-es", asset_id=english.asset_id, language="es", cue=legacy))
+    store.edit("legacy-es", CaptionReviewEdit(text="Texto revisado", start_seconds=12.25, end_seconds=14.25))
+    restarted = PostgresCaptionReviewStore(store._session_factory)
+    restored = restarted.get("legacy-es")
+    assert restored.translation_source_start_seconds == 12
+    assert restored.translation_source_end_seconds == 14.5
+    assert restored.cue.start_seconds == 12.25
+    assert restored.cue.end_seconds == 14.25

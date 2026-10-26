@@ -1,11 +1,12 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N2 / predecessor delivery - October 26, 2026
+## Active N3 / predecessor delivery - October 26, 2026
 
 - Parent owns roadmap/merge. PR268 frozen e615fc82abf2da0cd8ea0563f30a2edfe98fec80;
   N1 DCO8f98d6f3173a9f12b9815e20ac765096d2a14633 committed, reviewed, unpushed.
-  Active child feat/n2-guided-station-setup based N1. No downstream push until
-  predecessor merge. F1-F3 merged; F5,N3-N8 pending (N7 set preserved below).
+  N2 DCO59b7e77a7071d6be7df051921e8e5625d106772a committed/reviewed, unpushed.
+  Active child feat/n3-caption-workbench based N2. Reviewed N1-N3 separate DCO
+  commits will share one follow-on PR after PR268 merge; do not push before it. F1-F3 merged; F5,N4-N8 pending (N7 set preserved below).
 - Sole CI waiter2108 follows PR268 run40277731000, started06:05 UTC October26.
   Windows121424188792 PASSED12m39s, including real native F4/F7 and full native;
   optional integration passed34s. Unit121424188386 pytest remains live. No merge
@@ -29,10 +30,28 @@
   workflow1pass/UI3pass, TypeScript/ESLint/Ruff. Source30->package28s correction,
   withdrawal and signed/current-grant text checks passed. Existing media/paywall
   limitation remains. Named N1 stash retained as recovery, restored on N1 only.
-- Renderer39855 completed0; manual/help/PDF/DOCX generated. No local jobs live.
-- N2 ready for DCO commit, reviewed by parent; keep sole CI waiter, report terminal
-  PR268 rollup for parent merge, then push predecessors in order. N3 authorized
-  next on a serial child branch after N2 commit.
+- N3 implemented selected batch max10 through existing serial queue, truthful
+  state/cue/error progress, cancel/resume with retained review decisions, source
+  cue timing edits and stored local vocabulary reaching supported Whisper paths.
+  Migration0095 persists cancelled; conditional worker saves preserve cancellation.
+  Checks immediately before attach/CDN stop work cancelled during translation;
+  already-started publication may finish, documented in UI/help.
+- N3 focused backend146pass/1external-Postgres-skip19.79s; actual settings-file ->
+  worker hints + migration upgrade/downgrade/index + faster-whisper prompt3pass
+  4.59s. UI50 cases covered:49pass with stale intro assertion, corrected file
+  15pass; TypeScript/affected ESLint/Ruff/diff checks passed. Test fixture fixes
+  for new settings vocabulary response/mutation shape and unordered same-tick jobs
+  accounted for; no product failure hidden.
+- Timing-only English change invalidates derived Spanish interval approval.
+  Shared recorded identity includes interval; legacy target-only edits capture
+  immutable English source-window association (nullable0095 review columns), so
+  intended target timing and unchanged approvals survive. Existing offline suite
+  70pass4.98s; correction20pass/1external-PG-skip7.21s; durable provenance restart
+  plus review routes18pass8.71s. Parent correction recheck complete; live IDs unchanged.
+- API/manual/help/PDF/DOCX generated; final render55017 and API53841 terminal0.
+  No local jobs live. Sole hosted waiter2108 consumed at this checkpoint: unit
+  still live, Windows passed. N3 ready for DCO commit; next N4 exact plan if CI
+  remains live. N1-N3 reviewed commits share one follow-on PR after PR268 merge.
 
 ## Historical PR268 diagnostic preparation - October 26, 2026
 

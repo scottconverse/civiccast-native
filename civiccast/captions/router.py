@@ -11,6 +11,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from civiccast.auth.roles import require_any_role
@@ -41,6 +42,8 @@ from civiccast.captions.review_media import (
     resolve_caption_review_source,
     verify_caption_review_audio_evidence_for_cue,
 )
+from civiccast.captions.settings import RecordedCaptionSettings
+from civiccast.captions.settings_router import get_recorded_caption_settings
 from civiccast.captions.vod_job import (
     OFFLINE_CAPTION_JOB_STATE_FAILED,
     OFFLINE_CAPTION_JOB_STATE_PENDING,
@@ -49,6 +52,7 @@ from civiccast.captions.vod_job import (
     OfflineCaptionJobState,
     OfflineCaptionJobStore,
 )
+from civiccast.live.router import get_live_finalization_worker
 from civiccast.platform.stores import resolve_app_store
 from civiccast.stream._ffmpeg import FfmpegNotFoundError
 
@@ -346,6 +350,10 @@ def edit_review_item(
 ) -> CaptionReviewItemResponse:
     try:
         return store.edit(review_item_id, payload)
+    except CaptionReviewAudioEvidenceRequiredError as exc:
+        raise HTTPException(
+            409, f"Timing edit must stay within retained review audio: {exc.reason}"
+        ) from exc
     except CaptionReviewItemNotFoundError as exc:
         raise _not_found(exc.review_item_id) from exc
 
@@ -398,14 +406,129 @@ def list_offline_caption_jobs(
     return store.list(asset_id=asset_id, state=state)
 
 
+class CaptionBatchRequest(BaseModel):
+    asset_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+class CaptionBatchResult(BaseModel):
+    asset_id: str
+    job: OfflineCaptionJobRecord | None = None
+    error: str | None = None
+
+
+@staff_router.post(
+    "/offline-jobs/batch",
+    response_model=list[CaptionBatchResult],
+    dependencies=[Depends(require_any_role("records_clerk"))],
+    summary="Queue up to ten selected recordings for caption review",
+)
+def queue_caption_batch(
+    payload: CaptionBatchRequest,
+    store: OfflineCaptionJobStore | None = Depends(get_offline_caption_job_store),
+    assets: Any = Depends(get_caption_review_asset_store),
+    finalization_worker: Any = Depends(get_live_finalization_worker),
+    settings: RecordedCaptionSettings = Depends(get_recorded_caption_settings),
+    reviews: CaptionReviewStore = Depends(get_caption_review_store),
+) -> list[CaptionBatchResult]:
+    from civiccast.publish.router import (
+        CaptionJobNotQueueableError,
+        _queue_offline_captions,
+        _resolve_caption_package_dir,
+    )
+
+    if store is None:
+        raise HTTPException(503, _CAPTION_JOB_STORE_NOT_READY_DETAIL)
+    if not settings.enabled:
+        raise HTTPException(409, "Enable recorded captions in Settings before starting a batch.")
+    results = []
+    for asset_id in dict.fromkeys(payload.asset_ids):
+        asset = assets.get_staff_row(asset_id)
+        error = None
+        if asset is None:
+            error = "Recording no longer exists."
+        elif not asset.file_path or not Path(asset.file_path).is_file():
+            error = "A local recording file is required."
+        else:
+            package = _resolve_caption_package_dir(asset_id, finalization_worker)
+            if package is None or not (package / "playlist.m3u8").is_file():
+                error = "Package this recording in Assets before captioning it."
+        if error:
+            results.append(CaptionBatchResult(asset_id=asset_id, error=error))
+            continue
+        try:
+            previous = store.list(asset_id=asset_id)
+            if (
+                store.active_for_asset(asset_id) is None
+                and previous
+                and previous[-1].cue_count > 0
+                and reviews.list(asset_id=asset_id)
+            ):
+                latest = previous[-1]
+                job = store.save(
+                    latest.model_copy(
+                        update={
+                            "state": "awaiting_review",
+                            "attempts": 0,
+                            "last_error": "",
+                            "next_attempt_at": datetime.now(UTC),
+                            "updated_at": datetime.now(UTC),
+                        }
+                    )
+                )
+                results.append(CaptionBatchResult(asset_id=asset_id, job=job))
+                continue
+            _queue_offline_captions(
+                store,
+                asset,
+                finalization_worker=finalization_worker,
+                caption_settings=settings,
+                require_published=False,
+            )
+            results.append(
+                CaptionBatchResult(asset_id=asset_id, job=store.active_for_asset(asset_id))
+            )
+        except (CaptionJobNotQueueableError, OfflineCaptionJobConflictError) as exc:
+            results.append(CaptionBatchResult(asset_id=asset_id, error=str(exc)))
+    return results
+
+
+@staff_router.post(
+    "/offline-jobs/{job_id}/cancel",
+    response_model=OfflineCaptionJobRecord,
+    dependencies=[Depends(require_any_role("records_clerk"))],
+    summary="Cancel remaining caption work at the next audio chunk boundary",
+)
+def cancel_offline_caption_job(
+    job_id: str,
+    store: OfflineCaptionJobStore | None = Depends(get_offline_caption_job_store),
+) -> OfflineCaptionJobRecord:
+    if store is None:
+        raise HTTPException(503, _CAPTION_JOB_STORE_NOT_READY_DETAIL)
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Caption job not found.")
+    if job.state not in ("pending", "awaiting_review", "cancelled"):
+        raise HTTPException(409, "Only queued or review-stage caption work can be cancelled.")
+    return store.save(
+        job.model_copy(
+            update={
+                "state": "cancelled",
+                "next_attempt_at": None,
+                "last_error": "Cancelled by an operator. Retained cues and review decisions are preserved.",
+                "updated_at": datetime.now(UTC),
+            }
+        )
+    )
+
+
 @staff_router.post(
     "/offline-jobs/{job_id}/retry",
     response_model=OfflineCaptionJobRecord,
-    summary="Manually retry a failed offline caption job (K3)",
+    summary="Retry failed or resume cancelled offline caption work",
     dependencies=[Depends(require_any_role("records_clerk"))],
     responses={
         404: {"description": "Offline caption job not found"},
-        409: {"description": "Only a failed job can be manually retried"},
+        409: {"description": "Only failed or cancelled jobs can be retried or resumed"},
         503: {"description": "Offline caption job store is not configured"},
     },
 )
@@ -413,7 +536,7 @@ def retry_offline_caption_job(
     job_id: str,
     store: OfflineCaptionJobStore | None = Depends(get_offline_caption_job_store),
 ) -> OfflineCaptionJobRecord:
-    """Reset a failed job to pending without re-approving publish.
+    """Retry failed or resume cancelled work without re-approving publication.
 
     The existing recovery path is re-approving publish for the asset, which
     re-transcribes from scratch and requires the ``publish_operator`` role
@@ -454,12 +577,12 @@ def retry_offline_caption_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Offline caption job not found: {job_id}",
         )
-    if job.state != OFFLINE_CAPTION_JOB_STATE_FAILED:
+    if job.state not in (OFFLINE_CAPTION_JOB_STATE_FAILED, "cancelled"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Offline caption job {job_id} is {job.state!r}; only a failed job "
-                "can be manually retried."
+                "or cancelled job can be manually retried."
             ),
         )
     conflict = store.active_for_asset(job.asset_id)
@@ -476,7 +599,10 @@ def retry_offline_caption_job(
         return store.save(
             job.model_copy(
                 update={
-                    "state": OFFLINE_CAPTION_JOB_STATE_PENDING,
+                    "state": "awaiting_review"
+                    if job.state == "cancelled" and job.cue_count > 0
+                    else OFFLINE_CAPTION_JOB_STATE_PENDING,
+                    "last_error": "",
                     # A fresh attempt budget, same as a newly-enqueued job --
                     # otherwise one more failure would burn straight back to
                     # `failed` with no backoff, defeating the point of the

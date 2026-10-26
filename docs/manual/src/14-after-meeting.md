@@ -164,21 +164,25 @@ See [Running the meeting](#ch-running-meeting) for the Channels screen.
 
 ## Offline captions: how a recording gets its captions
 
-Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, whether to include Spanish alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Captions for a recording are made in the background after you approve publishing on the Publish screen; there is no separate "make captions" button.
+Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, whether to include Spanish alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Publishing can queue captions automatically. For existing packaged recordings, open **Review queue > Recording caption backlog**, select up to ten recordings and click **Caption selected**. Each recording reports its own queue or packaging error; the existing serial worker processes the batch within the station’s current resource limits. Selecting a recording with an active job reuses that job. Inference completion means cues await human review, not that their words are accurate or approved.
 
 1. With recorded captions enabled, you approve publishing the recording. CivicCast queues a caption job for it first, even if the Portal row is not selected. If it cannot queue the job, publication reports the failure. A recording with no stored video file gets no caption job. When recorded captions are disabled, new caption jobs are not created and existing jobs pause until processing is enabled again.
-2. The job transcribes the audio into English cue lines. On the video's detail page, the **Offline caption jobs** card shows **Transcribing…**. A full meeting can take several minutes, not seconds.
+2. The job transcribes the audio into English cue lines. On the video's detail page, the **Offline caption jobs** card shows **Queued or transcribing…**. A full meeting can take several minutes, not seconds.
 3. When transcription ends, the card shows **Awaiting review**. The cues are now in the **Review queue**.
 4. You decide every English cue. If Spanish is selected, CivicCast also translates the reviewed English and queues the Spanish cues for review.
 5. With **all selected languages** required, the selected tracks attach after their review is finished. With **reviewed English** required, the English track can attach first; selected Spanish captions attach later after their own review. English-only jobs do not need a translator or Spanish review.
 
 > **Note:** Changing the completion setting never publishes unreviewed caption text. Disabling processing does not mark an uncaptioned recording as captioned.
 
-If the job runs out of attempts, the card shows **Failed** with the reason in the **Last error** column. A records clerk can click **Retry** and confirm "Retry this offline caption job?". This restarts transcription from scratch with a fresh attempt budget and discards partial progress. Without the records clerk role the card says "Retrying a failed job requires the records clerk role."
+If the job runs out of attempts, the card shows **Failed** with the reason in the **Last error** column. A records clerk can click **Retry** and confirm "Retry this offline caption job?". This resets the attempt budget. A transcription retry scans audio again but preserves retained cues and review decisions. Without the records clerk role the card says "Retrying a failed job requires the records clerk role."
+
+In the recording backlog, **Cancel** stops remaining work at the next audio chunk boundary. An in-flight model call may finish first, and a publication write already started may finish. Existing review decisions and published captions remain. **Resume** keeps those decisions; unfinished transcription scans again without replacing existing cues, while a completed transcription returns to review/publication. **Retry** is available after a failure. Read the recording’s error before trying again.
+
+Under **Station Profile > Recorded captions**, enter local names and terms one per line (up to 100 terms, 120 characters each). The saved hints reach the recorded-audio path’s faster-whisper and Whistle Whisper adapters as their initial prompt on the next scan. They do not apply to every possible caption engine, guarantee spelling, alter existing cues, or approve captions.
 
 The job can also be held. These are the reasons CivicCast puts on the row:
 
-- Every English cue was rejected. Open the Review queue, choose English, and edit or approve cues. If the audio is truly unusable, ask a technical administrator to cancel the job.
+- Every English cue was rejected. Open the Review queue, choose English, and edit or approve cues. If the audio is truly unusable, use **Cancel** in the recording caption backlog.
 - Every selected Spanish cue was rejected. Open the Review queue, choose Spanish, and edit or approve cues. The Spanish track attaches once review is complete and at least one cue is approved or edited. Under **Attach English after its review**, reviewed English can already be available.
 - Spanish is selected but no translation model is available. The row says to install or repair it under "Settings > AI Models > Translation" and run 'civiccast doctor'. With **Wait for every selected language**, CivicCast retries with growing waits; after its attempts run out, the card shows **Failed** and a records clerk must click **Retry** after repair. With **Attach English after its review**, reviewed English attaches while the active job waits for Spanish. English-only jobs do not encounter this hold.
 
@@ -212,6 +216,12 @@ Approved and Edited cues both become captions, using the reviewed text. Rejected
 > **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. **Save edit** counts as a decision for the caption track. For AI summaries, open **Edited** and approve the saved correction as well; the console's summary workflow uses Approved cues only.
 
 > **Warning:** **Reject** asks no question and discards the reviewed text. A rejected cue can be approved again later, which then approves the machine's original text, not your earlier correction.
+
+### Correct cue timing and republish
+
+Edit **Start (seconds)** and **End (seconds)** alongside **Reviewed text**, then click **Save edit**. Fractional seconds are accepted; the start must be non-negative and the end must be later. When retained review audio exists, it must cover the entire changed interval. An out-of-range edit explains the missing coverage and leaves the stored cue unchanged. Timings are source-recording seconds; the existing package timeline maps them into trimmed playback.
+
+For a completed recording, select it again in **Recording caption backlog** and click **Caption selected**. CivicCast republishes the current reviewed cues without repeating inference. Pending cues still hold publication; no batch action approves them. If Spanish is selected, changing English wording or timing queues a fresh Spanish cue for human review before the affected translated track can publish. Unchanged older Spanish review decisions remain valid. Check the resident caption track after the job reports reviewed captions attached.
 
 ### Low-confidence cues
 

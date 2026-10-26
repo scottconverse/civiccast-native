@@ -16,7 +16,9 @@ class CustomVocabulary(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    terms: list[Annotated[str, Field(min_length=1, max_length=120)]] = Field(default_factory=list)
+    terms: list[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
+        default_factory=list, max_length=100
+    )
     initial_prompt: Annotated[str | None, Field(default=None, max_length=1200)] = None
 
     @field_validator("terms")

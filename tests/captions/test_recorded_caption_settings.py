@@ -55,6 +55,7 @@ def test_caption_settings_staff_api_reads_and_persists_explicit_settings(
         initial = client.get("/api/staff/captions/settings")
         assert initial.status_code == 200
         assert initial.json() == {
+            "vocabulary": {"terms": [], "initial_prompt": None},
             "enabled": False,
             "languages": ["en"],
             "completion_requirement": "all_selected_languages",

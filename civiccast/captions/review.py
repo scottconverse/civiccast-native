@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from civiccast.captions.models import CaptionCue
 
@@ -69,12 +69,67 @@ class CaptionReviewEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: Annotated[str, Field(min_length=1, max_length=2000)]
+    start_seconds: Annotated[float | None, Field(default=None, ge=0, allow_inf_nan=False)] = None
+    end_seconds: Annotated[float | None, Field(default=None, ge=0, allow_inf_nan=False)] = None
     reviewer_note: Annotated[str | None, Field(default=None, max_length=1000)] = None
+
+    @model_validator(mode="after")
+    def validate_timing(self) -> CaptionReviewEdit:
+        if (self.start_seconds is None) != (self.end_seconds is None):
+            raise ValueError("Supply both start_seconds and end_seconds.")
+        if self.start_seconds is not None:
+            assert self.end_seconds is not None
+            if self.end_seconds <= self.start_seconds:
+                raise ValueError("end_seconds must be greater than start_seconds.")
+        return self
 
     @field_validator("text")
     @classmethod
     def _clean_text(cls, value: str) -> str:
         return " ".join(value.split())
+
+
+def legacy_translation_source_window(
+    cue: CaptionCue,
+    language: str,
+    sources: list[CaptionCue],
+) -> tuple[float, float] | None:
+    """Capture source provenance before an operator changes legacy target timing."""
+    from civiccast.translate.service import translated_cue_id
+
+    for source in sources:
+        if translated_cue_id(source.cue_id, language, source_text=source.text) == cue.cue_id:
+            return source.start_seconds, source.end_seconds
+    return None
+
+
+def edited_caption_cue(
+    cue: CaptionCue,
+    payload: CaptionReviewEdit,
+    evidence: CaptionReviewAudioEvidence | None,
+    review_item_id: str,
+) -> CaptionCue:
+    if payload.start_seconds is None or (
+        payload.start_seconds == cue.start_seconds and payload.end_seconds == cue.end_seconds
+    ):
+        return cue
+    changed = cue.model_copy(
+        update={
+            "start_seconds": payload.start_seconds,
+            "end_seconds": payload.end_seconds,
+        }
+    )
+    if evidence is not None:
+        from civiccast.captions.review_media import (
+            CaptionReviewClipError,
+            verify_caption_review_audio_evidence_for_cue,
+        )
+
+        try:
+            verify_caption_review_audio_evidence_for_cue(evidence, changed)
+        except CaptionReviewClipError as exc:
+            raise CaptionReviewAudioEvidenceRequiredError(review_item_id, str(exc)) from exc
+    return changed
 
 
 class CaptionReviewDecision(BaseModel):
@@ -94,6 +149,8 @@ class CaptionReviewItemResponse(BaseModel):
     review_item_id: str
     asset_id: str
     cue: CaptionCue
+    translation_source_start_seconds: float | None = None
+    translation_source_end_seconds: float | None = None
     language: str = DEFAULT_CAPTION_REVIEW_LANGUAGE
     status: CaptionReviewStatus
     original_text: str
@@ -337,6 +394,33 @@ class InMemoryCaptionReviewStore:
 
     def edit(self, review_item_id: str, payload: CaptionReviewEdit) -> CaptionReviewItemResponse:
         item = self._require_item(review_item_id)
+        if (
+            payload.start_seconds is not None
+            and item.language != "en"
+            and item.translation_source_start_seconds is None
+        ):
+            sources = [
+                row.cue.model_copy(update={"text": row.reviewed_text or row.cue.text})
+                for row in self.list(asset_id=item.asset_id, language="en")
+            ]
+            window = legacy_translation_source_window(item.cue, item.language, sources)
+            if window is not None:
+                item = item.model_copy(
+                    update={
+                        "translation_source_start_seconds": window[0],
+                        "translation_source_end_seconds": window[1],
+                    }
+                )
+        item = item.model_copy(
+            update={
+                "cue": edited_caption_cue(
+                    item.cue,
+                    payload,
+                    self._audio_evidence.get(review_item_id),
+                    review_item_id,
+                )
+            }
+        )
         return self._replace(
             item,
             status="edited",

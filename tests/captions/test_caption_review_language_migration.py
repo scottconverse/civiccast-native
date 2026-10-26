@@ -126,3 +126,24 @@ def test_single_head_reachable_from_both_ends(tmp_path: Path, revision: str) -> 
     command.upgrade(cfg, revision)
     command.upgrade(cfg, "head")
     assert "language" in _language_columns(url)
+
+
+def test_caption_cancel_migration_preserves_jobs_and_active_unique_index(tmp_path: Path) -> None:
+    db_path = tmp_path / "caption-cancel.db"
+    cfg = _cfg(f"sqlite:///{db_path}")
+    command.upgrade(cfg, "0094_cg_live_video_zone")
+    command.upgrade(cfg, "0095_caption_job_cancellation")
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.execute("""INSERT INTO offline_caption_jobs
+            (job_id, asset_id, source_path, package_dir, state, created_at, updated_at)
+            VALUES ('cancelled-1', 'one', 'one.wav', 'package', 'cancelled', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""")
+        conn.commit()
+        assert any(
+            row[1] == "ix_offline_caption_jobs_one_active_per_asset"
+            for row in conn.execute("PRAGMA index_list('offline_caption_jobs')")
+        )
+    command.downgrade(cfg, "0094_cg_live_video_zone")
+    with closing(sqlite3.connect(db_path)) as conn:
+        assert conn.execute(
+            "SELECT state FROM offline_caption_jobs WHERE job_id='cancelled-1'"
+        ).fetchone() == ("failed",)
