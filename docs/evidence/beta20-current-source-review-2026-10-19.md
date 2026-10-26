@@ -16,9 +16,16 @@ controls and verifier enforcement are unchanged. Existing production-pressure
 encoder settings do not decode on the older local probe runtime; this focused
 caption proof uses the existing standard encoder settings, not a repaired encoder.
 
-F4 remains unresolved. Its first-attempt replacement flow error has no preserved
-Gst debug cause; the abort-before-commit log now records URI-redacted detail for
-a future recurrence. Passing unchanged baseline/probe runs do not establish a fix.
+F4 required CI40274379021 failed the superseding scenario: only one replacement
+stream became ready; outgoing audio stopped and abort retirement remained blocked.
+The abort-only teardown still flushed a connected selector and NULLed before
+releasing request pads, unlike the established confirmed-retirement contract.
+It now reuses that fenced release-before-NULL path; a focused ordering assertion
+checks isolation without any connected flush. Local ordering128pass and the same
+native scenario passed15.54 seconds. Required CI must validate this correction.
+The historical first-attempt filesrc flow error still has no preserved Gst debug
+cause; its log now records URI-redacted detail for a future recurrence. This
+structural correction does not claim every historical transient is explained.
 These source bindings do not renew historical installed, hardware, pre-login or
 release acceptance. Completed required hosted CI remains necessary.
 

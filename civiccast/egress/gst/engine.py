@@ -8610,105 +8610,23 @@ class GstPlayoutEngine:
         audio_pad: Gst.Pad | None,
         elements: list[Gst.Element],
     ) -> tuple[bool, str | None]:
-        """NULL, unlink/release, and remove a now-inactive source leg.
+        """Retire an aborted, never-selected leg using the same isolation policy.
 
-        Every step is best-effort so one failure cannot prevent the remaining
-        cleanup. The explicit result is load-bearing for asynchronous reload
-        settlement: a partial retirement is never reported as committed/applied.
-
-        Round-2 finding 3 -- ONE policy, applied identically on the commit path and
-        the abort path, because the two used to disagree about what "failed"
-        even meant:
-
-        * ``set_state(NULL)`` returning ASYNC is NOT a failure. These legs are
-          bins; see ``_null_retiring_element``. Wait for it, bounded.
-        * A NULL that genuinely does not land is retried once, then reported.
-          That is the only condition that returns ``(False, reason)``.
-        * A failed unlink or a failed ``pipeline.remove`` is logged as a WARNING
-          and does NOT fail the retirement. The leg is already at NULL and off
-          air by that point; the cost is bookkeeping, not airtime.
-        * Nothing here kills a channel that is still producing. A retirement
-          problem that DOES take the channel off air stops the mux, and the stall
-          watchdog already owns that escalation with far better evidence than a
-          disposal return code can carry.
-
-        The old native failure stopped inside set_state(NULL) while a retired
-        concat task still held its streaming lock. Flush that inactive leg from
-        its tail source pads before NULL. Do not unlink a still-running source
-        and do not send FLUSH_STOP: either would reopen a producer race. The
-        commit-stage markers and watchdog retain failure evidence if teardown
-        still cannot complete.
+        The abort path fences its tails before releasing the first-buffer holds.
+        Release the inactive selector requests before potentially blocking NULL,
+        as on confirmed retirement. A connected-tail FLUSH_START and NULL-first
+        teardown can interact with shared selector streaming locks while the next
+        replacement is prerolling. No flush or state change enters the selected
+        program; disposal still runs off the main loop and reports failure.
         """
-        failures: list[str] = []
-        # A second deferred rollover in the native AV playlist shape wedged in
-        # ``element.set_state(NULL)``: the retiring concat's streaming task was
-        # still blocked at the selector even though that selector pad had become
-        # inactive.  FLUSH_START is deliberately sent from the retiring leg's OWN
-        # tail src pad, through its peer, before taking the leg down. GStreamer
-        # makes that out-of-band event turn blocked pushes into GST_FLOW_FLUSHING,
-        # so the retiring task releases its STREAM_LOCK before the downward state
-        # transition waits for it. Do NOT send FLUSH_STOP: this leg is being
-        # removed, and reopening it would restore the exact producer race this
-        # flush closes. Do NOT send on the selector request pad itself: that does
-        # not reach the retired leg's upstream task.
-        warnings = self._flush_retiring_leg_source_pads(video_pad, audio_pad)
-        for index, element in enumerate(elements):
-            self._null_retiring_element(element, index + 1, failures)
-        for stream, selector, pad in (
-            ("video", self.selector, video_pad),
-            ("audio", self.audio_selector, audio_pad),
-        ):
-            if selector is None or pad is None:
-                continue
-            try:
-                peer = pad.get_peer()
-                if peer is not None and peer.unlink(pad) is False:
-                    warnings.append(f"selector-unlink-failed:{stream}")
-                selector.release_request_pad(pad)
-            except Exception as exc:
-                warnings.append(f"selector-release-error:{stream}:{exc!r}")
-        for index, element in enumerate(elements):
-            try:
-                if self.pipeline.remove(element) is False:
-                    warnings.append(f"element-remove-failed:{index + 1}")
-            except Exception as exc:
-                warnings.append(f"element-remove-error:{index + 1}:{exc!r}")
-        if warnings:
-            # Round-2 finding 3: reported, never fatal. See the policy note in the
-            # docstring -- an unlink/remove hiccup on a leg that is already at NULL
-            # leaks bookkeeping, not airtime, and the element-count assertion in
-            # the leak test is what actually guards that.
-            print(f"WARN: leg disposal incomplete: {'; '.join(warnings)}", flush=True)
-        if failures:
-            reason = "; ".join(failures)
-            print(f"WARN: leg disposal did not reach NULL: {reason}", flush=True)
-            return False, reason
-        return True, None
-
-    @staticmethod
-    def _flush_retiring_leg_source_pads(video_pad: Gst.Pad, audio_pad: Gst.Pad | None) -> list[str]:
-        """Flush only the retiring leg downstream, without reopening it.
-
-        ``video_pad`` / ``audio_pad`` are input-selector request pads. Their peers
-        are the retiring leg's tail *src* pads; ``push_event(FLUSH_START)`` there
-        travels from that one leg into its now-inactive selector input and unblocks
-        the leg's task. It is intentionally not a pipeline-wide flush and there is
-        no matching FLUSH_STOP because the leg is immediately driven to NULL.
-        """
-        warnings: list[str] = []
-        for stream, selector_pad in (("video", video_pad), ("audio", audio_pad)):
-            if selector_pad is None:
-                continue
-            try:
-                peer = selector_pad.get_peer()
-                if peer is None:
-                    warnings.append(f"retiring-flush-peer-missing:{stream}")
-                    continue
-                if peer.push_event(Gst.Event.new_flush_start()) is False:
-                    warnings.append(f"retiring-flush-failed:{stream}")
-            except Exception as exc:
-                warnings.append(f"retiring-flush-error:{stream}:{exc!r}")
-        return warnings
+        return self._dispose_confirmed_old_leg(
+            {
+                "old_video_pad": video_pad,
+                "old_audio_pad": audio_pad,
+                "old_elements": elements,
+                "old_tail_drop_probes": [],
+            }
+        )
 
     def _null_retiring_element(self, element: Gst.Element, index: int, failures: list[str]) -> bool:
         """Bring ONE element of a retiring leg to NULL under the finding-3 policy.

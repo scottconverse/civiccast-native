@@ -554,9 +554,7 @@ def _complete_commit_for_test(engine: Any, pending: dict[str, Any]) -> bool:
     pending.setdefault("txn_id", 1)
     engine._prepare_reload_handoff(pending)
     engine._begin_reload_commit(pending)
-    pending["retirement_result"] = engine._dispose_source_leg(
-        pending["old_video_pad"], pending["old_audio_pad"], pending["old_elements"]
-    )
+    pending["retirement_result"] = engine._dispose_confirmed_old_leg(pending)
     return engine._finish_reload_commit(pending)
 
 
@@ -954,8 +952,8 @@ def test_commit_releases_replacement_before_retiring_old_leg(engine_module) -> N
     remove_video = _index_of(calls, "remove_probe:hold-video")
     remove_audio = _index_of(calls, "remove_probe:hold-audio")
 
-    assert switch_video < remove_video < old_null < release_video, calls
-    assert switch_audio < remove_audio < old_null < release_audio, calls
+    assert switch_video < remove_video < release_video < old_null, calls
+    assert switch_audio < remove_audio < release_audio < old_null, calls
 
 
 def test_commit_confirms_handoff_then_fences_and_releases_old_request_pads(
@@ -1433,83 +1431,29 @@ def test_first_selector_setter_failure_restores_current_leg(
     assert engine._pending_reload is None
 
 
-def test_commit_disposes_old_leg_by_nulling_before_unlinking(engine_module) -> None:
-    """The retiring leg's elements
-    are told ``set_state(NULL)`` BEFORE the selector unlinks/releases that
-    leg's request pad, not after. Unlinking/releasing FIRST (round 1's
-    reverted hypothesis) races the leg's still-live streaming thread into
-    pushing a buffer through a pad with no peer -- ``GST_FLOW_NOT_LINKED``, a
-    FATAL flow error on that leg's own source pad -- while the leg is still
-    being told to shut down."""
+def test_aborted_leg_releases_fenced_selector_requests_before_null(engine_module) -> None:
+    """A never-selected leg must be disconnected before a blocking NULL call.
+
+    Its source fence prevents a late buffer/event from entering the selector.
+    Request-pad release owns deactivation/unlinking; no connected-tail flush
+    may interact with the on-air selector or another replacement's preroll.
+    """
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
-
-    old_video_peer = _FakePeer("old-video-peer", recorder)
-    old_audio_peer = _FakePeer("old-audio-peer", recorder)
-    old_video_pad = _FakeOldPad("old-video", recorder, peer=old_video_peer)
-    old_audio_pad = _FakeOldPad("old-audio", recorder, peer=old_audio_peer)
-    old_element_1 = _FakeOldElement("old-elem-1", recorder)
-    old_element_2 = _FakeOldElement("old-elem-2", recorder)
-
-    pending: dict[str, Any] = {
-        "timeout_id": None,
-        "defer_timeout_id": None,
-        "new_video_pad": object(),
-        "new_audio_pad": object(),
-        "rebase_new_leg": False,
-        "hold_probes": [],
-        "boundary_probes": [],
-        "old_video_pad": old_video_pad,
-        "old_audio_pad": old_audio_pad,
-        "old_elements": [old_element_1, old_element_2],
-        "new_elements": [],
-        "on_settled": None,
-    }
-
-    _complete_commit_for_test(engine, pending)
+    video = _FakeOldPad("aborted-video", recorder, _FakePeer("video-tail", recorder))
+    audio = _FakeOldPad("aborted-audio", recorder, _FakePeer("audio-tail", recorder))
+    assert engine._dispose_source_leg(video, audio, [_FakeOldElement("aborted", recorder)]) == (
+        True,
+        None,
+    )
     calls = recorder.calls
-
-    null_1 = _index_of(calls, "set_state:old-elem-1")
-    null_2 = _index_of(calls, "set_state:old-elem-2")
-    unlink_video = _index_of(calls, "peer.unlink:old-video-peer")
-    release_video = _index_of(calls, "video_sel.release_request_pad:old-video")
-    unlink_audio = _index_of(calls, "peer.unlink:old-audio-peer")
-    release_audio = _index_of(calls, "audio_sel.release_request_pad:old-audio")
-
-    assert null_1 < unlink_video, f"video pad unlinked BEFORE set_state(NULL); calls={calls}"
-    assert null_1 < release_video, (
-        f"video request pad released BEFORE set_state(NULL); calls={calls}"
-    )
-    assert null_1 < unlink_audio, f"audio pad unlinked BEFORE set_state(NULL); calls={calls}"
-    assert null_1 < release_audio, (
-        f"audio request pad released BEFORE set_state(NULL); calls={calls}"
-    )
-    assert null_2 >= 0  # both elements were NULLed; their relative order is not asserted
-
-
-def test_dispose_flushes_the_retiring_leg_peer_before_null_without_reopening_it(
-    engine_module,
-) -> None:
-    """The flush starts at each retiring leg tail, never at a selector request pad.
-
-    It must precede ``set_state(NULL)`` so blocked concat tasks can return
-    FLUSHING before teardown waits for their STREAM_LOCK. There is deliberately no
-    matching FLUSH_STOP: the leg is about to be removed and must never resume."""
-    recorder = _Recorder()
-    engine = _bare_engine_for_commit(engine_module, recorder)
-
-    old_video_pad = _FakeOldPad("old-video", recorder, peer=_FakePeer("old-video-peer", recorder))
-    old_audio_pad = _FakeOldPad("old-audio", recorder, peer=_FakePeer("old-audio-peer", recorder))
-
-    engine._dispose_source_leg(old_video_pad, old_audio_pad, [_FakeOldElement("elem", recorder)])
-
-    video_flush = _index_of(recorder.calls, "peer.push_event:old-video-peer:FLUSH_START")
-    audio_flush = _index_of(recorder.calls, "peer.push_event:old-audio-peer:FLUSH_START")
-    null = _index_of(recorder.calls, "set_state:elem:NULL")
-    assert video_flush < null
-    assert audio_flush < null
-    assert not any(call.startswith("send_event:") for call in recorder.calls), recorder.calls
-    assert not any("FLUSH_STOP" in call for call in recorder.calls), recorder.calls
+    null = _index_of(calls, "set_state:aborted:NULL")
+    release_video = _index_of(calls, "video_sel.release_request_pad:aborted-video")
+    release_audio = _index_of(calls, "audio_sel.release_request_pad:aborted-audio")
+    assert _index_of(calls, "add_probe:video-tail:") < release_video < null
+    assert _index_of(calls, "add_probe:audio-tail:") < release_audio < null
+    assert not any("push_event" in call or "send_event" in call for call in calls)
+    assert not any("set_property:active-pad" in call for call in calls)
 
 
 def test_dispose_source_leg_is_best_effort_on_a_disposal_hiccup(engine_module) -> None:

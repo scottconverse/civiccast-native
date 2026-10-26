@@ -34,14 +34,28 @@
   by declaring the existing runtime. API/manual artifacts generated, including
   in-product/PDF/DOCX. Parent final material review found a missing daemon token passthrough; fixed
   and verified real feed-to-daemon-to-owned-strategy integration (1pass).
-  Remaining DCO push/PR and required CI; F4 stays open.
-  Earlier failing captures native3/native4 remain beside it. No push or PR yet.
-- Remaining: finish F7 proof and focused checks, generated API/manual artifacts,
-  one parent material review, DCO commit/push, review-ready PR and required CI.
-  No station/endurance operation was changed; leave it running.
-- Prior F1–F3 records below are historical. Latest local PR #267 closure/merge
-  receipts remain preserved in `C:\Dev\civiccast-f1-f3\docs\handoff\CURRENT.md`.
-
+  Earlier failing captures native3/native4 remain beside it; final reviewed
+  candidate and requiredCI correction status follow below.
+- PR268 https://github.com/scottconverse/civiccast-native/pull/268 at DCO head
+  3915b48c381c1308165dce268451e745c156c9d4. Parent material review completed.
+  Required Windows job121413878829 FAILED: media1failed56passed434.98s.
+  New F7 decode proof passed. F4 superseding scenario reload2 held only one
+  stream, audio stopped before EOS, readiness timeout10s aborted, mux stalled
+  and stop reported an aborted leg still retiring. Exact first-candidate log:
+  C:\Users\scott\AppData\Local\Temp\civiccast-pr268-windows-first.log:781.
+- Bounded diagnostic83643 passed again (no further hunt). Abort NULL/hold
+  detail preserved in Temp\civiccast-f4-current-diagnosis. Structural correction:
+  abort now reuses confirmed-retirement fenced request-pad release before NULL;
+  removed connected-selector flush and duplicated teardown. Ordering128pass/
+  2runtime-skips; same native supersede test86377 passed15.54s, output
+  Temp\civiccast-f4-abort-isolation-fixed. Historical filesrc reason still unknown.
+- Parent correction review complete. First-candidate unit job121413878544 was
+  still running at correction push; not a pass. Parent authorized supersession
+  without waiting solely to preserve old evidence. Old watch95625 ended; next
+  action DCO correction push and one watcher on new candidate required CI.
+  No local test remains running. No merge/tag/publication/station change by worker.
+- Prior F1-F3 records below are historical; PR267 receipts remain preserved in
+  C:\Dev\civiccast-f1-f3\docs\handoff\CURRENT.md.
 
 ## Active F1–F3 delivery checkpoint — October 25, 2026
 - OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
