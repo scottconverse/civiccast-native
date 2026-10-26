@@ -324,12 +324,12 @@ test.describe('asset detail + metadata edit', () => {
     await openDetail(page)
     await expect(
       page.getByText(
-        "Approving this recording's portal surface on the Publish dashboard is what starts it",
+        'Publishing queues captions when enabled.',
       ),
     ).toBeVisible()
   })
 
-  test('a running caption job reads as "Transcribing..." with elapsed time, not a bare Pending label', async ({
+  test('a pending caption job reads as queued or transcribing with elapsed time', async ({
     page,
   }) => {
     await mockBackend(page)
@@ -359,7 +359,7 @@ test.describe('asset detail + metadata edit', () => {
     })
     await openDetail(page)
 
-    await expect(page.getByText(/Transcribing…/)).toBeVisible()
+    await expect(page.getByText(/^Queued or transcribing… \(\d+[sm]\)$/)).toBeVisible()
     await expect(
       page.getByText(/several minutes for a full meeting recording, not seconds/),
     ).toBeVisible()

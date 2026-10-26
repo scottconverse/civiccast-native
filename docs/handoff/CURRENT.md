@@ -1,6 +1,44 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N6 / PR269 CI - October 26, 2026
+## Active N7 preparation / PR269 correction CI - October 26, 2026
+
+- PR269 correction pushed4b2dfe786541294fa5f92a82ed0cc8e0edf823a2; full rollup
+  new required checks running at07:58UTC, no terminal failures yet. Old waiter69829
+  still owns previous ci-test until superseded; replace with one new-head waiter.
+- N6 preserved56614c62 and merged correction; actual descendant migration head0096
+  reflected in explicit assertions. N4-N6 remain local/unpushed pending predecessor.
+- Next N7 serial child: selected Spanish, Simplified Chinese (zh-Hans), Tagalog/
+  Filipino, Vietnamese, Arabic. Qualified language review availability remains
+  explicit acceptance input; model language metadata is not accuracy evidence.
+  No N7 product changes yet. F5/N8 pending. Root owns roadmap/merge.
+
+## PR269 correction receipts - October 26, 2026
+
+- Parent owns roadmap/merge. PR268 is merged; F4/F6/F7 acceptance delivered.
+  PR269 old head bfc4dc62 has required lint/operator/public-a11y failures;
+  ci-test waiter69829 still owned (run40283658614), Windows success, unit pending.
+  This is not a full CI pass. Correction now goes to the same reviewed PR.
+- Fixed exact legacy translated-cue lookup by asset/language/cue identity,
+  retaining source-window checks and failing closed for ambiguous matches.
+  Repackage4pass4.03s, timing2pass1.48s. Server-search empty result now shows
+  no-match; query-aware public fixture and both affected browser cases passed.
+- Corrected staff array/auth/seed-status fixtures and changed setup/caption copy
+  assertions. AppStaffLogin7pass2.10s; exact publish, pending elapsed and first-admin
+  browser cases passed. First-admin fixture still asserts the issued stored token.
+  No production auth change. Explicit migration assertions advance to actual0095;
+  schema/migration20pass9.30s plus remaining2pass3.04s. Ruff9files formatted/check
+  passed; affected portal TypeScript/ESLint and builds passed. No broad rerun.
+- Parent reviewed material corrections. N4 50cbb23a, N5 7be2ab22, N6 56614c62
+  are preserved on local serial descendant branches, unpushed. After correction
+  push, merge into N6 and advance explicit head assertions to actual0096, then N7.
+  N7 selected Spanish, Chinese (written variant explicit), Tagalog/Filipino,
+  Vietnamese, Arabic. N7/N8/F5 pending; no release/install/live-transmission claim.
+- Next: DCO correction commit/push, replace superseded CI ownership with one
+  waiter for the new candidate and inspect full required rollup at boundaries.
+  Existing waiter cancellation is Ctrl-C after verified owned session; no other
+  local helper/test process is live. Named recovery stashes remain untouched.
+
+## N4-N6 preserved implementation receipts - October 26, 2026
 
 - Parent owns roadmap/merge. PR269 frozen bfc4dc620b3958cbe839a63450fece84f2129a66,
   required CI run40283658614, sole watcher69829 started07:08UTC (~65min prior
@@ -39,7 +77,6 @@
   Sole ci-test watcher69829 remains live; this watcher covers only ci-test,
   not the entire PR rollup. Last Windows121442261136 SUCCESS/unit121442261074 live.
 
-## N1-N3 combined delivery receipts - October 26, 2026
 
 - Parent owns roadmap/merge. PR268 merged07:03:52UTC, main5764afbcbdf757aa5b5ad6f91187283346ab2e94.
   Frozen e615fc82 CI run40277731000 SUCCESS; waiter2108 exited0. Final rollup

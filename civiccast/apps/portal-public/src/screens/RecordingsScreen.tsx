@@ -388,7 +388,7 @@ export function RecordingsScreen({
 
       {(state === 'ready' || state === 'degraded') && filtered.length === 0 && (
         <p className="rounded-lg border border-dashed border-stone-500 bg-[#172018] p-4 text-sm text-stone-300">
-          {recordings.length === 0 ? (
+          {recordings.length === 0 && !query.trim() && !year && !body && Object.keys(cf).length === 0 ? (
             <>
               No recordings have been published yet. See{' '}
               <a href="#/schedule" className="underline text-emerald-200">
