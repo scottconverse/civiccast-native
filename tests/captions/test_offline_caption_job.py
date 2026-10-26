@@ -1131,9 +1131,7 @@ class TestQueueTranslatedCaptions:
         # literal, so the id shape has ONE definition (the Spanish id now
         # carries a digest of the English text it was translated from -- see
         # translated_cue_id).
-        expected_spanish_id = (
-            f"{_ASSET_ID}:{translated_cue_id('cue-000000', 'es', source_text='motion carries')}"
-        )
+        expected_spanish_id = f"{_ASSET_ID}:{translated_cue_id('cue-000000', 'es', source_text='motion carries', source_window=(0, 1.8))}"
         assert [row.review_item_id for row in spanish] == [expected_spanish_id]
         # It is still unmistakably the es row for that en cue, and it can
         # never collide with the English row's id.
@@ -1641,7 +1639,10 @@ class TestTruncatedSpanishTrackNeverPublishes:
             item.created_at = datetime(2026, 9, 8, tzinfo=UTC)
         spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
         retained_id = translated_cue_id(
-            english_rows[0].cue.cue_id, "es", source_text=english_rows[0].cue.text
+            english_rows[0].cue.cue_id,
+            "es",
+            source_text=english_rows[0].cue.text,
+            source_window=(english_rows[0].cue.start_seconds, english_rows[0].cue.end_seconds),
         )
         retained_row = next(row for row in spanish_rows if row.cue.cue_id == retained_id)
         orphan_row = next(row for row in spanish_rows if row.cue.cue_id != retained_id)
@@ -1693,6 +1694,73 @@ class TestEnglishEditedAfterTranslation:
                 storage_root=tmp_path / "egress"
             ),
         )
+
+    def test_timing_edit_requeues_translation_but_unchanged_legacy_approval_survives(
+        self,
+        tmp_path: Path,
+        fake_ffmpeg: None,
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2)
+        package = _package(tmp_path)
+        jobs = InMemoryOfflineCaptionJobStore()
+        reviews = InMemoryCaptionReviewStore()
+        worker = self._worker(jobs, reviews, tmp_path, ["motion carries"])
+        enqueue_offline_caption_job(
+            jobs, asset_id=_ASSET_ID, source_path=source, package_dir=package
+        )
+        worker.run_once()
+        _approve_language(reviews, "en")
+        english = reviews.list(asset_id=_ASSET_ID, language="en")[0]
+        legacy_cue = english.cue.model_copy(
+            update={
+                "cue_id": translated_cue_id(english.cue.cue_id, "es", source_text=english.cue.text),
+                "text": "la mocion se aprueba",
+            }
+        )
+        from civiccast.captions.pipeline import review_item_id_for_cue
+
+        legacy_id = review_item_id_for_cue(_ASSET_ID, legacy_cue)
+        reviews.create(
+            CaptionReviewItemCreate(
+                review_item_id=legacy_id, asset_id=_ASSET_ID, cue=legacy_cue, language="es"
+            )
+        )
+        reviews.approve(legacy_id, CaptionReviewDecision())
+        # A target-only correction must not change the source version it was reviewed against.
+        reviews.edit(
+            legacy_id, CaptionReviewEdit(text=legacy_cue.text, start_seconds=0.1, end_seconds=1.9)
+        )
+        reviews.approve(legacy_id, CaptionReviewDecision())
+        assert reviews.get(legacy_id).translation_source_start_seconds == 0
+        assert reviews.get(legacy_id).translation_source_end_seconds == 2
+        # Unchanged source wording/timing retains the edited legacy target's approval.
+        current = worker._resolve_spanish_review(_ASSET_ID, [english.cue])
+        assert current.pending == 0
+        assert current.cues[0].start_seconds == 0.1
+        assert current.cues[0].end_seconds == 1.9
+        assert len(reviews.list(asset_id=_ASSET_ID, language="es")) == 1
+        reviews.edit(
+            english.review_item_id,
+            CaptionReviewEdit(text=english.cue.text, start_seconds=0.25, end_seconds=1.75),
+        )
+        held = worker.run_once()[0]
+        assert held.state == "awaiting_review"
+        fresh = [
+            cue
+            for cue in reviews.list(asset_id=_ASSET_ID, language="es")
+            if cue.review_item_id != legacy_id
+        ]
+        assert len(fresh) == 1 and fresh[0].status == "pending"
+        assert fresh[0].cue.start_seconds == 0.25
+        assert reviews.get(legacy_id).status == "approved"
+        assert not published_caption_sidecar(package).exists()
+        reviews.approve(fresh[0].review_item_id, CaptionReviewDecision())
+        assert worker.run_once()[0].state == "complete"
+        for sidecar in (
+            published_caption_sidecar(package),
+            published_spanish_caption_sidecar(package),
+        ):
+            assert "00:00:00.250 --> 00:00:01.750" in sidecar.read_text(encoding="utf-8")
 
     def test_editing_english_after_spanish_approval_requeues_that_cue(
         self, tmp_path: Path, fake_ffmpeg: None
@@ -2144,4 +2212,176 @@ def test_caption_attach_rejects_cues_outside_package(tmp_path: Path) -> None:
     )
     with pytest.raises(OfflineCaptionPackageError, match="outside"):
         attach_reviewed_captions(package, [_cue("excluded", 0, 1, "Excluded")])
+    assert not published_caption_sidecar(package).exists()
+
+
+def test_selected_batch_cancel_resume_timing_and_reviewed_republish(
+    tmp_path: Path,
+    fake_ffmpeg: None,
+    monkeypatch: pytest.MonkeyPatch,
+    deterministic_staff_token: None,
+) -> None:
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from civiccast.app import create_app
+    from civiccast.captions import router as routes
+    from civiccast.captions.settings import RecordedCaptionSettings, RecordedCaptionSettingsStore
+    from civiccast.captions.settings_router import get_recorded_caption_settings
+    from civiccast.publish import router as publish_routes
+    from civiccast.schedule.models import StaffAssetRow
+
+    jobs = InMemoryOfflineCaptionJobStore()
+    reviews = InMemoryCaptionReviewStore()
+    source = _write_wav(tmp_path / "meeting.wav", seconds=6)
+    packages = {key: _package(tmp_path / key) for key in ("one", "two")}
+    assets = {
+        key: StaffAssetRow(asset_id=key, title=key, state="validated", file_path=str(source))
+        for key in packages
+    }
+    monkeypatch.setattr(
+        publish_routes, "_resolve_caption_package_dir", lambda asset_id, _worker: packages[asset_id]
+    )
+    settings = RecordedCaptionSettings(
+        languages=("en",), vocabulary=CustomVocabulary(terms=["Councilmember Rivera"])
+    )
+    settings_store = RecordedCaptionSettingsStore(
+        tmp_path / "caption-settings.json", defaults=settings
+    )
+    app = create_app()
+    app.state.recorded_caption_settings_store = settings_store
+    app.dependency_overrides[routes.get_offline_caption_job_store] = lambda: jobs
+    app.dependency_overrides[routes.get_caption_review_store] = lambda: reviews
+    app.dependency_overrides[routes.get_caption_review_asset_store] = lambda: SimpleNamespace(
+        get_staff_row=assets.get
+    )
+    app.dependency_overrides[get_recorded_caption_settings] = settings_store.load
+    runtime = _ScriptedRuntime(["motion carries", "roll call begins", "meeting adjourned"])
+    worker = OfflineCaptionJobWorker(
+        jobs,
+        reviews,
+        runtime_factory=lambda: runtime,
+        settings=OfflineCaptionJobSettings(languages=("en",), chunk_seconds=2),
+        settings_provider=settings_store.load,
+    )
+    with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as client:
+        saved = client.put("/api/staff/captions/settings", json=settings.model_dump(mode="json"))
+        assert saved.status_code == 200, saved.text
+        assert RecordedCaptionSettingsStore(settings_store.path).load().vocabulary.terms == [
+            "Councilmember Rivera"
+        ]
+        result = client.post(
+            "/api/staff/captions/offline-jobs/batch", json={"asset_ids": ["one", "two"]}
+        )
+        assert result.status_code == 200, result.text
+        first_id = result.json()[0]["job"]["job_id"]
+        # Cancel from inside the first model call, not merely before a scan.
+        original = runtime.transcribe
+        cancelled = False
+
+        def transcribe(chunks, vocabulary=None):
+            nonlocal cancelled
+            yield from original(chunks, vocabulary)
+            if not cancelled and chunks[0].chunk_id.startswith("one-"):
+                cancelled = True
+                response = client.post(f"/api/staff/captions/offline-jobs/{first_id}/cancel")
+                assert response.status_code == 200
+
+        runtime.transcribe = transcribe
+        worker.run_once()
+        assert jobs.get(first_id).state == "cancelled"
+        assert len(reviews.list(asset_id="one")) == 1
+        assert len(reviews.list(asset_id="two")) == 3
+        assert not published_caption_sidecar(packages["one"]).exists()
+        assert runtime.seen_vocabulary.terms == ["Councilmember Rivera"]
+        retained = reviews.list(asset_id="one")[0]
+        reviews.approve(retained.review_item_id, CaptionReviewDecision())
+        assert client.post(f"/api/staff/captions/offline-jobs/{first_id}/retry").status_code == 200
+        worker.run_once()
+        assert len(reviews.list(asset_id="one")) == 3
+        assert reviews.get(retained.review_item_id).status == "approved"
+        assert jobs.get(first_id).state == "awaiting_review"
+        edited = client.post(
+            f"/api/staff/captions/review-items/{retained.review_item_id}/edit",
+            json={
+                "text": "Councilmember Rivera carries the motion.",
+                "start_seconds": 0.25,
+                "end_seconds": 1.5,
+            },
+        )
+        assert edited.status_code == 200, edited.text
+        # Retained review audio still has to cover a changed cue interval.
+        invalid = client.post(
+            f"/api/staff/captions/review-items/{retained.review_item_id}/edit",
+            json={"text": "Bad interval", "start_seconds": 0, "end_seconds": 100},
+        )
+        assert invalid.status_code == 409
+        for key in packages:
+            for cue in reviews.list(asset_id=key):
+                if cue.status == "pending":
+                    reviews.approve(cue.review_item_id, CaptionReviewDecision())
+        worker.run_once()
+        sidecar = published_caption_sidecar(packages["one"])
+        assert "00:00:00.250 --> 00:00:01.500" in sidecar.read_text(encoding="utf-8")
+        assert "Councilmember Rivera" in sidecar.read_text(encoding="utf-8")
+        assert jobs.get(first_id).state == "complete"
+        calls = len(runtime.seen_chunks)
+        assert (
+            client.post(
+                f"/api/staff/captions/review-items/{retained.review_item_id}/edit",
+                json={"text": "Corrected again", "start_seconds": 0.5, "end_seconds": 1.75},
+            ).status_code
+            == 200
+        )
+        requeue = client.post("/api/staff/captions/offline-jobs/batch", json={"asset_ids": ["one"]})
+        assert requeue.json()[0]["job"]["state"] == "awaiting_review"
+        worker.run_once()
+        assert len(runtime.seen_chunks) == calls
+        assert "00:00:00.500 --> 00:00:01.750" in sidecar.read_text(encoding="utf-8")
+        assert "Corrected again" in sidecar.read_text(encoding="utf-8")
+        assert (
+            client.post(
+                "/api/staff/captions/offline-jobs/batch",
+                json={"asset_ids": [str(i) for i in range(11)]},
+            ).status_code
+            == 422
+        )
+
+
+@pytest.mark.parametrize("completion", ["all_selected_languages", "english_reviewed"])
+def test_cancel_during_translation_prevents_local_and_cdn_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, completion: str
+) -> None:
+    jobs = InMemoryOfflineCaptionJobStore()
+    reviews = InMemoryCaptionReviewStore()
+    _seed_review_items(reviews, ["motion carries"])
+    _approve_all(reviews)
+    package = _package(tmp_path)
+    row = enqueue_offline_caption_job(
+        jobs, asset_id=_ASSET_ID, source_path=tmp_path / "meeting.wav", package_dir=package
+    )
+    jobs.save(row.model_copy(update={"state": "awaiting_review"}))
+    worker = OfflineCaptionJobWorker(
+        jobs,
+        reviews,
+        runtime_factory=lambda: _ScriptedRuntime(),
+        settings=OfflineCaptionJobSettings(
+            languages=("en", "es"), completion_requirement=completion
+        ),
+    )
+
+    def cancel_during_translation(*args):
+        jobs.save(row.model_copy(update={"state": "cancelled"}))
+        return
+
+    monkeypatch.setattr(worker, "_resolve_spanish_review", cancel_during_translation)
+    worker._translation_provider_factory = lambda: None
+    attached = []
+    monkeypatch.setattr(
+        "civiccast.captions.vod_job.attach_reviewed_captions", lambda *a, **kw: attached.append(a)
+    )
+    worker.run_once()
+    assert jobs.get(row.job_id).state == "cancelled"
+    assert attached == []
     assert not published_caption_sidecar(package).exists()

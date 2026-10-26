@@ -11,7 +11,9 @@ from pathlib import Path
 from threading import RLock
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from civiccast.captions.models import CustomVocabulary
 
 RecordedCaptionLanguage = Literal["en", "es"]
 CaptionCompletionRequirement = Literal["all_selected_languages", "english_reviewed"]
@@ -24,6 +26,7 @@ class RecordedCaptionSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    vocabulary: CustomVocabulary = Field(default_factory=CustomVocabulary)
     enabled: bool = True
     languages: tuple[RecordedCaptionLanguage, ...] = ("en", "es")
     completion_requirement: CaptionCompletionRequirement = "all_selected_languages"

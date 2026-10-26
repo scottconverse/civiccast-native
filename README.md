@@ -38,7 +38,7 @@ identities are recorded in
 
 ## Install and run
 
-Download the signed Beta 20 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
+Download the signed Beta 20 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools. Use Windows 11 x64 and a Windows administrator account. Allow about **100 GB free** when preparation and installation share a drive (including roughly **22 GB of model downloads**), plus recording space. Keep the complete kit for offline installation:
 
 ```powershell
 $installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta20.ps1'
@@ -49,7 +49,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Instal
 Keep the PowerShell window open until it reports **Done**. During silent setup,
 the installer writes a timestamped progress heartbeat before and after each
 step to `C:\ProgramData\CivicCast\install-progress.log`; its latest line
-names the step in progress.
+names the step in progress. If a download is interrupted, rerun the same command with the same destination; verified matching files are reused. If setup fails, keep its exact exit code and progress log and follow the recovery table in the installation guide. Do not uninstall or delete station data to retry.
 
 See [Install CivicCast on Windows](INSTALL-WINDOWS.md) for first setup, existing installations, offline copies and password recovery. Open **CivicCast Operator Console** after setup finishes.
 

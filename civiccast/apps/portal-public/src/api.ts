@@ -214,6 +214,12 @@ export function formatDateTime(value: string | null): string {
   }).format(new Date(value))
 }
 
+export function formatTranscriptTime(seconds: number): string {
+  const value = Math.max(0, Math.floor(seconds))
+  return [Math.floor(value / 3600), Math.floor(value / 60) % 60, value % 60]
+    .map((part) => String(part).padStart(2, '0')).join(':')
+}
+
 export function formatDuration(seconds: number | null): string {
   if (!seconds) return 'Duration not posted'
   if (seconds < 60) return `${Math.round(seconds)} sec`

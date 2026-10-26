@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 
-import { BackupSetupPanel, CostForecastPanel, R2ConciergeCard, SetupScreen } from './SetupScreen'
+import { BackupSetupPanel, CostForecastPanel, FirstRecordingProgress, R2ConciergeCard, SetupScreen } from './SetupScreen'
 
 afterEach(() => {
   cleanup()
@@ -37,6 +37,24 @@ function inputById(id: string) {
   if (!input) throw new Error(`missing input #${id}`)
   return input
 }
+
+it('reports actual recording progress, refreshes failures and links resident playback', async () => {
+  const fetch = vi.spyOn(globalThis, 'fetch')
+  fetch.mockImplementationOnce(() => jsonResponse({ detail: 'Storage unavailable' }, 503))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(<QueryClientProvider client={client}><MemoryRouter><FirstRecordingProgress /></MemoryRouter></QueryClientProvider>)
+  const retry = await screen.findByRole('button', { name: 'Retry recording check' })
+  fetch.mockImplementationOnce(() => jsonResponse([{ asset_id: 'welcome recording', title: 'Welcome recording',
+    manifest_url: '/media/vod/welcome/playlist.m3u8', published_at: '2026-10-26T00:00:00Z' }]))
+  fireEvent.click(retry)
+  expect(await screen.findByText('Published recording found: Welcome recording.')).toBeTruthy()
+  expect(screen.getByRole('link', { name: 'Check resident playback' }).getAttribute('href')).toBe('/#/watch/welcome%20recording')
+  expect(screen.getByText(/Publication status alone is not a playback test/)).toBeTruthy()
+  fetch.mockImplementationOnce(() => jsonResponse([]))
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh recording progress' }))
+  await waitFor(() => expect(screen.queryByRole('link', { name: 'Check resident playback' })).toBeNull())
+  expect(screen.getByText('Create sample media or upload a short clip below.')).toBeTruthy()
+})
 
 const profile = {
   station_name: 'CivicCast Test Station',

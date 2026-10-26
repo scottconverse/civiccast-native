@@ -1,6 +1,89 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Current delivery checkpoint - October 26, 2026
+## Active PR269 correction - October 26, 2026
+
+- Parent owns roadmap/merge. PR268 is merged; F4/F6/F7 acceptance delivered.
+  PR269 old head bfc4dc62 has required lint/operator/public-a11y failures;
+  ci-test waiter69829 still owned (run40283658614), Windows success, unit pending.
+  This is not a full CI pass. Correction now goes to the same reviewed PR.
+- Fixed exact legacy translated-cue lookup by asset/language/cue identity,
+  retaining source-window checks and failing closed for ambiguous matches.
+  Repackage4pass4.03s, timing2pass1.48s. Server-search empty result now shows
+  no-match; query-aware public fixture and both affected browser cases passed.
+- Corrected staff array/auth/seed-status fixtures and changed setup/caption copy
+  assertions. AppStaffLogin7pass2.10s; exact publish, pending elapsed and first-admin
+  browser cases passed. First-admin fixture still asserts the issued stored token.
+  No production auth change. Explicit migration assertions advance to actual0095;
+  schema/migration20pass9.30s plus remaining2pass3.04s. Ruff9files formatted/check
+  passed; affected portal TypeScript/ESLint and builds passed. No broad rerun.
+- Parent reviewed material corrections. N4 50cbb23a, N5 7be2ab22, N6 56614c62
+  are preserved on local serial descendant branches, unpushed. After correction
+  push, merge into N6 and advance explicit head assertions to actual0096, then N7.
+  N7 selected Spanish, Chinese (written variant explicit), Tagalog/Filipino,
+  Vietnamese, Arabic. N7/N8/F5 pending; no release/install/live-transmission claim.
+- Next: DCO correction commit/push, replace superseded CI ownership with one
+  waiter for the new candidate and inspect full required rollup at boundaries.
+  Existing waiter cancellation is Ctrl-C after verified owned session; no other
+  local helper/test process is live. Named recovery stashes remain untouched.
+
+## N1-N3 combined delivery - October 26, 2026
+
+- Parent owns roadmap/merge. PR268 merged07:03:52UTC, main5764afbcbdf757aa5b5ad6f91187283346ab2e94.
+  Frozen e615fc82 CI run40277731000 SUCCESS; waiter2108 exited0. Final rollup
+  21 SUCCESS/3 skipped release-only checks; all terminal. F4 abort isolation/native
+  supersede+Windows, F6 honest preview withdrawal and F7 decoded boundary delivered.
+  Historical original filesrc transient provenance remains unknown, not a new gate.
+- Reviewed DCO commits N1 8f98d6f3, N2 59b7e77a, N3 2dc66e85 share one follow-on
+  PR on feat/n3-caption-workbench, incorporating merged main and e615 diagnostics.
+  No product conflict; CURRENT was the sole merge conflict, retaining both ledgers.
+  Existing focused evidence below remains valid; no broad rerun for merge alone.
+- N4 partial implementation preserved in named stash 'N4 embed and scheduled
+  YouTube in progress before N1-N3 combined delivery', restore only on its child
+  feat/n4-embed-scheduled-youtube after incorporating this combined base. No live
+  local process or CI watcher. Next push combined PR, own one required CI waiter,
+  then restore N4. F1-F4/F6/F7 merged; F5,N4-N8 remain.
+- N2 implemented truthful first-recording progress from existing staff asset API,
+  retry/refresh and direct Assets/Publish/resident links. Sources select current
+  named channel profiles; stale selection falls back to a current profile.
+  Accepted source/media says Saved, with no playback/publication claim.
+- N2 isolated existing first-run test passed8.14s: fresh durable storage/admin/
+  recovery ack, real sample generation, Package still-private, Portal-only approve,
+  resident master/rendition/TS and actual FFmpeg video+audio decode. No providers,
+  station interruption, downloads or installer builds. Setup UI43pass with one
+  new exact-label fixture mismatch; corrected source test2pass. TypeScript and
+  affected ESLint passed. No further local test expansion needed; parent material
+  review complete. Docs/API/source checks remain as applicable.
+- README/install guide state required components, preparation100GB/models22GB,
+  progress-log and interrupted/mismatched-file recovery, preserve offline kit and
+  upgrades. Optional-model feasibility: requires coordinated signed six-component
+  activation/runtime contract; deferred, no acquisition implementation.
+- N1 evidence retained: backend230pass24.64s, public UI9pass, added no-transcript
+  workflow1pass/UI3pass, TypeScript/ESLint/Ruff. Source30->package28s correction,
+  withdrawal and signed/current-grant text checks passed. Existing media/paywall
+  limitation remains. Named N1 stash retained as recovery, restored on N1 only.
+- N3 implemented selected batch max10 through existing serial queue, truthful
+  state/cue/error progress, cancel/resume with retained review decisions, source
+  cue timing edits and stored local vocabulary reaching supported Whisper paths.
+  Migration0095 persists cancelled; conditional worker saves preserve cancellation.
+  Checks immediately before attach/CDN stop work cancelled during translation;
+  already-started publication may finish, documented in UI/help.
+- N3 focused backend146pass/1external-Postgres-skip19.79s; actual settings-file ->
+  worker hints + migration upgrade/downgrade/index + faster-whisper prompt3pass
+  4.59s. UI50 cases covered:49pass with stale intro assertion, corrected file
+  15pass; TypeScript/affected ESLint/Ruff/diff checks passed. Test fixture fixes
+  for new settings vocabulary response/mutation shape and unordered same-tick jobs
+  accounted for; no product failure hidden.
+- Timing-only English change invalidates derived Spanish interval approval.
+  Shared recorded identity includes interval; legacy target-only edits capture
+  immutable English source-window association (nullable0095 review columns), so
+  intended target timing and unchanged approvals survive. Existing offline suite
+  70pass4.98s; correction20pass/1external-PG-skip7.21s; durable provenance restart
+  plus review routes18pass8.71s. Parent correction recheck complete; live IDs unchanged.
+- API/manual/help/PDF/DOCX generated; final render55017 and API53841 terminal0.
+  No local jobs live. N3 DCO2dc66e85 committed after these focused checks;
+  required CI now runs once for the combined reviewed N1-N3 candidate.
+
+## Historical PR268 diagnostic preparation - October 26, 2026
 
 - PR268 frozen at a5122f08 until this diagnostic-only commit is pushed.
   Run40276241194 Windows job121419690914 failed F7 extraction: decoded text

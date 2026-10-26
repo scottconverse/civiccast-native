@@ -27,12 +27,14 @@ function stateTone(state: OfflineCaptionJobRecord['state']): { bg: string; label
   switch (state) {
     case 'complete':
       return { bg: 'var(--cc-ok-soft)', label: 'Complete' }
+    case 'cancelled':
+      return { bg: 'var(--cc-surface-2)', label: 'Cancelled' }
     case 'failed':
       return { bg: 'var(--cc-err-soft)', label: 'Failed' }
     case 'awaiting_review':
       return { bg: 'var(--cc-warn-soft)', label: 'Awaiting review' }
     default:
-      return { bg: 'var(--cc-warn-soft)', label: 'Transcribing…' }
+      return { bg: 'var(--cc-warn-soft)', label: 'Queued or transcribing…' }
   }
 }
 
@@ -43,8 +45,9 @@ function stateTone(state: OfflineCaptionJobRecord['state']): { bg: string; label
 // a bare "Pending" label that reads as stalled.
 function stateExplanation(job: OfflineCaptionJobRecord): string | null {
   if (job.state === 'pending') {
-    return 'Transcribing now. Measured ~37 seconds for 11 seconds of audio on a 32 GB CPU-only reference machine — expect several minutes for a full meeting recording, not seconds.'
+    return 'Queued or transcribing. The worker processes recordings serially; several minutes for a full meeting recording, not seconds, is normal. This state does not prove a model call is running.'
   }
+  if (job.state === 'cancelled') return 'Remaining work is cancelled. Resume from Review queue to reuse retained cues and review decisions.'
   if (job.state === 'awaiting_review') {
     return 'Transcription finished. The cues are waiting in the caption review queue for an operator to approve before they publish.'
   }
@@ -98,9 +101,10 @@ export function OfflineCaptionJobsView({
       </div>
       <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
         The background job that transcribes this recording for offline (VOD) captions.{' '}
-        <strong>Approving this recording&apos;s portal surface on the Publish dashboard is what
-        starts it</strong> — there is no separate &quot;generate captions&quot; button. A failed
-        job can be given a fresh attempt without re-approving publish.
+        Publishing queues captions when enabled. To caption existing packaged recordings,
+        open Review queue and use Caption selected. Failed jobs can be retried;
+        cancelled jobs can be resumed from the recording backlog.
+
       </p>
       {/* Candidate #17 tester finding 5: a running job showed only a static
           "Pending" badge, indistinguishable from a stalled one. This

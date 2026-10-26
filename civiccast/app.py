@@ -3395,7 +3395,40 @@ def _wire_durable_stores(app: FastAPI) -> None:
         return producer_id in store.known_producer_ids()
 
     def _resolve_custom_field_service() -> CustomFieldService:
+        from civiccast.captions.vod import published_caption_sidecar
+        from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
+        from civiccast.metadata.models import PublicTranscriptCue
+        from civiccast.stream.media_router import _package_dir_for_asset
+
         asset_store = PostgresAssetStore(_session_factory)
+
+        def _transcript(asset_id: str) -> list[PublicTranscriptCue]:
+            # Read the actual published artifact, already reviewed and mapped to
+            # the package timeline by F1. Never rebase mutable source cues again.
+            with _session_factory() as session:
+                try:
+                    package = _package_dir_for_asset(asset_id, session)
+                except HTTPException as exc:
+                    if exc.status_code == 404:
+                        return []
+                    raise
+            sidecar = published_caption_sidecar(package).resolve()
+            if not sidecar.is_relative_to(package.resolve()):
+                return []
+            try:
+                cues = load_caption_cues_from_timed_text(sidecar, source_id=asset_id)
+            except FileNotFoundError:
+                return []
+            return [
+                PublicTranscriptCue(
+                    cue_id=cue.cue_id,
+                    start_seconds=cue.start_seconds,
+                    end_seconds=cue.end_seconds,
+                    text=cue.text,
+                )
+                for cue in cues
+            ]
+
         return CustomFieldService(
             CustomFieldStore(_session_factory),
             asset_exists=lambda asset_id: asset_store.get_staff_row(asset_id) is not None,
@@ -3403,6 +3436,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
             public_asset_lister=lambda: [
                 asset for asset in asset_store.list() if asset.published_at is not None
             ],
+            transcript_provider=_transcript,
         )
 
     app.dependency_overrides[get_custom_field_service] = _resolve_custom_field_service

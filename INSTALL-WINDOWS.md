@@ -33,9 +33,14 @@ For download only, replace `-Install` with `-IncludePacks`. Keep the resulting f
 
 Open **CivicCast Operator Console** from the desktop or Start menu, or visit <http://127.0.0.1:8000/operator/> on the station computer.
 
-1. Name the station and create the first administrator.
-2. Print or save the recovery kit somewhere safe.
-3. Open **System Health**, then configure storage, channels and media or live sources.
+1. In **Setup**, prepare durable storage if prompted, then name the station and create the first administrator. Storage failures show the next recovery step; retry after correcting it.
+2. Print or save the recovery kit somewhere safe and confirm it is saved. Use the password you just created for normal sign-in; recovery codes are for a lost password.
+3. Follow **Your first published recording** on Setup. Create **Bundled sample video** or upload a short test clip under **Camera or test media**. Saving a source or upload does not prove playback.
+4. Open **Assets**, find the recording by title and choose **Package for playback**. Keep the page open until packaging finishes; correct any error before continuing.
+5. Open **Publish**, select that recording by title and approve only **Portal**. External archive, CDN and YouTube credentials are not prerequisites for this local recording workflow. Do not enter a secret a second time merely because another optional provider is not configured.
+6. Refresh recording progress on Setup. Open **Check resident playback** and verify picture, sound and any available captions. A published flag alone is not that check. Use **System Health** to check the actual installed/configured components before broadcasting.
+
+For a live source instead, choose a configured **Channel** by its displayed name in the source form, save the source, then run broadcast readiness/preflight. Saving an endpoint is not a successful connection test. Provider connection tests use saved details; a saved credential is not proof that its destination is reachable.
 
 The live-caption path automatically retries Whistle while Whisper supplies backup captions. Whistle is the CPU primary for live captions. Whisper supplies recorded transcription and live fallback; supported NVIDIA hardware can accelerate Whisper. The installation path does not require a dedicated GPU.
 
@@ -83,6 +88,8 @@ Downloading only setup, placing runtime packs flat beside it, or using a source 
 
 ## If installation fails
 
+If a download stops, rerun the same helper with the same destination; verified matching files are reused. Do not mix release versions or use `-Force` merely to retry. If verification reports an incomplete or mismatched file, preserve that exact message, move only the named downloaded file out of the kit, then rerun the same command to obtain that matching file again. Keep station data and the other verified downloads.
+
 Read `C:\ProgramData\CivicCast\install-progress.log`. Exit 110 concerns runtime-pack staging; exit 123 concerns station activation or its self-test. Preserve the log and actual exit code. An Apps entry or copied files alone do not prove success.
 
 First setup must be opened on the station. If its URL refuses connection, check the `CivicCastSupervisor` Windows service and installation log. A missing service is an installation failure, not a password problem.
@@ -98,3 +105,7 @@ records deferred field findings.
 Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
 
 Historical Beta 13 installation evidence: its normal Beta 11 upgrade, controlled interruption and same-candidate repair, and separate fresh installation apply to Beta 13 only. See the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Raw Whisper or Ollama directories do not substitute for signed station packs.
+
+## Selective model acquisition decision
+
+The current supported station activation contract requires all six signed station components, including both summary packs and translation. Removing one from a downloaded kit is not a supported small installation. Selective acquisition is feasible only with coordinated signed-index/activation/runtime changes and a smaller supported capability profile; it is deferred as separate implementation work. The complete offline kit and data-preserving upgrade route remain supported.

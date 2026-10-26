@@ -786,6 +786,16 @@ export interface CanonicalProfile {
   container?: string
 }
 
+export interface CaptionBatchRequest {
+  asset_ids: Array<string>
+}
+
+export interface CaptionBatchResult {
+  asset_id: string
+  job?: OfflineCaptionJobRecord | null
+  error?: string | null
+}
+
 export interface CaptionCue {
   cue_id: string
   start_seconds: number
@@ -802,6 +812,8 @@ export interface CaptionReviewDecision {
 
 export interface CaptionReviewEdit {
   text: string
+  start_seconds?: number | null
+  end_seconds?: number | null
   reviewer_note?: string | null
 }
 
@@ -817,6 +829,8 @@ export interface CaptionReviewItemResponse {
   review_item_id: string
   asset_id: string
   cue: CaptionCue
+  translation_source_start_seconds?: number | null
+  translation_source_end_seconds?: number | null
   language?: string
   status: 'pending' | 'approved' | 'edited' | 'rejected'
   original_text: string
@@ -1645,6 +1659,11 @@ export interface CustomFieldValue {
 export interface CustomFieldValueInput {
   field_id: string
   value: string
+}
+
+export interface CustomVocabulary {
+  terms?: Array<string>
+  initial_prompt?: string | null
 }
 
 export interface DeckLinkEngineRef {
@@ -2879,7 +2898,7 @@ export interface OfflineCaptionJobRecord {
   asset_id: string
   source_path: string
   package_dir: string
-  state: 'pending' | 'awaiting_review' | 'complete' | 'failed'
+  state: 'pending' | 'awaiting_review' | 'complete' | 'failed' | 'cancelled'
   attempts?: number
   next_attempt_at?: string | null
   cue_count?: number
@@ -3458,6 +3477,8 @@ export interface PublicSearchAsset {
   duration_seconds?: number | null
   published_at?: string | null
   custom_fields?: Array<PublicCustomFieldValue>
+  transcript_matches?: Array<PublicTranscriptCue>
+  transcript_available?: boolean | null
 }
 
 export type PublicStorageSetupRequest = Record<string, never>
@@ -3471,6 +3492,19 @@ export interface PublicSubmissionStatus {
   status_message: string
   decline_reason?: string | null
   schedule_handoff?: ScheduleHandoff | null
+}
+
+export interface PublicTranscript {
+  asset_id: string
+  available: boolean
+  cues?: Array<PublicTranscriptCue>
+}
+
+export interface PublicTranscriptCue {
+  cue_id: string
+  start_seconds: number
+  end_seconds: number
+  text: string
 }
 
 export interface PublishApprovalRequest {
@@ -3637,6 +3671,7 @@ export interface RecordExportResponse {
 }
 
 export interface RecordedCaptionSettings {
+  vocabulary?: CustomVocabulary
   enabled?: boolean
   languages?: Array<'en' | 'es'>
   completion_requirement?: 'all_selected_languages' | 'english_reviewed'

@@ -263,7 +263,8 @@ describe('StationProfileScreen', () => {
         enabled: true,
         languages: ['en'],
         completion_requirement: 'all_selected_languages',
-      }, expect.anything()),
+        vocabulary: { terms: [] },
+      }),
     )
   })
 
@@ -279,8 +280,17 @@ describe('StationProfileScreen', () => {
         enabled: true,
         languages: ['en', 'es'],
         completion_requirement: 'english_reviewed',
-      }, expect.anything()),
+        vocabulary: { terms: [] },
+      }),
     )
+  })
+
+  it('saves local caption names as cleaned hints without approving captions', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const view = renderScreen()
+    fireEvent.change(await view.findByLabelText('Local caption vocabulary'), { target: { value: 'Councilmember Rivera\nPinegrove\n' } })
+    fireEvent.click(await view.findByRole('button', { name: 'Save recorded-caption settings' }))
+    await waitFor(() => expect(vi.mocked(saveRecordedCaptionSettings)).toHaveBeenCalledWith(expect.objectContaining({ vocabulary: { terms: ['Councilmember Rivera', 'Pinegrove'] } })))
   })
 
   it('copies the recordings path and explains why Explorer may not find it', async () => {

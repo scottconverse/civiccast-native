@@ -858,8 +858,8 @@ class TestMigration0056AndMerge:
         # guest media-control requests. 0090 indexes consumed egress commands
         # for bounded history pruning; later delivery-outcome migrations follow it.
         # Beta 19 adds board audio gain (0093) and live-video zones (0094).
-        assert list(heads) == ["0094_cg_live_video_zone"], (
-            f"Expected single head 0094_cg_live_video_zone, got {heads!r}"
+        assert list(heads) == ["0095_caption_job_cancellation"], (
+            f"Expected single head 0095_caption_job_cancellation, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

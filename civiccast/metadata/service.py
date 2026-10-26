@@ -44,6 +44,8 @@ from civiccast.metadata.models import (
     CustomFieldValue,
     PublicCustomFieldValue,
     PublicSearchAsset,
+    PublicTranscript,
+    PublicTranscriptCue,
 )
 from civiccast.metadata.store import (
     CustomFieldStore,
@@ -158,11 +160,26 @@ class CustomFieldService:
         asset_exists: AssetResolver = _default_asset_exists,
         producer_exists: ProducerResolver = _default_producer_exists,
         public_asset_lister: PublicAssetLister = _default_public_assets,
+        transcript_provider: Callable[[str], list[PublicTranscriptCue]] = lambda _asset: [],
     ) -> None:
         self._store = store
         self._asset_exists = asset_exists
         self._producer_exists = producer_exists
         self._public_asset_lister = public_asset_lister
+        self._transcript_provider = transcript_provider
+
+    def public_transcript(
+        self, asset_id: str, *, transcript_access: Callable[[str], bool]
+    ) -> PublicTranscript | None:
+        if not any(
+            asset.asset_id == asset_id and asset.published_at is not None
+            for asset in self._public_asset_lister()
+        ):
+            return None
+        if not transcript_access(asset_id):
+            raise PermissionError("Sign in with access to this recording to read its transcript.")
+        cues = self._transcript_provider(asset_id)
+        return PublicTranscript(asset_id=asset_id, available=bool(cues), cues=cues)
 
     # --- field definitions ----------------------------------------------
 
@@ -232,6 +249,7 @@ class CustomFieldService:
         *,
         station_id: str,
         query_params: Mapping[str, str],
+        transcript_access: Callable[[str], bool] = lambda _asset: False,
     ) -> list[PublicSearchAsset]:
         """Public custom-field search over packaged assets (the DC-5 exposure boundary).
 
@@ -263,7 +281,32 @@ class CustomFieldService:
         keys_by_field_id = {d.field_id: d.key for d in exposed}
         labels_by_field_id = {d.field_id: d.label for d in exposed}
         results: list[PublicSearchAsset] = []
+        needle = query_params.get("q", "").strip().casefold()[:200]
         for asset in assets:
+            if asset.published_at is None:
+                continue
+            matches: list[PublicTranscriptCue] = []
+            cues = (
+                self._transcript_provider(asset.asset_id)
+                if transcript_access(asset.asset_id)
+                else None
+            )
+            if needle:
+                if cues is not None:
+                    for cue in cues:
+                        position = cue.text.casefold().find(needle)
+                        if position >= 0:
+                            # Bound excerpts without dropping the matching passage.
+                            start = max(0, position - 90)
+                            excerpt = cue.text[start : position + len(needle) + 150]
+                            matches.append(cue.model_copy(update={"text": excerpt}))
+                            if len(matches) == 3:
+                                break
+                if (
+                    not matches
+                    and needle not in f"{asset.title} {asset.description or ''}".casefold()
+                ):
+                    continue
             exposed_values = [
                 PublicCustomFieldValue(
                     key=keys_by_field_id[v.field_id],
@@ -276,6 +319,8 @@ class CustomFieldService:
                 PublicSearchAsset(
                     **asset.model_dump(),
                     custom_fields=exposed_values,
+                    transcript_matches=matches,
+                    transcript_available=None if cues is None else bool(cues),
                 )
             )
         return results

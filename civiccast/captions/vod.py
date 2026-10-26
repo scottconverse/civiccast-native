@@ -57,7 +57,7 @@ import json
 import math
 import subprocess
 import tempfile
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -358,6 +358,7 @@ def transcribe_asset_captions(
     vocabulary: CustomVocabulary | None = None,
     chunk_seconds: float = OFFLINE_CAPTION_CHUNK_SECONDS,
     reviewer_note: str = OFFLINE_REVIEWER_NOTE,
+    cancelled: Callable[[], bool] | None = None,
 ) -> OfflineTranscription:
     """Transcribe a recording and queue every cue for operator review.
 
@@ -406,6 +407,8 @@ def transcribe_asset_captions(
         created: list[str] = []
         duplicates: list[str] = []
         for chunk in chunks:
+            if cancelled is not None and cancelled():
+                raise RuntimeError("Caption job cancelled at an audio chunk boundary.")
             audio_evidence_factory = (
                 _offline_audio_evidence_factory(chunk, package_dir)
                 if package_dir is not None
@@ -678,6 +681,40 @@ def attach_reviewed_captions(
     )
 
 
+def recorded_translation_cue_id(
+    review_store: CaptionReviewStore,
+    asset_id: str,
+    cue: CaptionCue,
+    language: str,
+) -> str:
+    """Bind reviewed translation to wording and interval; retain unchanged legacy decisions."""
+    legacy = translated_cue_id(cue.cue_id, language, source_text=cue.text)
+    legacy_cue = cue.model_copy(update={"cue_id": legacy})
+    existing = review_store.get(review_item_id_for_cue(asset_id, legacy_cue))
+    if existing is None:
+        # Review-item IDs were operator/API supplied before canonical IDs were
+        # introduced. The exact translated cue identity still binds wording.
+        matches = [
+            item
+            for item in review_store.list(asset_id=asset_id, language=language)
+            if item.cue.cue_id == legacy
+        ]
+        existing = matches[0] if len(matches) == 1 else None
+    if existing is not None:
+        source_start = existing.translation_source_start_seconds
+        source_end = existing.translation_source_end_seconds
+        if source_start is None:
+            source_start, source_end = existing.cue.start_seconds, existing.cue.end_seconds
+        if source_start == cue.start_seconds and source_end == cue.end_seconds:
+            return legacy
+    return translated_cue_id(
+        cue.cue_id,
+        language,
+        source_text=cue.text,
+        source_window=(cue.start_seconds, cue.end_seconds),
+    )
+
+
 def reattach_packaged_captions(
     original_package: Path,
     replacement_package: Path,
@@ -698,7 +735,7 @@ def reattach_packaged_captions(
     spanish_cues: list[CaptionCue] | None = None
     if published_spanish_caption_sidecar(original_package).is_file():
         expected_ids = {
-            translated_cue_id(cue.cue_id, SPANISH_CAPTION_LANGUAGE, source_text=cue.text)
+            recorded_translation_cue_id(review_store, asset_id, cue, SPANISH_CAPTION_LANGUAGE)
             for cue in english.cues
         }
         spanish = reviewed_caption_cues(
@@ -740,7 +777,7 @@ def queue_translated_captions(
     low-confidence acoustic guess). The operator still reviews the wording;
     they simply are not blocked on nonexistent audio.
 
-    Idempotent per asset AND per source wording: Spanish review-item ids
+    Idempotent per asset, source wording AND interval: Spanish review-item ids
     derive from ``(asset_id, "<en-cue-id>:es:<digest of the English text>")``
     via :func:`~civiccast.translate.service.translated_cue_id` and
     :func:`~civiccast.captions.pipeline.review_item_id_for_cue`, so a re-run
@@ -774,10 +811,11 @@ def queue_translated_captions(
     # than silently binding a translation to the wrong source wording.
     for source_cue, translated in zip(cues, result.cues, strict=True):
         spanish_cue = CaptionCue(
-            cue_id=translated_cue_id(
-                source_cue.cue_id,
+            cue_id=recorded_translation_cue_id(
+                review_store,
+                asset_id,
+                source_cue,
                 translation_target.target_language,
-                source_text=source_cue.text,
             ),
             start_seconds=translated.start_seconds,
             end_seconds=translated.end_seconds,

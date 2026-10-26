@@ -270,6 +270,15 @@ Get a single asset by id.
 - Request body: none
 - Responses: 200 `AssetMetadata`; 404 Asset not found
 
+### `GET /api/public/assets/{asset_id}/transcript`
+
+Read the current published reviewed transcript.
+
+- Access: public
+- Parameters: `asset_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `PublicTranscript`; 403 Viewer access required; 404 Recording not published; 503 Durable storage is not ready yet.
+
 ### `GET /api/public/cg/channels/{channel_id}/bulletins`
 
 Read approved community bulletin-board items.
@@ -590,7 +599,7 @@ List committed (published) public premieres for the Coming Up widget.
 Public custom-field search (exposed fields only).
 
 - Access: public
-- Parameters: `cf.<key>` (query, optional): `string` -- Exact-match facet: filter to assets whose custom field <key> equals this value (canonical string compare). <key> is a field's immutable machine key. Only fields that are BOTH searchable and api_exposed are eligible; a key resolving to a hidden/unknown field is silently ignored (never a 400) so a hidden field can be neither confirmed nor used to enumerate assets (DC-5). Multiple cf.* filters compose as AND.; `cf.<key>_gte` (query, optional): `string` -- Inclusive lower bound for a number or date field (matched against the denormalized value_num / value_date). Combine with cf.<key>_lte for a closed range; either bound alone is valid. A malformed/non-finite bound is silently ignored. Same searchable+api_exposed-only / silently-ignored (DC-5) rule as the exact-match facet.; `cf.<key>_lte` (query, optional): `string` -- Inclusive upper bound for a number or date field (matched against the denormalized value_num / value_date). See cf.<key>_gte; same exposed-only / silently-ignored (DC-5) semantics.
+- Parameters: `q` (query, optional): `string` -- Search titles, descriptions and accessible published reviewed transcript passages.; `cf.<key>` (query, optional): `string` -- Exact-match facet: filter to assets whose custom field <key> equals this value (canonical string compare). <key> is a field's immutable machine key. Only fields that are BOTH searchable and api_exposed are eligible; a key resolving to a hidden/unknown field is silently ignored (never a 400) so a hidden field can be neither confirmed nor used to enumerate assets (DC-5). Multiple cf.* filters compose as AND.; `cf.<key>_gte` (query, optional): `string` -- Inclusive lower bound for a number or date field (matched against the denormalized value_num / value_date). Combine with cf.<key>_lte for a closed range; either bound alone is valid. A malformed/non-finite bound is silently ignored. Same searchable+api_exposed-only / silently-ignored (DC-5) rule as the exact-match facet.; `cf.<key>_lte` (query, optional): `string` -- Inclusive upper bound for a number or date field (matched against the denormalized value_num / value_date). See cf.<key>_gte; same exposed-only / silently-ignored (DC-5) semantics.
 - Request body: none
 - Responses: 200 `Array<PublicSearchAsset>`; 503 Durable storage is not ready yet.
 
@@ -1787,18 +1796,36 @@ Add external caption appliance output to the review queue.
 List offline caption jobs (K3) for operator visibility.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
-- Parameters: `asset_id` (query, optional): `string | null`; `state` (query, optional): `'pending' | 'awaiting_review' | 'complete' | 'failed' | null`
+- Parameters: `asset_id` (query, optional): `string | null`; `state` (query, optional): `'pending' | 'awaiting_review' | 'complete' | 'failed' | 'cancelled' | null`
 - Request body: none
 - Responses: 200 `Array<OfflineCaptionJobRecord>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Offline caption job store is not configured
 
-### `POST /api/staff/captions/offline-jobs/{job_id}/retry`
+### `POST /api/staff/captions/offline-jobs/batch`
 
-Manually retry a failed offline caption job (K3).
+Queue up to ten selected recordings for caption review.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `CaptionBatchRequest`
+- Responses: 200 `Array<CaptionBatchResult>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/captions/offline-jobs/{job_id}/cancel`
+
+Cancel remaining caption work at the next audio chunk boundary.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `job_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `OfflineCaptionJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Offline caption job not found; 409 Only a failed job can be manually retried; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Offline caption job store is not configured
+- Responses: 200 `OfflineCaptionJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/captions/offline-jobs/{job_id}/retry`
+
+Retry failed or resume cancelled offline caption work.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `job_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `OfflineCaptionJobRecord`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Offline caption job not found; 409 Only failed or cancelled jobs can be retried or resumed; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Offline caption job store is not configured
 
 ### `GET /api/staff/captions/review-items`
 
@@ -5593,6 +5620,16 @@ Read CivicCast local federation metadata.
 - `video_codec` (optional): `string`
 - `width` (optional): `number`
 
+### `CaptionBatchRequest`
+
+- `asset_ids` (required): `Array<string>`
+
+### `CaptionBatchResult`
+
+- `asset_id` (required): `string`
+- `error` (optional): `string | null`
+- `job` (optional): `OfflineCaptionJobRecord | null`
+
 ### `CaptionCue`
 
 - `confidence` (required): `number`
@@ -5609,7 +5646,9 @@ Read CivicCast local federation metadata.
 
 ### `CaptionReviewEdit`
 
+- `end_seconds` (optional): `number | null`
 - `reviewer_note` (optional): `string | null`
+- `start_seconds` (optional): `number | null`
 - `text` (required): `string`
 
 ### `CaptionReviewItemRequest`
@@ -5633,6 +5672,8 @@ Read CivicCast local federation metadata.
 - `reviewed_text` (optional): `string | null`
 - `reviewer_note` (optional): `string | null`
 - `status` (required): `'pending' | 'approved' | 'edited' | 'rejected'`
+- `translation_source_end_seconds` (optional): `number | null`
+- `translation_source_start_seconds` (optional): `number | null`
 - `updated_at` (required): `string`
 
 ### `CaptionStatusResponse`
@@ -6453,6 +6494,11 @@ Read CivicCast local federation metadata.
 
 - `field_id` (required): `string`
 - `value` (required): `string`
+
+### `CustomVocabulary`
+
+- `initial_prompt` (optional): `string | null`
+- `terms` (optional): `Array<string>`
 
 ### `DeckLinkEngineRef`
 
@@ -7697,7 +7743,7 @@ rule (S13 §5.1).
 - `package_dir` (required): `string`
 - `published_cue_count` (optional): `number`
 - `source_path` (required): `string`
-- `state` (required): `'pending' | 'awaiting_review' | 'complete' | 'failed'`
+- `state` (required): `'pending' | 'awaiting_review' | 'complete' | 'failed' | 'cancelled'`
 - `updated_at` (required): `string`
 
 ### `OutboxRecord`
@@ -8270,6 +8316,8 @@ rule (S13 §5.1).
 - `poster_url` (optional): `string | null` -- Poster image URL shown before play (HTTPS).
 - `published_at` (optional): `string | null` -- Publication timestamp (UTC, ISO 8601).
 - `title` (required): `string`
+- `transcript_available` (optional): `boolean | null`
+- `transcript_matches` (optional): `Array<PublicTranscriptCue>`
 
 ### `PublicStorageSetupRequest`
 
@@ -8285,6 +8333,19 @@ rule (S13 §5.1).
 - `submission_id` (required): `string`
 - `title` (required): `string`
 - `updated_at` (required): `string`
+
+### `PublicTranscript`
+
+- `asset_id` (required): `string`
+- `available` (required): `boolean`
+- `cues` (optional): `Array<PublicTranscriptCue>`
+
+### `PublicTranscriptCue`
+
+- `cue_id` (required): `string`
+- `end_seconds` (required): `number`
+- `start_seconds` (required): `number`
+- `text` (required): `string`
 
 ### `PublishApprovalRequest`
 
@@ -8454,6 +8515,7 @@ rule (S13 §5.1).
 - `completion_requirement` (optional): `'all_selected_languages' | 'english_reviewed'`
 - `enabled` (optional): `boolean`
 - `languages` (optional): `Array<'en' | 'es'>`
+- `vocabulary` (optional): `CustomVocabulary`
 
 ### `RecordingInputPreset`
 

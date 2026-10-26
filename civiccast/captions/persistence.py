@@ -37,6 +37,7 @@ from sqlalchemy import (
     Text,
     select,
     text,
+    update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -52,6 +53,8 @@ from civiccast.captions.review import (
     CaptionReviewItemNotFoundError,
     CaptionReviewItemResponse,
     CaptionReviewStatus,
+    edited_caption_cue,
+    legacy_translation_source_window,
     require_low_confidence_approval_evidence,
 )
 from civiccast.captions.vod_job import (
@@ -113,6 +116,8 @@ class CaptionReviewItem(Base):
         String(12), nullable=False, default="en", server_default="en"
     )
     cue_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    translation_source_start_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    translation_source_end_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     start_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     end_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
@@ -312,6 +317,32 @@ class PostgresCaptionReviewStore:
     def edit(self, review_item_id: str, payload: CaptionReviewEdit) -> CaptionReviewItemResponse:
         with self._session_factory() as session:
             row = self._require_row(session, review_item_id)
+            if (
+                payload.start_seconds is not None
+                and row.language != "en"
+                and row.translation_source_start_seconds is None
+            ):
+                sources = [
+                    _row_cue(source).model_copy(
+                        update={"text": source.reviewed_text or source.original_text}
+                    )
+                    for source in session.execute(
+                        select(CaptionReviewItem).where(
+                            CaptionReviewItem.asset_id == row.asset_id,
+                            CaptionReviewItem.language == "en",
+                        )
+                    ).scalars()
+                ]
+                window = legacy_translation_source_window(_row_cue(row), row.language, sources)
+                if window is not None:
+                    row.translation_source_start_seconds, row.translation_source_end_seconds = (
+                        window
+                    )
+            changed = edited_caption_cue(
+                _row_cue(row), payload, _row_audio_evidence(row), review_item_id
+            )
+            row.start_seconds = changed.start_seconds
+            row.end_seconds = changed.end_seconds
             row.status = "edited"
             row.reviewed_text = payload.text
             row.reviewer_note = payload.reviewer_note
@@ -349,6 +380,8 @@ def _to_response(row: CaptionReviewItem) -> CaptionReviewItemResponse:
         asset_id=row.asset_id,
         cue=_row_cue(row),
         language=row.language,
+        translation_source_start_seconds=row.translation_source_start_seconds,
+        translation_source_end_seconds=row.translation_source_end_seconds,
         status=row.status,  # type: ignore[arg-type]
         original_text=row.original_text,
         reviewed_text=row.reviewed_text,
@@ -403,7 +436,7 @@ class OfflineCaptionJob(Base):
     __tablename__ = "offline_caption_jobs"
     __table_args__ = (
         CheckConstraint(
-            "state IN ('pending', 'awaiting_review', 'complete', 'failed')",
+            "state IN ('pending', 'awaiting_review', 'complete', 'failed', 'cancelled')",
             name="offline_caption_jobs_state_check",
         ),
         CheckConstraint("attempts >= 0", name="offline_caption_jobs_attempts_check"),
@@ -472,11 +505,30 @@ class PostgresOfflineCaptionJobStore:
                 raise OfflineCaptionJobConflictError(record.asset_id) from exc
         return record
 
-    def save(self, record: OfflineCaptionJobRecord) -> OfflineCaptionJobRecord:
+    def save(
+        self, record: OfflineCaptionJobRecord, *, preserve_cancelled: bool = False
+    ) -> OfflineCaptionJobRecord:
         with self._session_factory() as session:
-            row = session.get(OfflineCaptionJob, record.job_id)
+            row = session.get(OfflineCaptionJob, record.job_id, with_for_update=True)
+            if preserve_cancelled and row is not None and row.state == "cancelled":
+                return _to_job_record(row)
             if row is None:
                 session.add(_job_row(record))
+            elif preserve_cancelled:
+                session.execute(
+                    update(OfflineCaptionJob)
+                    .where(OfflineCaptionJob.job_id == record.job_id)
+                    .where(OfflineCaptionJob.state != "cancelled")
+                    .values(
+                        state=record.state,
+                        attempts=record.attempts,
+                        next_attempt_at=record.next_attempt_at,
+                        cue_count=record.cue_count,
+                        published_cue_count=record.published_cue_count,
+                        last_error=record.last_error,
+                        updated_at=record.updated_at,
+                    )
+                )
             else:
                 row.state = record.state
                 row.attempts = record.attempts
@@ -501,6 +553,9 @@ class PostgresOfflineCaptionJobStore:
                 # catchable conflict instead of a raw IntegrityError.
                 session.rollback()
                 raise OfflineCaptionJobConflictError(record.asset_id) from exc
+            if preserve_cancelled and row is not None:
+                session.refresh(row)
+                return _to_job_record(row)
         return record
 
     def get(self, job_id: str) -> OfflineCaptionJobRecord | None:

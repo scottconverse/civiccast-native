@@ -1875,21 +1875,25 @@ See [Running the meeting](#ch-running-meeting) for the Channels screen.
 
 ### Offline captions: how a recording gets its captions
 
-Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, whether to include Spanish alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Captions for a recording are made in the background after you approve publishing on the Publish screen; there is no separate "make captions" button.
+Configure recorded captions under **Setup > Station Profile > Recorded captions**. Choose whether processing is enabled, whether to include Spanish alongside English, and whether completion waits for all selected languages or only reviewed English. These are station choices. Publishing can queue captions automatically. For existing packaged recordings, open **Review queue > Recording caption backlog**, select up to ten recordings and click **Caption selected**. Each recording reports its own queue or packaging error; the existing serial worker processes the batch within the station’s current resource limits. Selecting a recording with an active job reuses that job. Inference completion means cues await human review, not that their words are accurate or approved.
 
 1. With recorded captions enabled, you approve publishing the recording. CivicCast queues a caption job for it first, even if the Portal row is not selected. If it cannot queue the job, publication reports the failure. A recording with no stored video file gets no caption job. When recorded captions are disabled, new caption jobs are not created and existing jobs pause until processing is enabled again.
-2. The job transcribes the audio into English cue lines. On the video's detail page, the **Offline caption jobs** card shows **Transcribing…**. A full meeting can take several minutes, not seconds.
+2. The job transcribes the audio into English cue lines. On the video's detail page, the **Offline caption jobs** card shows **Queued or transcribing…**. A full meeting can take several minutes, not seconds.
 3. When transcription ends, the card shows **Awaiting review**. The cues are now in the **Review queue**.
 4. You decide every English cue. If Spanish is selected, CivicCast also translates the reviewed English and queues the Spanish cues for review.
 5. With **all selected languages** required, the selected tracks attach after their review is finished. With **reviewed English** required, the English track can attach first; selected Spanish captions attach later after their own review. English-only jobs do not need a translator or Spanish review.
 
 > **Note:** Changing the completion setting never publishes unreviewed caption text. Disabling processing does not mark an uncaptioned recording as captioned.
 
-If the job runs out of attempts, the card shows **Failed** with the reason in the **Last error** column. A records clerk can click **Retry** and confirm "Retry this offline caption job?". This restarts transcription from scratch with a fresh attempt budget and discards partial progress. Without the records clerk role the card says "Retrying a failed job requires the records clerk role."
+If the job runs out of attempts, the card shows **Failed** with the reason in the **Last error** column. A records clerk can click **Retry** and confirm "Retry this offline caption job?". This resets the attempt budget. A transcription retry scans audio again but preserves retained cues and review decisions. Without the records clerk role the card says "Retrying a failed job requires the records clerk role."
+
+In the recording backlog, **Cancel** stops remaining work at the next audio chunk boundary. An in-flight model call may finish first, and a publication write already started may finish. Existing review decisions and published captions remain. **Resume** keeps those decisions; unfinished transcription scans again without replacing existing cues, while a completed transcription returns to review/publication. **Retry** is available after a failure. Read the recording’s error before trying again.
+
+Under **Station Profile > Recorded captions**, enter local names and terms one per line (up to 100 terms, 120 characters each). The saved hints reach the recorded-audio path’s faster-whisper and Whistle Whisper adapters as their initial prompt on the next scan. They do not apply to every possible caption engine, guarantee spelling, alter existing cues, or approve captions.
 
 The job can also be held. These are the reasons CivicCast puts on the row:
 
-- Every English cue was rejected. Open the Review queue, choose English, and edit or approve cues. If the audio is truly unusable, ask a technical administrator to cancel the job.
+- Every English cue was rejected. Open the Review queue, choose English, and edit or approve cues. If the audio is truly unusable, use **Cancel** in the recording caption backlog.
 - Every selected Spanish cue was rejected. Open the Review queue, choose Spanish, and edit or approve cues. The Spanish track attaches once review is complete and at least one cue is approved or edited. Under **Attach English after its review**, reviewed English can already be available.
 - Spanish is selected but no translation model is available. The row says to install or repair it under "Settings > AI Models > Translation" and run 'civiccast doctor'. With **Wait for every selected language**, CivicCast retries with growing waits; after its attempts run out, the card shows **Failed** and a records clerk must click **Retry** after repair. With **Attach English after its review**, reviewed English attaches while the active job waits for Spanish. English-only jobs do not encounter this hold.
 
@@ -1923,6 +1927,12 @@ Approved and Edited cues both become captions, using the reviewed text. Rejected
 > **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. **Save edit** counts as a decision for the caption track. For AI summaries, open **Edited** and approve the saved correction as well; the console's summary workflow uses Approved cues only.
 
 > **Warning:** **Reject** asks no question and discards the reviewed text. A rejected cue can be approved again later, which then approves the machine's original text, not your earlier correction.
+
+#### Correct cue timing and republish
+
+Edit **Start (seconds)** and **End (seconds)** alongside **Reviewed text**, then click **Save edit**. Fractional seconds are accepted; the start must be non-negative and the end must be later. When retained review audio exists, it must cover the entire changed interval. An out-of-range edit explains the missing coverage and leaves the stored cue unchanged. Timings are source-recording seconds; the existing package timeline maps them into trimmed playback.
+
+For a completed recording, select it again in **Recording caption backlog** and click **Caption selected**. CivicCast republishes the current reviewed cues without repeating inference. Pending cues still hold publication; no batch action approves them. If Spanish is selected, changing English wording or timing queues a fresh Spanish cue for human review before the affected translated track can publish. Unchanged older Spanish review decisions remain valid. Check the resident caption track after the job reports reviewed captions attached.
 
 #### Low-confidence cues
 
@@ -2227,7 +2237,7 @@ The Home page reads the real emergency notice for its current channel automatica
 #### Recordings: search and filters
 
 1. Click **Recordings**.
-2. Type words in **Search recordings** and click **Search** (pressing Enter works too). The search looks only at the title and the description, not at captions, agendas or the spoken words. It matches any part of a word, and capital letters do not matter.
+2. Type words in **Search recordings** and click **Search** (pressing Enter works too). Search matches titles, descriptions and spoken words in the current published, reviewed transcript. It matches any part of a word, and capital letters do not matter. Matching spoken passages show a timestamp and excerpt; choose one to open the recording at that moment. Recordings without a published transcript still appear in browsing and title/description search.
 3. To narrow results, use **Year** (the years of published recordings), **Meeting body** (the meeting body on the recording, such as "City Council") and any extra menus your station has made.
 4. Use **Previous**, the page numbers and **Next** to move through the results. There are 12 recordings per page.
 
@@ -2238,6 +2248,10 @@ Meeting body and extra fields are set by staff on the video's detail page. A rec
 ![The Recordings page with the search box, the Year and Meeting body menus, and recording cards.](manual/images/portal-recordings.png){width=90%}
 
 *Figure: the Recordings page.*
+
+The Watch page includes a keyboard-accessible **Transcript** with timestamp links. Choose a line to seek to that passage. These times follow the published video's trimmed playback timeline. **Refresh transcript** reads the latest published corrections. A missing transcript is labeled honestly; it does not mean the recording is unavailable.
+
+For a recording that requires access, transcript text and search excerpts require a verified magic-link session and a current grant. An email typed into the browser is not sufficient proof. Reopen a valid magic link if the transcript asks you to sign in again. Withdrawal removes the recording and transcript from these public endpoints. This text access check does not change the pre-existing media or paywall authorization behavior.
 
 #### Schedule
 
@@ -3477,6 +3491,21 @@ Open the **CivicCast Operator Console** shortcut (or **Open operator console**) 
 6. Tick "I have saved or printed this kit..." (it unlocks after you use **Print kit** or **Save kit**), then select **Continue to the console**. Navigation stays locked until the kit is confirmed, and the browser warns you if you leave first.
 
 You should see "Setup complete" or "Signed in", the **First-run defaults** card, and the setup tools: **Camera or test media**, **Backup destination**, **Storage and viewing estimate** and **Provider setup**. Later sign-ins use **Admin sign-in** on the same page and land on the Readiness screen.
+
+#### Reach one working recording
+
+The **Your first published recording** card checks saved media, playback packages and publication from current station records. Use **Refresh recording progress** after work in another screen; a failed check has **Retry recording check**. The initial welcome sample may already be published. Choose **Check resident playback** and confirm picture, sound and available captions; publication alone does not prove playback.
+
+If no recording is published yet:
+
+1. Under **Camera or test media**, create **Bundled sample video** or upload a short test clip. **Saved** means accepted, not connected, playable or public.
+2. Open **Assets**, find the video by title and choose **Package for playback**. Wait for completion and correct any error.
+3. Open **Publish**, select that recording by title, review its metadata and approve **Portal**. External providers are optional for this local workflow. A saved provider credential is not a successful connection test; test configured destinations using their existing saved details.
+4. Refresh recording progress, open **Check resident playback**, and verify the video and audio. Use **System Health** to check actual configured components before broadcasting.
+
+For a live source, choose a **Channel** by its displayed name, enter the source details, save, then run broadcast readiness/preflight. The selection uses current station channel profiles and requires no internal channel identifier.
+
+The supported download keeps the full offline kit. Optional model acquisition is deferred: activation currently requires all six signed station components, including both summary packs and translation. A smaller installation needs a coordinated signed activation/runtime capability contract; deleting packs from the current kit is not supported. Existing upgrades preserve station data; do not uninstall to retry a failed setup.
 
 A lost password is recovered with **Use recovery code**: the first click arms it ("This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm.").
 

@@ -187,3 +187,17 @@ describe('ReviewCard low-confidence policy', () => {
     expect(onApprove).toHaveBeenCalledWith(highConfidence, false)
   })
 })
+
+
+it('saves text and fractional cue timing, blocking reversed intervals', () => {
+  const onEdit = vi.fn()
+  const cue = item({ low_confidence: false })
+  const view = render(<ReviewCard item={cue} busy={false} onApprove={vi.fn()} onEdit={onEdit} onReject={vi.fn()} canReview />)
+  fireEvent.change(view.getByLabelText('Start seconds for review-1'), { target: { value: '12.25' } })
+  fireEvent.change(view.getByLabelText('End seconds for review-1'), { target: { value: '11' } })
+  expect((view.getByRole('button', { name: /Save edit/i }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.change(view.getByLabelText('End seconds for review-1'), { target: { value: '14.75' } })
+  fireEvent.change(view.getByLabelText('Reviewed text for review-1'), { target: { value: 'Corrected local name' } })
+  fireEvent.click(view.getByRole('button', { name: /Save edit/i }))
+  expect(onEdit).toHaveBeenCalledWith(cue, 'Corrected local name', 12.25, 14.75)
+})

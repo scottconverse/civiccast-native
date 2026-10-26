@@ -26,6 +26,7 @@ interface HlsPlayerProps {
   handleRef?: RefObject<HlsPlayerHandle | null>
   /** Actual source handoffs, mapped against the HLS playback clock. */
   programTimeline?: PublicProgramTransition[]
+  startSeconds?: number
 }
 
 interface SubtitleTrackOption {
@@ -58,6 +59,7 @@ export function HlsPlayer({
   analytics,
   handleRef,
   programTimeline = [],
+  startSeconds,
 }: HlsPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
@@ -66,6 +68,20 @@ export function HlsPlayer({
   const programTimelineRef = useRef(programTimeline)
   const syncPlaybackTitleRef = useRef<() => void>(() => {})
   const [state, setState] = useState<PlayerState>('idle')
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || startSeconds === undefined || !Number.isFinite(startSeconds)) return
+    let applied = false
+    const seek = () => {
+      if (applied || video.readyState < 1) return
+      applied = true
+      video.currentTime = Number.isFinite(video.duration)
+        ? Math.min(Math.max(0, startSeconds), video.duration) : Math.max(0, startSeconds)
+    }
+    video.addEventListener('loadedmetadata', seek)
+    seek()
+    return () => video.removeEventListener('loadedmetadata', seek)
+  }, [manifestUrl, startSeconds])
   const [playbackTitle, setPlaybackTitle] = useState<string | null>(null)
 
   // Publish/withdraw the imperative seek handle for the agenda sidebar

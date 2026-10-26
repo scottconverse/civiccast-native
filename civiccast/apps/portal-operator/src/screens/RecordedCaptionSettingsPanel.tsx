@@ -28,7 +28,7 @@ export function RecordedCaptionSettingsPanel({ canWrite }: { canWrite: boolean }
   const current = settingsQuery.data
   const settings = draft ?? current ?? DEFAULT_SETTINGS
   const saveMutation = useMutation({
-    mutationFn: saveRecordedCaptionSettings,
+    mutationFn: (value: RecordedCaptionSettings) => saveRecordedCaptionSettings({ ...value, vocabulary: { ...value.vocabulary, terms: (value.vocabulary?.terms ?? []).map((term) => term.trim()).filter(Boolean) } }),
     onSuccess: (saved) => {
       queryClient.setQueryData(['recorded-caption-settings'], saved)
       setDraft(saved)
@@ -157,6 +157,15 @@ export function RecordedCaptionSettingsPanel({ canWrite }: { canWrite: boolean }
               </label>
             </fieldset>
           )}
+
+          <label className="grid gap-1 text-sm">
+            Local names and terms (one per line)
+            <textarea aria-label="Local caption vocabulary" disabled={!canWrite || busy}
+              value={(settings.vocabulary?.terms ?? []).join('\n')}
+              onChange={(event) => update('vocabulary', { ...settings.vocabulary, terms: event.target.value.split('\n') })}
+              className="min-h-24 rounded-md border p-2" />
+            <span className="text-xs">Hints for the station’s supported Whisper transcription adapters on the next scan. These do not guarantee spelling or approve any captions.</span>
+          </label>
 
           {canWrite && (
             <div className="flex justify-end">

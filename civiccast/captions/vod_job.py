@@ -64,16 +64,17 @@ from civiccast.captions.vod import (
     caption_cues_for_package,
     published_caption_sidecar,
     queue_translated_captions,
+    recorded_translation_cue_id,
     reviewed_caption_cues,
     transcribe_asset_captions,
 )
 from civiccast.captions.webvtt import render_webvtt
 from civiccast.translate.models import TranslationTarget
-from civiccast.translate.service import TranslationProvider, translated_cue_id
+from civiccast.translate.service import TranslationProvider
 
 _LOG = logging.getLogger(__name__)
 
-OfflineCaptionJobState = Literal["pending", "awaiting_review", "complete", "failed"]
+OfflineCaptionJobState = Literal["pending", "awaiting_review", "complete", "failed", "cancelled"]
 
 # Annotated with the Literal rather than left as bare str. Untyped, each of
 # these infers as `str`, so passing one where OfflineCaptionJobState is
@@ -88,6 +89,7 @@ OFFLINE_CAPTION_JOB_STATES = (
     OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
     OFFLINE_CAPTION_JOB_STATE_COMPLETE,
     OFFLINE_CAPTION_JOB_STATE_FAILED,
+    "cancelled",
 )
 #: States the worker still has work to do in.
 OFFLINE_CAPTION_JOB_ACTIVE_STATES = (
@@ -257,7 +259,9 @@ class OfflineCaptionJobStore(Protocol):
         asset -- the DB-level partial-unique index losing a concurrent race.
         """
 
-    def save(self, record: OfflineCaptionJobRecord) -> OfflineCaptionJobRecord:
+    def save(
+        self, record: OfflineCaptionJobRecord, *, preserve_cancelled: bool = False
+    ) -> OfflineCaptionJobRecord:
         """Persist an updated job row."""
 
     def get(self, job_id: str) -> OfflineCaptionJobRecord | None:
@@ -314,7 +318,15 @@ class InMemoryOfflineCaptionJobStore:
         self._jobs[record.job_id] = record
         return record.model_copy(deep=True)
 
-    def save(self, record: OfflineCaptionJobRecord) -> OfflineCaptionJobRecord:
+    def save(
+        self, record: OfflineCaptionJobRecord, *, preserve_cancelled: bool = False
+    ) -> OfflineCaptionJobRecord:
+        if (
+            preserve_cancelled
+            and (current := self._jobs.get(record.job_id)) is not None
+            and current.state == "cancelled"
+        ):
+            return current.model_copy(deep=True)
         self._jobs[record.job_id] = record
         return record.model_copy(deep=True)
 
@@ -643,7 +655,12 @@ class OfflineCaptionJobWorker:
 
         if self._settings_provider is not None:
             station_settings = self._settings_provider()
-            self._settings = self._settings.model_copy(update=station_settings.model_dump())
+            self._settings = OfflineCaptionJobSettings.model_validate(
+                {
+                    **self._settings.model_dump(),
+                    **station_settings.model_dump(),
+                }
+            )
         if not self._settings.enabled:
             return []
 
@@ -658,11 +675,20 @@ class OfflineCaptionJobWorker:
         resolved_now = now or datetime.now(UTC)
         processed: list[OfflineCaptionJobRecord] = []
         for row in self._store.due(now=resolved_now):
+            if self._cancelled(row.job_id):
+                continue
             if row.state == OFFLINE_CAPTION_JOB_STATE_PENDING:
                 processed.append(self._transcribe(row, now=resolved_now))
             elif row.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW:
                 processed.append(self._publish_if_reviewed(row, now=resolved_now))
         return processed
+
+    def _save(self, row: OfflineCaptionJobRecord) -> OfflineCaptionJobRecord:
+        return self._store.save(row, preserve_cancelled=True)
+
+    def _cancelled(self, job_id: str) -> bool:
+        current = self._store.get(job_id)
+        return current is None or current.state == "cancelled"
 
     def _sweep_retention(self) -> CaptionRetentionResult | None:
         """Prune expired retained caption evidence once per tick.
@@ -749,8 +775,12 @@ class OfflineCaptionJobWorker:
                 source_path=Path(row.source_path),
                 package_dir=Path(row.package_dir),
                 chunk_seconds=self._settings.chunk_seconds,
+                vocabulary=self._settings.vocabulary,
+                cancelled=lambda: self._cancelled(row.job_id),
             )
         except Exception as exc:
+            if self._cancelled(row.job_id):
+                return self._store.get(row.job_id) or row
             return self._record_failure(row, now=now, error=str(exc), stage="transcription")
 
         cue_count = len(transcription.cues)
@@ -759,7 +789,7 @@ class OfflineCaptionJobWorker:
                 "Offline captioning found no speech in asset %s; nothing to review.",
                 row.asset_id,
             )
-            return self._store.save(
+            return self._save(
                 row.model_copy(
                     update={
                         "state": OFFLINE_CAPTION_JOB_STATE_COMPLETE,
@@ -776,7 +806,7 @@ class OfflineCaptionJobWorker:
             cue_count,
             row.asset_id,
         )
-        return self._store.save(
+        return self._save(
             row.model_copy(
                 update={
                     "state": OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
@@ -893,12 +923,16 @@ class OfflineCaptionJobWorker:
                 )
             spanish_cues = spanish.cues
 
+        if self._cancelled(row.job_id):
+            return self._store.get(row.job_id) or row
         try:
             attached = attach_reviewed_captions(
                 Path(row.package_dir), english.cues, spanish_cues=spanish_cues
             )
         except Exception as exc:
             return self._record_failure(row, now=now, error=str(exc), stage="caption attach")
+        if self._cancelled(row.job_id):
+            return self._store.get(row.job_id) or row
         if self._cdn_republisher is not None:
             # attach_reviewed_captions rewrote the LOCAL manifest and wrote
             # the LOCAL caption files. If this package is served to residents
@@ -925,7 +959,7 @@ class OfflineCaptionJobWorker:
             row.asset_id,
             attached.sidecar_path,
         )
-        return self._store.save(
+        return self._save(
             row.model_copy(
                 update={
                     "state": OFFLINE_CAPTION_JOB_STATE_COMPLETE,
@@ -971,10 +1005,14 @@ class OfflineCaptionJobWorker:
         )
         published_cue_count = row.published_cue_count
         if not english_is_current or cdn_republish_retry_pending:
+            if self._cancelled(row.job_id):
+                return self._store.get(row.job_id) or row
             try:
                 attached = attach_reviewed_captions(Path(row.package_dir), english_cues)
             except Exception as exc:
                 return self._record_failure(row, now=now, error=str(exc), stage="caption attach")
+            if self._cancelled(row.job_id):
+                return self._store.get(row.job_id) or row
             if self._cdn_republisher is not None:
                 try:
                     self._cdn_republisher.republish(
@@ -993,7 +1031,7 @@ class OfflineCaptionJobWorker:
 
         if row.last_error == reason and row.published_cue_count == published_cue_count:
             return row
-        return self._store.save(
+        return self._save(
             row.model_copy(
                 update={
                     "state": OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
@@ -1010,7 +1048,7 @@ class OfflineCaptionJobWorker:
     ) -> OfflineCaptionJobRecord:
         """Re-check on the next poll without consuming the retry budget."""
 
-        return self._store.save(row.model_copy(update={"next_attempt_at": now, "updated_at": now}))
+        return self._save(row.model_copy(update={"next_attempt_at": now, "updated_at": now}))
 
     def _hold_for_review(
         self,
@@ -1041,7 +1079,7 @@ class OfflineCaptionJobWorker:
         if row.last_error == reason:
             return row
         _LOG.warning(log_message, row.asset_id)
-        return self._store.save(
+        return self._save(
             row.model_copy(
                 update={
                     "next_attempt_at": now,
@@ -1114,7 +1152,7 @@ class OfflineCaptionJobWorker:
 
         target_language = self._settings.spanish_target_language
         expected_ids = {
-            translated_cue_id(cue.cue_id, target_language, source_text=cue.text): cue
+            recorded_translation_cue_id(self._review_store, asset_id, cue, target_language): cue
             for cue in english_cues
         }
         stored_ids = {
@@ -1211,7 +1249,7 @@ class OfflineCaptionJobWorker:
                 attempts,
                 error,
             )
-            return self._store.save(
+            return self._save(
                 row.model_copy(
                     update={
                         "state": OFFLINE_CAPTION_JOB_STATE_FAILED,
@@ -1232,7 +1270,7 @@ class OfflineCaptionJobWorker:
             delay,
             error,
         )
-        return self._store.save(
+        return self._save(
             row.model_copy(
                 update={
                     "attempts": attempts,
