@@ -44,6 +44,43 @@ When you approve publishing, CivicCast does these things in this order:
 
 > **Warning:** If the station's federation setting is on, every approval that leaves the recording public on the portal also posts a public notice, "New CivicCast recording published: {title}.", to the outside servers that follow the station. (Federation is a setting that shares public notices with other servers on the internet.) The Publish screen does not mention this, and a notice that has gone out cannot be taken back. Ask your IT person whether federation is on.
 
+## Schedule a meeting on YouTube
+
+In **Publish**, use the meeting recording's card and choose **YouTube Live**.
+Select the channel whose on-air output should be sent. Enter **YouTube start** and
+**YouTube end** in your local time, then approve that surface. Leave both times
+blank to send now. This schedules the destination only; it does not schedule
+capture or start the local channel. The selected channel must have fresh web
+output when sending begins. The event title comes from the selected recording.
+
+**Scheduled** means the event is saved and waiting. **Sending** means the sender
+has started and YouTube confirmation is pending; only **Live** confirms receipt.
+Use **Update YouTube schedule** before sending begins to edit the same event.
+Ordinary retry and application restart retain its event identity. An expired
+schedule does not start. At the end, CivicCast stops this destination; **Stop
+YouTube output** also stops it early without stopping local playback. Failed
+updates retain the saved event for inspection and retry. Check YouTube Studio if
+remote cleanup fails. The app must be running for timed start and stop; startup
+rechecks the saved window. Real account activation and transmission remain a
+separate station rehearsal; simulator results are not external delivery proof.
+
+## Put a player on another website
+
+Open a published recording in **Assets**, or select a channel in **Channel Ops**,
+and choose **Copy website embed**. Paste the HTML into your website's embed block.
+If the browser cannot copy automatically, select the displayed HTML and copy it.
+The player fits the available width, uses keyboard-accessible playback/caption
+controls, and keeps the stream's available caption tracks. Live channels without
+web output show a standing-by message and refresh automatically.
+
+Only anonymously accessible playback can be embedded. The server refuses private
+or paywalled recordings and rechecks access and publication when the player
+refreshes. Withdrawal or a new restriction removes playback at the next refresh
+(about ten seconds). A missing access policy fails closed. IT must expose the
+station's public HTTPS address; a loopback-only address cannot play on a remote
+website. The dedicated player permits external framing; staff pages remain
+protected from framing.
+
 ## The publishing steps (surfaces)
 
 Each card has nine rows. Each row shows a status dot, a name, badges such as **Required** or an approval word, a line such as "archive / Succeeded", a message and a **Next step**. All nine surfaces below are implemented; optional surfaces still need their provider settings and prerequisites.
@@ -53,7 +90,7 @@ Each card has nine rows. Each row shows a status dot, a name, badges such as **R
 | Portal | Makes the recording public on the resident portal. Recorded-caption job behavior follows the source/package version and station setting described above. |
 | Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
 | Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
-| YouTube Live, YouTube VOD | Simulated until real credentials are configured. Follow [YouTube setup](#configuration-youtube) for OAuth and channel activation. For Live, start and select the intended CivicCast channel; Publish creates/binds the event and sends that channel's fresh local HLS output through a separate RTMPS process. The row distinguishes starting, destination-confirmed live, failed and stopped, and provides a viewer watch link. Use **Stop YouTube output** when finished. Real VOD upload requires a resolved recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. |
+| YouTube Live, YouTube VOD | Simulated until real credentials are configured. Follow [YouTube setup](#configuration-youtube) for OAuth and channel activation. For Live, start and select the intended CivicCast channel; Publish creates/binds the event and sends that channel's fresh local HLS output through a separate RTMPS process. The row distinguishes scheduled, starting, destination-confirmed live, failed and stopped, and provides a viewer watch link. Use **Stop YouTube output** when finished. Real VOD upload requires a resolved recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. |
 | Podcast episode | Optional. Converts the asset's local recording to an MP3, saves it as an episode, and adds an audio enclosure to the channel RSS feed. Publish a new recording to Portal first, then select or retry Podcast. A missing recording or conversion error appears as a retryable failure. IT must set a public station URL and provide FFmpeg. |
 | Subscriber notifications | Optional. When selected, CivicCast sends notices to confirmed subscribers through configured mail or webhook providers, records each delivery outcome and retries eligible failures. The row shows delivered, queued and failed counts. Mock providers are labeled simulated. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |

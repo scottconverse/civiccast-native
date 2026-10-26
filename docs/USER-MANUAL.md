@@ -2101,6 +2101,43 @@ When you approve publishing, CivicCast does these things in this order:
 
 > **Warning:** If the station's federation setting is on, every approval that leaves the recording public on the portal also posts a public notice, "New CivicCast recording published: {title}.", to the outside servers that follow the station. (Federation is a setting that shares public notices with other servers on the internet.) The Publish screen does not mention this, and a notice that has gone out cannot be taken back. Ask your IT person whether federation is on.
 
+### Schedule a meeting on YouTube
+
+In **Publish**, use the meeting recording's card and choose **YouTube Live**.
+Select the channel whose on-air output should be sent. Enter **YouTube start** and
+**YouTube end** in your local time, then approve that surface. Leave both times
+blank to send now. This schedules the destination only; it does not schedule
+capture or start the local channel. The selected channel must have fresh web
+output when sending begins. The event title comes from the selected recording.
+
+**Scheduled** means the event is saved and waiting. **Sending** means the sender
+has started and YouTube confirmation is pending; only **Live** confirms receipt.
+Use **Update YouTube schedule** before sending begins to edit the same event.
+Ordinary retry and application restart retain its event identity. An expired
+schedule does not start. At the end, CivicCast stops this destination; **Stop
+YouTube output** also stops it early without stopping local playback. Failed
+updates retain the saved event for inspection and retry. Check YouTube Studio if
+remote cleanup fails. The app must be running for timed start and stop; startup
+rechecks the saved window. Real account activation and transmission remain a
+separate station rehearsal; simulator results are not external delivery proof.
+
+### Put a player on another website
+
+Open a published recording in **Assets**, or select a channel in **Channel Ops**,
+and choose **Copy website embed**. Paste the HTML into your website's embed block.
+If the browser cannot copy automatically, select the displayed HTML and copy it.
+The player fits the available width, uses keyboard-accessible playback/caption
+controls, and keeps the stream's available caption tracks. Live channels without
+web output show a standing-by message and refresh automatically.
+
+Only anonymously accessible playback can be embedded. The server refuses private
+or paywalled recordings and rechecks access and publication when the player
+refreshes. Withdrawal or a new restriction removes playback at the next refresh
+(about ten seconds). A missing access policy fails closed. IT must expose the
+station's public HTTPS address; a loopback-only address cannot play on a remote
+website. The dedicated player permits external framing; staff pages remain
+protected from framing.
+
 ### The publishing steps (surfaces)
 
 Each card has nine rows. Each row shows a status dot, a name, badges such as **Required** or an approval word, a line such as "archive / Succeeded", a message and a **Next step**. All nine surfaces below are implemented; optional surfaces still need their provider settings and prerequisites.
@@ -2110,7 +2147,7 @@ Each card has nine rows. Each row shows a status dot, a name, badges such as **R
 | Portal | Makes the recording public on the resident portal. Recorded-caption job behavior follows the source/package version and station setting described above. |
 | Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
 | Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
-| YouTube Live, YouTube VOD | Simulated until real credentials are configured. Follow [YouTube setup](#configuration-youtube) for OAuth and channel activation. For Live, start and select the intended CivicCast channel; Publish creates/binds the event and sends that channel's fresh local HLS output through a separate RTMPS process. The row distinguishes starting, destination-confirmed live, failed and stopped, and provides a viewer watch link. Use **Stop YouTube output** when finished. Real VOD upload requires a resolved recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. |
+| YouTube Live, YouTube VOD | Simulated until real credentials are configured. Follow [YouTube setup](#configuration-youtube) for OAuth and channel activation. For Live, start and select the intended CivicCast channel; Publish creates/binds the event and sends that channel's fresh local HLS output through a separate RTMPS process. The row distinguishes scheduled, starting, destination-confirmed live, failed and stopped, and provides a viewer watch link. Use **Stop YouTube output** when finished. Real VOD upload requires a resolved recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. |
 | Podcast episode | Optional. Converts the asset's local recording to an MP3, saves it as an episode, and adds an audio enclosure to the channel RSS feed. Publish a new recording to Portal first, then select or retry Podcast. A missing recording or conversion error appears as a retryable failure. IT must set a public station URL and provide FFmpeg. |
 | Subscriber notifications | Optional. When selected, CivicCast sends notices to confirmed subscribers through configured mail or webhook providers, records each delivery outcome and retries eligible failures. The row shows delivered, queued and failed counts. Mock providers are labeled simulated. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
@@ -4165,7 +4202,7 @@ Use a new output filename; the helper refuses to overwrite an existing file. It 
 
 Start the desired CivicCast channel and confirm its local program output, then open **Publish**, select that channel for **YouTube Live**, and start the optional YouTube output. The selected channel needs fresh local HLS output. CivicCast creates and binds the YouTube event, then sends that channel through a separate owned output process; the default event privacy is **unlisted**. Keep a first rehearsal away from a channel already serving a meeting.
 
-The returned `youtube.com/watch?v=…` address is the viewer link. **Starting** means the sender has started; **live** requires YouTube to report both an active stream and a live broadcast. **Simulated** means nothing was sent. The dashboard polls destination state periodically; setup success alone must never be described as a confirmed live stream. **Failed** leaves local portal publication available. When finished, choose **Stop YouTube output**, then check the event in Studio if remote cleanup needs attention. Stream keys and ingest addresses are not public viewer links.
+The returned `youtube.com/watch?v=…` address is the viewer link. **Scheduled** means the saved event is waiting for its start time; **Starting** means the sender has started; **live** requires YouTube to report both an active stream and a live broadcast. **Simulated** means nothing was sent. The dashboard polls destination state periodically; setup success alone must never be described as a confirmed live stream. **Failed** leaves local portal publication available. When finished, choose **Stop YouTube output**, then check the event in Studio if remote cleanup needs attention. Stream keys and ingest addresses are not public viewer links.
 
 If Google returns `liveStreamingNotEnabled`, check the selected channel's phone verification and activation countdown first. If its channel API returns no channels, check that the account has a YouTube channel and that OAuth authorized the intended identity. If refresh fails later, check testing-mode token expiry or revoked consent before replacing unrelated settings. An owner can accept completed setup separately from a later live rehearsal; record those as separate results rather than claiming the rehearsal happened.
 
@@ -6245,7 +6282,7 @@ This is the other half of the product. A meeting is captured, becomes a recordin
 | Portal | canonical | Only default-selected; it makes the record public when its manifest exists. |
 | Internet Archive, Local NAS | archive | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. Mock by default. A real IA/NAS provider uploads the full recording only when a local source file resolves; otherwise the service passes an asset/title payload, not the recording. Local NAS writes filesystem copies; it does not invoke rsync or ZFS. |
 | YouTube VOD | reach | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise its configured media-root path must exist. |
-| YouTube Live | reach | Mock by default. The real API adapter creates and binds a YouTube broadcast and stream, but the Publish surface does not connect CivicCast's live output to the returned RTMP ingest address. |
+| YouTube Live | reach | Mock by default. The real adapter schedules or starts the selected channel through a separate RTMPS sender; only destination confirmation proves live delivery. |
 | Cable package | record | optional; `not_configured` when unset |
 | Podcast | audience | Selected publishing converts a local recording into MP3, stores the episode, and adds its enclosure to the channel RSS feed. Missing media or encoding failure stays visible and retryable. |
 | Subscriber notifications | audience | Optional delivery to confirmed subscribers when selected and configured; outcomes and retries are recorded. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
@@ -8937,7 +8974,7 @@ Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "
 | Portal | The only default-selected surface; it makes the record public when its manifest exists. |
 | Internet Archive, Local NAS | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. A real provider uploads the full recording only when its local source file resolves; otherwise it receives an asset/title payload. Local NAS writes filesystem copies, not rsync or ZFS. |
 | YouTube VOD | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise the configured media-root path must exist. |
-| YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
+| YouTube Live | Mock by default. The real adapter schedules or starts the selected channel through a separate RTMPS sender; only destination confirmation proves live delivery. |
 | Cable package | Optional; `not_configured` when unset. |
 | Podcast | Optional Publish surface. Produces a local MP3 from a local recording, persists the episode, and exposes its enclosure in the channel RSS feed; failures can be retried. |
 | Subscriber notifications | Optional, selected publish surface with delivery receipts and retries; requires confirmed subscribers and configured providers. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |

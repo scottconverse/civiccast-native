@@ -1034,3 +1034,23 @@ describe('YouTube selected-channel output', () => {
     await waitFor(() => expect(stopYouTubeOutput).toHaveBeenCalledWith('sample-asset'))
   })
 })
+
+
+it('edits a scheduled YouTube event using the existing retry surface and validates its interval', async () => {
+  const response = sevenSurfaceDashboard()
+  const surface = response.assets[0].surfaces.find((item) => item.id === 'youtube-live')!
+  Object.assign(surface, { state: 'running', delivery_state: 'scheduled', channel_id: 'government', scheduled_start: '2030-11-01T10:00:00Z', scheduled_end: '2030-11-01T11:00:00Z', broadcast_id: 'event' })
+  vi.mocked(listPublishAssets).mockResolvedValue(response)
+  vi.mocked(retryPublishSurface).mockResolvedValue({} as never)
+  const { findByRole, findByLabelText } = renderScreen()
+  const start = await findByLabelText(/YouTube start/)
+  const end = await findByLabelText(/YouTube end/)
+  fireEvent.change(start, { target: { value: '2030-11-02T10:00' } })
+  fireEvent.change(end, { target: { value: '2030-11-02T09:00' } })
+  const update = await findByRole('button', { name: 'Update YouTube schedule' })
+  expect((update as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.change(end, { target: { value: '2030-11-02T11:00' } })
+  fireEvent.click(update)
+  await waitFor(() => expect(retryPublishSurface).toHaveBeenCalledWith('sample-asset', 'youtube-live', expect.objectContaining({ youtube_channel_id: 'government', youtube_scheduled_start: new Date('2030-11-02T10:00').toISOString(), youtube_scheduled_end: new Date('2030-11-02T11:00').toISOString() })))
+  expect(await findByRole('button', { name: 'Stop YouTube output' })).toBeTruthy()
+})

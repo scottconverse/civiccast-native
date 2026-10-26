@@ -1,3 +1,4 @@
+import { EmbedCopyPanel } from './EmbedCopyPanel'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -2091,6 +2092,7 @@ export function ChannelOpsScreen() {
             saveError={graphicsOverlayMutation.error}
             onSave={(next) => graphicsOverlayMutation.mutate(next)}
           />
+          {selectedChannel && <EmbedCopyPanel key={selectedChannel.channel_id} kind="channel" identity={selectedChannel.channel_id} />}
           <OutputsPanel outputs={selectedChannel?.outputs ?? []} />
           <CtvPanel feed={ctvQuery.data} />
         </div>

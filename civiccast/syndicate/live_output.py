@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -59,16 +60,58 @@ class YouTubeLiveOutput:
         )
 
     def start(
-        self, client: YouTubeClient, *, asset_id: str, title: str, channel_id: str
+        self,
+        client: YouTubeClient,
+        *,
+        asset_id: str,
+        title: str,
+        channel_id: str,
+        scheduled_start: datetime | None = None,
+        scheduled_end: datetime | None = None,
+        broadcast_id: str | None = None,
+        stream_id: str | None = None,
     ) -> YouTubePublishProof:
         with self._lock:
             previous = self._deliveries.get(asset_id)
-            if previous and previous.proof.delivery_state in {"configured", "starting", "live"}:
-                if previous.proof.channel_id != channel_id:
+            if previous:
+                if previous.proof.channel_id != channel_id and previous.proof.delivery_state in {
+                    "starting",
+                    "live",
+                }:
                     raise ValueError("Stop this YouTube output before choosing another channel.")
-                return previous.proof.model_copy()
-            source = self._source(channel_id)
-            broadcast_id, stream_id, ingest = client.configure_live(title=title)
+                if previous.proof.delivery_state in {"starting", "live"}:
+                    return previous.proof.model_copy()
+                broadcast_id, stream_id = previous.broadcast_id, previous.stream_id
+            if scheduled_end and scheduled_end <= datetime.now(UTC):
+                raise ValueError("Choose a YouTube schedule whose end is still in the future.")
+            source = (
+                self._source(channel_id)
+                if not scheduled_start or scheduled_start <= datetime.now(UTC)
+                else None
+            )
+            ingest = None
+            if broadcast_id and stream_id:
+                try:
+                    client.update_live(
+                        broadcast_id,
+                        stream_id,
+                        title=title,
+                        scheduled_start=scheduled_start,
+                        scheduled_end=scheduled_end,
+                    )
+                except Exception:
+                    if previous:
+                        self._state(previous, "failed")
+                    raise RuntimeError(
+                        "YouTube schedule update failed; the saved event is retained. Check YouTube Studio and retry."
+                    ) from None
+            else:
+                options = (
+                    {"scheduled_start": scheduled_start, "scheduled_end": scheduled_end}
+                    if scheduled_start
+                    else {}
+                )
+                broadcast_id, stream_id, ingest = client.configure_live(title=title, **options)
             delivery = _Delivery(
                 client=client,
                 broadcast_id=broadcast_id,
@@ -77,39 +120,71 @@ class YouTubeLiveOutput:
                     target_type="youtube_live",
                     url=f"https://www.youtube.com/watch?v={broadcast_id}",
                     credential_key="civiccast-provider://youtube",
-                    delivery_state="configured",
+                    delivery_state="scheduled"
+                    if scheduled_start and scheduled_start > datetime.now(UTC)
+                    else "configured",
                     channel_id=channel_id,
+                    broadcast_id=broadcast_id,
+                    stream_id=stream_id,
+                    scheduled_start=scheduled_start,
+                    scheduled_end=scheduled_end,
                 ),
             )
             self._deliveries[asset_id] = delivery
-            try:
-                # Existing FFmpeg owner supplies hidden launch + kill-on-close containment.
-                # Do not capture raw stderr: it can contain the private ingest URL/key.
-                delivery.process = self._launch(
-                    [
-                        "-nostdin",
-                        "-loglevel",
-                        "error",
-                        "-re",
-                        "-i",
-                        str(source),
-                        "-map",
-                        "0:v:0",
-                        "-map",
-                        "0:a:0",
-                        "-c",
-                        "copy",
-                        "-f",
-                        "flv",
-                        ingest,
-                    ]
-                )
-                self._state(delivery, "starting")
-            except Exception:
-                self._state(delivery, "failed")
-                self._finish_destination(delivery)
+            if delivery.proof.delivery_state != "scheduled":
+                self._launch_delivery(delivery, ingest, source)
             self._supervisor.start()
             return delivery.proof.model_copy()
+
+    def restore(self, client: YouTubeClient, *, asset_id: str, proof: YouTubePublishProof) -> None:
+        """Resume a saved destination without creating or editing another event."""
+        if not proof.broadcast_id or not proof.stream_id:
+            return
+        with self._lock:
+            if asset_id in self._deliveries:
+                return
+            proof = proof.model_copy(
+                update={
+                    "delivery_state": "failed" if proof.delivery_state == "failed" else "scheduled"
+                }
+            )
+            self._deliveries[asset_id] = _Delivery(
+                client=client,
+                proof=proof,
+                broadcast_id=proof.broadcast_id,
+                stream_id=proof.stream_id,
+            )
+            self._supervisor.start()
+
+    def _launch_delivery(
+        self, delivery: _Delivery, ingest: str | None = None, source: Path | None = None
+    ) -> None:
+        try:
+            source = source or self._source(delivery.proof.channel_id)
+            ingest = ingest or delivery.client.live_ingest(delivery.stream_id)
+            delivery.process = self._launch(
+                [
+                    "-nostdin",
+                    "-loglevel",
+                    "error",
+                    "-re",
+                    "-i",
+                    str(source),
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a:0",
+                    "-c",
+                    "copy",
+                    "-f",
+                    "flv",
+                    ingest,
+                ]
+            )
+            delivery.started = time.monotonic()
+            self._state(delivery, "starting")
+        except Exception:
+            self._state(delivery, "failed")
 
     @staticmethod
     def _state(delivery: _Delivery, state: str) -> None:
@@ -134,37 +209,54 @@ class YouTubeLiveOutput:
     def run_once(self) -> None:
         with self._lock:
             for asset_id, delivery in self._deliveries.items():
-                if delivery.proof.delivery_state not in {"starting", "live"}:
-                    self._persist(asset_id, delivery)
-                    continue
                 try:
-                    if delivery.process is None or delivery.process.poll() is not None:
-                        raise RuntimeError("YouTube output exited.")
-                    stream, broadcast = delivery.client.live_status(
-                        delivery.broadcast_id, delivery.stream_id
-                    )
-                    if stream == "active" and broadcast == "live":
-                        self._state(delivery, "live")
-                    elif delivery.proof.delivery_state == "live" or broadcast in {
-                        "complete",
-                        "revoked",
-                    }:
-                        raise RuntimeError("YouTube destination stopped receiving this output.")
-                    elif time.monotonic() - delivery.started > self._timeout:
-                        raise RuntimeError(
-                            "YouTube did not confirm delivery before startup timed out."
-                        )
-                except Exception:
-                    if delivery.process is not None:
-                        delivery.process.terminate()
-                    self._state(delivery, "failed")
-                    self._finish_destination(delivery)
-                try:
-                    self._persist(asset_id, delivery)
+                    self._run_delivery(asset_id, delivery)
                 except Exception:
                     _LOG.warning(
-                        "YouTube output status could not be saved; retrying on the next poll."
+                        "YouTube output status could not be saved; retrying this destination on the next poll."
                     )
+
+    def _run_delivery(self, asset_id: str, delivery: _Delivery) -> None:
+        if (
+            delivery.proof.scheduled_end
+            and datetime.now(UTC) >= delivery.proof.scheduled_end
+            and delivery.proof.delivery_state in {"scheduled", "starting", "live"}
+        ):
+            self.stop(asset_id)
+            return
+        if delivery.proof.delivery_state == "scheduled" and (
+            not delivery.proof.scheduled_start
+            or datetime.now(UTC) >= delivery.proof.scheduled_start
+        ):
+            # Save the receipt before any sender can start, including after restart.
+            self._persist(asset_id, delivery)
+            self._launch_delivery(delivery)
+        if delivery.proof.delivery_state not in {"starting", "live"}:
+            self._persist(asset_id, delivery)
+            return
+        try:
+            if delivery.process is None or delivery.process.poll() is not None:
+                raise RuntimeError("YouTube output exited.")
+            stream, broadcast = delivery.client.live_status(
+                delivery.broadcast_id, delivery.stream_id
+            )
+            if stream == "active" and broadcast == "live":
+                self._state(delivery, "live")
+            elif delivery.proof.delivery_state == "live" or broadcast in {
+                "complete",
+                "revoked",
+            }:
+                raise RuntimeError("YouTube destination stopped receiving this output.")
+            elif time.monotonic() - delivery.started > self._timeout:
+                raise RuntimeError("YouTube did not confirm delivery before startup timed out.")
+        except Exception:
+            if delivery.process is not None:
+                delivery.process.terminate()
+            self._state(delivery, "failed")
+        try:
+            self._persist(asset_id, delivery)
+        except Exception:
+            _LOG.warning("YouTube output status could not be saved; retrying on the next poll.")
 
     def knows(self, asset_id: str) -> bool:
         with self._lock:
@@ -173,6 +265,8 @@ class YouTubeLiveOutput:
     def stop(self, asset_id: str) -> YouTubePublishProof:
         with self._lock:
             delivery = self._deliveries[asset_id]
+            if delivery.proof.delivery_state == "stopped":
+                return delivery.proof.model_copy()
             if delivery.process is not None:
                 delivery.process.terminate()
             self._state(delivery, "stopped" if self._finish_destination(delivery) else "failed")

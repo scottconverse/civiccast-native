@@ -566,3 +566,58 @@ class TestCredentialRedaction:
             )
         rendered = f"{excinfo.value!s} {excinfo.value!r}"
         assert "smtp-secret-sentinel" not in rendered
+
+
+def test_youtube_schedule_update_preserves_event_and_private_ingest():
+    seen = []
+    base = _youtube_handler(seen)
+
+    def handler(request):
+        if request.url.path.endswith("/liveBroadcasts") and request.method == "GET":
+            seen.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "snippet": {
+                                "title": "Old",
+                                "description": "Keep description",
+                                "scheduledStartTime": "2026-11-01T00:00:00Z",
+                            }
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/liveStreams") and request.method == "GET":
+            seen.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "cdn": {
+                                "ingestionInfo": {
+                                    "rtmpsIngestionAddress": "rtmps://a.rtmps.youtube.com/live2",
+                                    "streamName": "private-key",
+                                }
+                            }
+                        }
+                    ]
+                },
+            )
+        return base(request)
+
+    client = YouTubeClient(_YT_SETTINGS, transport=httpx.MockTransport(handler))
+    start = datetime(2026, 11, 2, tzinfo=UTC)
+    end = datetime(2026, 11, 2, 2, tzinfo=UTC)
+    client.configure_live(title="Meeting", scheduled_start=start, scheduled_end=end)
+    client.update_live(
+        "bcast-1", "stream-1", title="Edited", scheduled_start=start, scheduled_end=end
+    )
+    body = json.loads(next(r.content for r in seen if r.method == "PUT"))
+    assert body["id"] == "bcast-1"
+    assert body["snippet"]["description"] == "Keep description"
+    assert body["snippet"]["scheduledEndTime"] == end.isoformat()
+    assert sum(r.method == "POST" and r.url.path.endswith("/liveBroadcasts") for r in seen) == 1
+    assert client.live_ingest("stream-1").endswith("/private-key")

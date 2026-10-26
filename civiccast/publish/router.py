@@ -421,6 +421,7 @@ def _mark_interrupted_youtube(
     surfaces = []
     for surface in run.surfaces:
         if surface.id == "youtube-live" and surface.delivery_state in {
+            "scheduled",
             "configured",
             "starting",
             "live",

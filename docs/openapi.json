@@ -96,7 +96,7 @@
           "public"
         ],
         "summary": "Get embed snippet + manifest URL for a public asset",
-        "description": "Return the iframe snippet and metadata needed to embed an asset.\n\nPublic \u2014 no auth. The asset's `manifest_url` is already on a public CDN\nso there is no information leak in returning it. Stations that want\nprivate/unlisted assets must mark them so in the asset store; this\nendpoint refuses to serve them (404).",
+        "description": "Resolve a currently published, anonymously accessible recording by identity.",
         "operationId": "get_embed_api_public_embed__asset_id__get",
         "parameters": [
           {
@@ -120,8 +120,56 @@
               }
             }
           },
+          "403": {
+            "description": "Private or paywalled playback cannot be embedded"
+          },
           "404": {
-            "description": "Asset not found"
+            "description": "Asset not found or unpublished"
+          },
+          "503": {
+            "description": "Access policy is unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/embed/channel/{channel_id}": {
+      "get": {
+        "tags": [
+          "public"
+        ],
+        "summary": "Get Channel Embed",
+        "operationId": "get_channel_embed_api_public_embed_channel__channel_id__get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelEmbedResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -40141,6 +40189,46 @@
         "title": "ChannelCommissioningSetup",
         "description": "Operator's Screen 9 channel choices."
       },
+      "ChannelEmbedResponse": {
+        "properties": {
+          "channel_id": {
+            "type": "string",
+            "title": "Channel Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "manifest_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Url"
+          },
+          "portal_url": {
+            "type": "string",
+            "title": "Portal Url"
+          },
+          "embed_html": {
+            "type": "string",
+            "title": "Embed Html"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel_id",
+          "title",
+          "manifest_url",
+          "portal_url",
+          "embed_html"
+        ],
+        "title": "ChannelEmbedResponse"
+      },
       "ChannelLogEntry": {
         "properties": {
           "occurrence_id": {
@@ -55723,6 +55811,30 @@
       },
       "PublishApprovalRequest": {
         "properties": {
+          "youtube_scheduled_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled Start"
+          },
+          "youtube_scheduled_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled End"
+          },
           "operator_id": {
             "type": "string",
             "maxLength": 160,
@@ -56201,6 +56313,30 @@
       },
       "PublishRetryRequest": {
         "properties": {
+          "youtube_scheduled_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled Start"
+          },
+          "youtube_scheduled_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Scheduled End"
+          },
           "operator_id": {
             "type": "string",
             "maxLength": 160,
@@ -56283,6 +56419,52 @@
               }
             ],
             "title": "Channel Id"
+          },
+          "broadcast_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broadcast Id"
+          },
+          "stream_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stream Id"
+          },
+          "scheduled_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled Start"
+          },
+          "scheduled_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduled End"
           },
           "id": {
             "type": "string",

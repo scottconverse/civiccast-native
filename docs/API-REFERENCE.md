@@ -486,6 +486,15 @@ Read viewer-safe current egress channel status.
 - Request body: none
 - Responses: 200 `PublicEgressNowResponse`; 404 Egress channel is not on air; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/public/embed/channel/{channel_id}`
+
+Get Channel Embed.
+
+- Access: public
+- Parameters: `channel_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `ChannelEmbedResponse`
+
 ### `GET /api/public/embed/{asset_id}`
 
 Get embed snippet + manifest URL for a public asset.
@@ -493,7 +502,7 @@ Get embed snippet + manifest URL for a public asset.
 - Access: public
 - Parameters: `asset_id` (path, required): `string`
 - Request body: none
-- Responses: 200 `AssetEmbedResponse`; 404 Asset not found
+- Responses: 200 `AssetEmbedResponse`; 403 Private or paywalled playback cannot be embedded; 404 Asset not found or unpublished; 503 Access policy is unavailable
 
 ### `GET /api/public/live/current`
 
@@ -5899,6 +5908,14 @@ Read CivicCast local federation metadata.
 - `sdi_device` (optional): `string | null`
 - `watch_folder_path` (optional): `string | null`
 
+### `ChannelEmbedResponse`
+
+- `channel_id` (required): `string`
+- `embed_html` (required): `string`
+- `manifest_url` (required): `string | null`
+- `portal_url` (required): `string`
+- `title` (required): `string`
+
 ### `ChannelLogEntry`
 
 - `asset_id` (required): `string`
@@ -8354,6 +8371,8 @@ rule (S13 §5.1).
 - `operator_id` (required): `string`
 - `overrides` (optional): `Array<PublishSurfaceOverride>`
 - `youtube_channel_id` (optional): `string | null`
+- `youtube_scheduled_end` (optional): `string | null`
+- `youtube_scheduled_start` (optional): `string | null`
 
 ### `PublishAssetStatus`
 
@@ -8430,6 +8449,8 @@ rule (S13 §5.1).
 - `operator_display_name` (required): `string`
 - `operator_id` (required): `string`
 - `youtube_channel_id` (optional): `string | null`
+- `youtube_scheduled_end` (optional): `string | null`
+- `youtube_scheduled_start` (optional): `string | null`
 
 ### `PublishSurfaceOverride`
 
@@ -8439,6 +8460,7 @@ rule (S13 §5.1).
 ### `PublishSurfaceStatus`
 
 - `approval` (optional): `'pending' | 'approved' | 'overridden'`
+- `broadcast_id` (optional): `string | null`
 - `channel_id` (optional): `string | null`
 - `completed_at` (optional): `string | null`
 - `delivery_state` (optional): `string | null`
@@ -8454,8 +8476,11 @@ rule (S13 §5.1).
 - `path` (optional): `string | null`
 - `required` (optional): `boolean`
 - `retry_count` (optional): `number`
+- `scheduled_end` (optional): `string | null`
+- `scheduled_start` (optional): `string | null`
 - `simulated` (optional): `boolean`
 - `state` (required): `'blocked' | 'not_configured' | 'coming_soon' | 'pending' | 'running' | 'succeeded' | 'partial' | 'unverified' | 'failed' | 'overridden'`
+- `stream_id` (optional): `string | null`
 - `url` (optional): `string | null`
 - `verification_hash` (optional): `string | null`
 

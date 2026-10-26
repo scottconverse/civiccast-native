@@ -1065,6 +1065,14 @@ export interface ChannelCommissioningSetup {
   watch_folder_path?: string | null
 }
 
+export interface ChannelEmbedResponse {
+  channel_id: string
+  title: string
+  manifest_url: string | null
+  portal_url: string
+  embed_html: string
+}
+
 export interface ChannelLogEntry {
   occurrence_id: string
   slot_id: string
@@ -3508,6 +3516,8 @@ export interface PublicTranscriptCue {
 }
 
 export interface PublishApprovalRequest {
+  youtube_scheduled_start?: string | null
+  youtube_scheduled_end?: string | null
   operator_id: string
   operator_display_name: string
   youtube_channel_id?: string | null
@@ -3586,6 +3596,8 @@ export interface PublishPreflightResponse {
 }
 
 export interface PublishRetryRequest {
+  youtube_scheduled_start?: string | null
+  youtube_scheduled_end?: string | null
   operator_id: string
   operator_display_name: string
   youtube_channel_id?: string | null
@@ -3599,6 +3611,10 @@ export interface PublishSurfaceOverride {
 export interface PublishSurfaceStatus {
   delivery_state?: string | null
   channel_id?: string | null
+  broadcast_id?: string | null
+  stream_id?: string | null
+  scheduled_start?: string | null
+  scheduled_end?: string | null
   id: string
   label: string
   kind: 'canonical' | 'archive' | 'reach' | 'record' | 'audience'

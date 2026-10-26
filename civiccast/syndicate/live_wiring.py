@@ -47,6 +47,15 @@ def build_youtube_output(app: Any) -> YouTubeLiveOutput:
                     update={
                         "delivery_state": state,
                         "channel_id": proof.channel_id,
+                        **{
+                            key: getattr(proof, key)
+                            for key in (
+                                "broadcast_id",
+                                "stream_id",
+                                "scheduled_start",
+                                "scheduled_end",
+                            )
+                        },
                         "url": proof.url,
                         "state": "succeeded"
                         if state == "live" or (state == "stopped" and proof.confirmed_live)
@@ -79,3 +88,59 @@ def build_youtube_output(app: Any) -> YouTubeLiveOutput:
             raise RuntimeError("Publish status changed concurrently; retry on the next poll.")
 
     return YouTubeLiveOutput(source, record)
+
+
+def restore_youtube_schedules(app: Any) -> None:
+    """Reload saved future/active destinations without creating provider events."""
+    import logging
+
+    from civiccast.platform.providers import PROVIDER_KIND_YOUTUBE
+
+    bundle = getattr(app.state, "store_bundle", None)
+    if bundle is None:
+        return
+    try:
+        store = bundle.publish_store()
+        assets = bundle.asset_store().list_all()
+        runs = store.get_runs([asset.asset_id for asset in assets])
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "YouTube schedules could not be read; recover station storage before retrying in Publish."
+        )
+        return
+    for asset_id, run in runs.items():
+        for surface in run.surfaces:
+            if (
+                surface.id != "youtube-live"
+                or surface.delivery_state not in {"scheduled", "starting", "live", "failed"}
+                or not surface.broadcast_id
+                or not surface.stream_id
+            ):
+                continue
+            try:
+                client = app.state.provider_registry.resolve(PROVIDER_KIND_YOUTUBE)
+                app.state.youtube_live_output.restore(
+                    client,
+                    asset_id=asset_id,
+                    proof=YouTubePublishProof(
+                        target_type="youtube_live",
+                        credential_key="civiccast-provider://youtube",
+                        url=surface.url,
+                        delivery_state=surface.delivery_state,
+                        confirmed_live=surface.completed_at is not None,
+                        **{
+                            key: getattr(surface, key)
+                            for key in (
+                                "broadcast_id",
+                                "stream_id",
+                                "scheduled_start",
+                                "scheduled_end",
+                                "channel_id",
+                            )
+                        },
+                    ),
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "YouTube schedule could not resume; check provider configuration and retry in Publish."
+                )

@@ -65,6 +65,8 @@ export interface PublishSurfaceOverride {
 }
 
 export interface PublishApprovalRequest {
+  youtube_scheduled_start?: string | null
+  youtube_scheduled_end?: string | null
   youtube_channel_id?: string
   operator_id: string
   operator_display_name: string
@@ -73,12 +75,18 @@ export interface PublishApprovalRequest {
 }
 
 export interface PublishRetryRequest {
+  youtube_scheduled_start?: string | null
+  youtube_scheduled_end?: string | null
   youtube_channel_id?: string
   operator_id: string
   operator_display_name: string
 }
 
 export interface PublishSurfaceStatus {
+  broadcast_id?: string | null
+  stream_id?: string | null
+  scheduled_start?: string | null
+  scheduled_end?: string | null
   delivery_state?: string | null
   channel_id?: string | null
   id: string

@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 PublishDashboardStateValue = Literal[
     "draft",
@@ -61,7 +61,21 @@ class PublishSurfaceOverride(BaseModel):
     justification: Annotated[str, Field(min_length=12, max_length=1000)]
 
 
-class PublishApprovalRequest(BaseModel):
+class YouTubeSchedule(BaseModel):
+    """Optional bounded destination schedule; omitting it sends immediately."""
+
+    youtube_scheduled_start: AwareDatetime | None = None
+    youtube_scheduled_end: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _valid_youtube_window(self):
+        start, end = self.youtube_scheduled_start, self.youtube_scheduled_end
+        if (start is None) != (end is None) or (start and end and end <= start):
+            raise ValueError("YouTube schedule requires a start and a later end.")
+        return self
+
+
+class PublishApprovalRequest(YouTubeSchedule):
     """Operator approval request for a recording publish run."""
 
     model_config = ConfigDict(extra="forbid")
@@ -113,7 +127,7 @@ class PublishApprovalRequest(BaseModel):
         return self
 
 
-class PublishRetryRequest(BaseModel):
+class PublishRetryRequest(YouTubeSchedule):
     """Operator request to retry one failed or pending publish surface."""
 
     model_config = ConfigDict(extra="forbid")
@@ -210,6 +224,10 @@ class PublishSurfaceStatus(BaseModel):
 
     delivery_state: str | None = None
     channel_id: str | None = None
+    broadcast_id: str | None = None
+    stream_id: str | None = None
+    scheduled_start: datetime | None = None
+    scheduled_end: datetime | None = None
     id: Annotated[str, Field(min_length=1, max_length=80)]
     label: Annotated[str, Field(min_length=1, max_length=120)]
     kind: PublishSurfaceKindValue

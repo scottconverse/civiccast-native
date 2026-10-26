@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import { emitAnalyticsEvent } from './analytics'
 import { HlsPlayer } from './HlsPlayer'
+import { EmbedPlayer } from './EmbedPlayer'
 import { buildRecordingsHash, buildScheduleHash, useHashRoute, type PortalRoute } from './router'
 import { ChannelGuideScreen } from './screens/ChannelGuideScreen'
 import { HomeScreen } from './screens/HomeScreen'
@@ -84,7 +85,7 @@ function App() {
     }
     window.addEventListener('pointerdown', markInteracted, { capture: true })
     window.addEventListener('keydown', markInteracted, { capture: true })
-    return () => {
+  return () => {
       window.removeEventListener('pointerdown', markInteracted, true)
       window.removeEventListener('keydown', markInteracted, true)
     }
@@ -98,6 +99,9 @@ function App() {
     const heading = document.querySelector<HTMLElement>('h2[tabindex="-1"]')
     heading?.focus({ preventScroll: false })
   }, [route])
+
+  const embedMatch = window.location.pathname.match(/^\/api\/public\/embed-player\/(asset|channel)\/([^/]+)$/)
+  if (embedMatch) return <EmbedPlayer kind={embedMatch[1] as 'asset' | 'channel'} identity={decodeURIComponent(embedMatch[2])} />
 
   return (
     <div className="min-h-full bg-civiccast-ink text-civiccast-mist">

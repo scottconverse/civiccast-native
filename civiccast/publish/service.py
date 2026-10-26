@@ -677,12 +677,42 @@ def approve_publish(
                     }
                 )
         elif surface.id == "youtube-live":
+            previous_run = store.get_run(asset.asset_id)
+            previous = (
+                next((item for item in previous_run.surfaces if item.id == surface.id), None)
+                if previous_run
+                else None
+            )
+            if previous:
+                surface = surface.model_copy(
+                    update={
+                        key: getattr(previous, key)
+                        for key in (
+                            "broadcast_id",
+                            "stream_id",
+                            "scheduled_start",
+                            "scheduled_end",
+                            "channel_id",
+                            "url",
+                            "delivery_state",
+                        )
+                    }
+                )
+            options = {}
+            if request.youtube_scheduled_start or (previous and previous.broadcast_id):
+                options = {
+                    "scheduled_start": request.youtube_scheduled_start,
+                    "scheduled_end": request.youtube_scheduled_end,
+                    "broadcast_id": previous.broadcast_id if previous else None,
+                    "stream_id": previous.stream_id if previous else None,
+                }
             try:
                 youtube = _client(PROVIDER_KIND_YOUTUBE)
                 youtube_live_proof = youtube.publish_live(
                     asset_id=asset.asset_id,
                     title=asset.title,
                     channel_id=request.youtube_channel_id,
+                    **options,
                 )
             except Exception as exc:
                 updated = _provider_failure(surface, at=at, exc=exc)
@@ -690,7 +720,8 @@ def approve_publish(
                 updated = surface.model_copy(
                     update={
                         "state": "running"
-                        if youtube_live_proof.delivery_state == "starting"
+                        if youtube_live_proof.delivery_state
+                        in {"scheduled", "configured", "starting"}
                         else (
                             "succeeded"
                             if youtube_live_proof.delivery_state == "live"
@@ -709,6 +740,15 @@ def approve_publish(
                         "simulated": youtube_live_proof.delivery_state == "simulated",
                         "delivery_state": youtube_live_proof.delivery_state,
                         "channel_id": youtube_live_proof.channel_id,
+                        **{
+                            key: getattr(youtube_live_proof, key)
+                            for key in (
+                                "broadcast_id",
+                                "stream_id",
+                                "scheduled_start",
+                                "scheduled_end",
+                            )
+                        },
                         "message": f"YouTube Live: {youtube_live_proof.delivery_state}. Only destination-confirmed live output counts as delivery.",
                         "next_step": "Treat this as reach evidence, not the system of record.",
                     }
@@ -1002,6 +1042,12 @@ def retry_publish_surface(
             operator_id=request.operator_id,
             operator_display_name=request.operator_display_name,
             approved_surface_ids=[surface_id],
+            youtube_scheduled_start=request.youtube_scheduled_start
+            if "youtube_scheduled_start" in request.model_fields_set
+            else next((s.scheduled_start for s in previous_surfaces if s.id == surface_id), None),
+            youtube_scheduled_end=request.youtube_scheduled_end
+            if "youtube_scheduled_end" in request.model_fields_set
+            else next((s.scheduled_end for s in previous_surfaces if s.id == surface_id), None),
             youtube_channel_id=request.youtube_channel_id
             or next((s.channel_id for s in previous_surfaces if s.id == surface_id), None),
         ),

@@ -1,3 +1,4 @@
+import { EmbedCopyPanel } from './EmbedCopyPanel'
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -936,6 +937,7 @@ function DetailEditor({ asset, onClose, onEditTrim }: DetailEditorProps) {
       </div>
 
       <div className="grid gap-4 px-4 pb-6 sm:px-6">
+        {asset.published_at && <EmbedCopyPanel key={asset.asset_id} kind="asset" identity={asset.asset_id} />}
         <OfflineCaptionJobsPanel assetId={asset.asset_id} />
         <GenerateSummaryPanel assetId={asset.asset_id} />
       </div>

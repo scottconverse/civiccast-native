@@ -787,6 +787,10 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.schema_status_checked_monotonic = time.monotonic()
     _maybe_start_finalization_worker(app)
     _maybe_start_background_supervisors(app)
+    if app.state.supervisor_mode not in _SUPERVISOR_MODE_FROZEN:
+        from civiccast.syndicate.live_wiring import restore_youtube_schedules
+
+        restore_youtube_schedules(app)
     try:
         backup_service = getattr(app.state, "station_backup_service", None)
         if backup_service is not None and app.state.supervisor_mode not in _SUPERVISOR_MODE_FROZEN:
