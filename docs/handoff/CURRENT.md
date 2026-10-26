@@ -2,35 +2,37 @@
 
 ## Current consolidated N4-N8/F5 source delivery - October 26, 2026
 
-- PR270 frozen correction head8d64ce26cfc3649dfca121340dd105b0e705d809,
-  DCO pushed; parent reviewed static-PNG correction and exactfixture/policy fixes.
-  Sole CIwaiter15349 owns40310373196, Unit121529748660, Windows121529748466,
-  integration121529748206; started~10:49UTC, expected terminalsuccess/concrete
-  failure (~58min unit baseline,75min bound). Ctrl-C15349 stopswatcher only.
-- Replacement candidate40310416286 terminal FAILURE; owned67349/cell807 consumed
-  exit1. Station121529915153SUCCESS2m42s and signed component packs verified;
-  app121531088730 compiled and initial Tauri NSIS succeeded, normalization failed
-  11:06:46UTC: generated NSIS script already has an uninstaller finalizer.
-  Actual Tauri template emits a conditional UNINSTALLERSIGNCOMMAND hook even for
-  --no-sign (define is empty). No qualifying setup/signing/installed acceptance.
-  Exact log %TEMP%/civiccast-final-candidate-build.log. No obsolete run retry.
-- Local focused correction removes only that recognized conditional hook before
-  inserting our fail-closed hidden callback; unknown/custom finalizers rejected.
-  Existing normalization fixture now uses actual generated snippet and checks one
-  callback, sign-before-makensis and failure restoration;3PASS3.18s,Ruff/diffPASS.
-  Hold push until current required unit terminal, consolidate concrete failures.
-- Corrected Windows121529748466SUCCESS13m30s includes delayedPNG/native suite.
-  Last wholePRrollup20SUCCESS/3SKIP; Unit121529748660 and informational randomized
-  live, no failures. Sole live CI15349/cell806; no duplicate watcher.
-- Exactmanual121529915032 failed silent10min apt provisioning before render;
-  %TEMP%/civiccast-final-candidate-manual.log. Workflow-only progress/network/lock
-  bounds diagnostic delta remains local/actionlintPASS; not a delivery gate.
-  App packaging defect supersedes obsolete-candidate manual retry. Preserve
-  existing successful exactsource manual receipt and reused signed station packs.
-- Listener86662/PID14068 remains owned; no build currently executing. Last C211GB
-  free/RAM8978MB vs Sandbox16384MB. Preserve unknown VM/station, no tags,
-  publication/LFS/spending. Next consume CI, deliver focused source correction,
-  then justified corrected signing candidate and isolated acceptance when ready.
+- PR270 correction includes reviewed DCO906fd0a2 Tauri conditional hook fix
+  and bounded manual provisioning diagnostics, plus current-source tripwire
+  renewal. Remote8d64ce26 required CI40310373196 terminalFAILURE; sole15349/cell806
+  consumedexit1. Unit12152974866050m10s:18stale-binding failures/11783passed,
+ 106skip/5deselected. All18 specific assertions nowPASS42.84s; only engine.py,
+  existing native test and ci-test floor workflow role hashes renewed. Complete
+  registered-input drift scan nowempty; packaging paths are not bound. Claims
+  historical/current-source/installed limitations unchanged. Exact log
+  %TEMP%/civiccast-pr270-unit-8d64.log. No product unit assertion failure.
+- Windows121529748466SUCCESS13m30s delayedPNG/fullnative suite, integrationPASS;
+  all other required checksSUCCESS/SKIP at terminalrollup. Claims failure is
+  consequentmissing nativepureJUnit afterpytestfailed. Randomizedinformational.
+  Next push consolidated correction, own ONE current-head requiredCI waiter.
+- Candidate40310416286 terminalFAILURE;67349/cell807 consumedexit1. Reused signed
+  station121529915153SUCCESS2m42s; app121531088730 builtverifiedcomponentpacks,
+  compiled and initialNSISsucceeded, then normalization rejected Tauri's empty
+  conditional UNINSTALLERSIGNCOMMAND hook at11:06:46UTC. Focused correction
+  removes only recognized conditional block, preserves unknownfinalizer rejection,
+  hidden checked callback/signingorder/failure restoration. Existing two cases
+  PASS1.58s, native collection counts unchanged. Ruff/diff/actionlintPASS.
+  %TEMP%/civiccast-final-candidate-build.log. No qualifying signed setup yet.
+- Manual121529915032 failed silent10min apt provisioning before render; exactlog
+  %TEMP%/civiccast-final-candidate-manual.log. Necessary replacement includes
+  visible progress, existing30s network/60slock/retry1 options,180supdate/360sinstall
+  bounds and failure holderdump; samepackages/renderchecks. No obsoletejobretry.
+- AutomaticGateA40312615017 completed neutral/success with all three install and
+  upgrade lanes SKIPPED; no Sandbox/stationinterruption. Listener86662/PID14068
+  remains owned, no buildrunning. Last C211GBfree/RAM8978MB vs Sandbox16384MB;
+  recheckbeforeacceptance and preserve unknown VM/station. Next corrected signing
+  candidate reuses existing verifiedstation route, no tags/publication/LFS/spend.
+  F5 installed launcher/uninstaller signatures and isolatedacceptance remain.
 
 ### Historical prior candidate failure and correction receipts
 

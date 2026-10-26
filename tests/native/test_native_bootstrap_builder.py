@@ -1014,7 +1014,5 @@ def test_signed_normalization_signs_patched_launcher_before_nsis_and_restores_in
         assert setup.read_bytes() == b"installer containing signed bytes"
     assert main_binary.read_bytes() == original
 
-
-def test_uninstaller_signing_rejects_unknown_finalizer() -> None:
     with pytest.raises(ValueError, match="already has an uninstaller finalizer"):
         builder.add_nsis_uninstaller_signing("!uninstfinalize 'custom-signer %1'\n")

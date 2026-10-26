@@ -156,7 +156,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 85280857726da7cd96e663bd62944f701ce73f97
+        blob: a7fa51594978a6f2bb6a7813d5f5444b2d6cf86f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -236,7 +236,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 85280857726da7cd96e663bd62944f701ce73f97
+        blob: a7fa51594978a6f2bb6a7813d5f5444b2d6cf86f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -293,7 +293,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 85280857726da7cd96e663bd62944f701ce73f97
+        blob: a7fa51594978a6f2bb6a7813d5f5444b2d6cf86f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -358,7 +358,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 85280857726da7cd96e663bd62944f701ce73f97
+        blob: a7fa51594978a6f2bb6a7813d5f5444b2d6cf86f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -1094,7 +1094,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 49d1f7aa9f534fa07622500108fc0be953396b08
+          blob: 5e11f09e7db0110c81c0f88cb54db50f33285fd4
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1110,7 +1110,7 @@ entries:
           blob: 79031e2589c818c3763e825b55827d700b95d2ea
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 9385447411a287f04f442dbb13957ab99b0c23db
+        blob: 4f5e72f7359436ebb84a2477a9a163352c11f326
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1121,7 +1121,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 85280857726da7cd96e663bd62944f701ce73f97
+        blob: a7fa51594978a6f2bb6a7813d5f5444b2d6cf86f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2
@@ -2022,7 +2022,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 49d1f7aa9f534fa07622500108fc0be953396b08
+          blob: 5e11f09e7db0110c81c0f88cb54db50f33285fd4
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2038,7 +2038,7 @@ entries:
           blob: 79031e2589c818c3763e825b55827d700b95d2ea
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 9385447411a287f04f442dbb13957ab99b0c23db
+        blob: 4f5e72f7359436ebb84a2477a9a163352c11f326
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -2049,7 +2049,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 85280857726da7cd96e663bd62944f701ce73f97
+        blob: a7fa51594978a6f2bb6a7813d5f5444b2d6cf86f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: da4dc26b05beda17b53897816370ffd2b4705db2

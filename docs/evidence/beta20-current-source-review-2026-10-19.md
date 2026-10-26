@@ -1,4 +1,20 @@
 # Beta 20 current-source review tripwire renewal
+## October 26 static PNG and workflow floor tripwire renewal
+
+Required CI40310373196 Windows job121529748466 passed in13m30s, including
+all native media cases and the delayed static-PNG overlay regression. Local
+forced200ms admission failed before the indefinite-duration correction (4.83s)
+and passed after (4.61s), with logo/banner, continuity and clean teardown checks.
+Only static repeat-after-eos PNG buffers receive indefinite duration; live
+layer timing is unchanged. Current-source engine and native-test blob bindings
+now identify that reviewed correction. The ci-test workflow binding identifies
+native collection floor2034/2273 updates retaining the existing50-test margin.
+No registered producer node, control, verifier rule or historical acceptance
+status changes. Required unit job121529748660 found18 stale-binding assertions
+(11783 other tests passed); these source tripwires are renewed without claiming
+installed, pre-login, hardware or current external-service acceptance. Those
+outcomes remain separate; F4 historical filesrc provenance remains unexplained.
+
 
 
 ## October 26 caption extraction diagnostic binding
