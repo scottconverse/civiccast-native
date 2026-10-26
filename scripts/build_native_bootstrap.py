@@ -398,7 +398,39 @@ def add_nsis_version_preflight(script: str) -> str:
     return bom + script
 
 
-def normalize_nsis_bootstrap() -> None:
+def _installed_signing_command(path: str) -> list[str]:
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        raise FileNotFoundError("PowerShell 7 is required to sign installed executables")
+    return [
+        pwsh,
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-File",
+        str(ROOT / "scripts" / "sign_native_executable.ps1"),
+        "-LiteralPath",
+        path,
+    ]
+
+
+def add_nsis_uninstaller_signing(script: str) -> str:
+    """Sign NSIS's final uninstaller bytes; any callback failure aborts packing."""
+    if "!uninstfinalize" in script:
+        raise ValueError("generated NSIS script already has an uninstaller finalizer")
+    command = subprocess.list2cmdline(_installed_signing_command("%1")[:-1]) + ' "%1"'
+    # NSIS single quotes delimit the complete Windows command. Dollar signs
+    # would otherwise be interpreted by the NSIS preprocessor, not the shell.
+    if "'" in command or "\n" in command or "\r" in command:
+        raise ValueError("signing tool paths cannot contain quotes or newlines")
+    command = command.replace("$", "$$")
+    bom = "\ufeff" if script.startswith("\ufeff") else ""
+    return bom + "!uninstfinalize '" + command + "' = 0\n" + script.removeprefix("\ufeff")
+
+
+def normalize_nsis_bootstrap(*, sign_installed_executables: bool = False) -> None:
     """Repack NSIS with deterministic app bytes and source-file timestamp."""
 
     for required in (MAIN_BINARY, GENERATED_NSIS_SCRIPT):
@@ -406,7 +438,10 @@ def normalize_nsis_bootstrap() -> None:
             raise FileNotFoundError(f"generated native bootstrap input is missing: {required}")
 
     script = GENERATED_NSIS_SCRIPT.read_text(encoding="utf-8")
-    GENERATED_NSIS_SCRIPT.write_text(add_nsis_version_preflight(script), encoding="utf-8")
+    script = add_nsis_version_preflight(script)
+    if sign_installed_executables:
+        script = add_nsis_uninstaller_signing(script)
+    GENERATED_NSIS_SCRIPT.write_text(script, encoding="utf-8")
     original = MAIN_BINARY.read_bytes()
     patched = patch_tauri_bundle_type(original)
     original_stat = MAIN_BINARY.stat()
@@ -416,6 +451,8 @@ def normalize_nsis_bootstrap() -> None:
 
     try:
         MAIN_BINARY.write_bytes(patched)
+        if sign_installed_executables:
+            _run(_installed_signing_command(str(MAIN_BINARY.resolve())), cwd=GENERATED_NSIS_DIR)
         os.utime(MAIN_BINARY, (SOURCE_DATE_EPOCH, SOURCE_DATE_EPOCH))
         if GENERATED_NSIS_OUTPUT.exists():
             GENERATED_NSIS_OUTPUT.unlink()
@@ -438,7 +475,9 @@ def normalize_nsis_bootstrap() -> None:
             temporary_setup.unlink()
 
 
-def _build(public_key: str, key_id: str, vc_redist: Path) -> None:
+def _build(
+    public_key: str, key_id: str, vc_redist: Path, *, sign_installed_executables: bool = False
+) -> None:
     npm = "npm.cmd" if os.name == "nt" else "npm"
     tauri = INSTALLER_DIR / "node_modules" / ".bin" / ("tauri.cmd" if os.name == "nt" else "tauri")
     reviewed_redist = validate_vc_redist(vc_redist)
@@ -482,7 +521,7 @@ def _build(public_key: str, key_id: str, vc_redist: Path) -> None:
             ],
             env=env,
         )
-        normalize_nsis_bootstrap()
+        normalize_nsis_bootstrap(sign_installed_executables=sign_installed_executables)
     finally:
         VC_REDIST_RESOURCE.unlink(missing_ok=True)
 
@@ -523,6 +562,11 @@ def main() -> int:
     parser.add_argument("--vc-redist-x64", required=True, type=Path)
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--allow-development-key", action="store_true")
+    parser.add_argument(
+        "--sign-installed-executables",
+        action="store_true",
+        help="Sign the patched launcher and generated uninstaller with the existing Azure profile",
+    )
     args = parser.parse_args()
     try:
         validate_pack_public_key(args.pack_public_key_base64)
@@ -536,6 +580,7 @@ def main() -> int:
             args.pack_public_key_base64,
             args.pack_signing_key_id,
             args.vc_redist_x64,
+            sign_installed_executables=args.sign_installed_executables,
         )
         report = build_report(
             SETUP_ARTIFACT,

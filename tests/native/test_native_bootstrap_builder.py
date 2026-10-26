@@ -363,7 +363,7 @@ def test_build_controls_tauri_features_and_trust_environment(
     monkeypatch.setattr(
         builder,
         "normalize_nsis_bootstrap",
-        lambda: normalized.append(True),
+        lambda **kwargs: normalized.append(True),
     )
 
     builder._build("public-key", key_id, vc_redist)
@@ -550,7 +550,7 @@ def _stub_successful_main(
     monkeypatch.setattr(
         builder,
         "_build",
-        lambda public_key, key_id, vc_redist: None,
+        lambda public_key, key_id, vc_redist, **kwargs: None,
     )
     monkeypatch.setattr(
         builder,
@@ -624,7 +624,7 @@ def test_main_requires_every_identity_and_report_argument(
     monkeypatch.setattr(
         builder,
         "_build",
-        lambda public_key, key_id, vc_redist: None,
+        lambda public_key, key_id, vc_redist, **kwargs: None,
     )
     monkeypatch.setattr(
         builder,
@@ -648,7 +648,7 @@ def test_main_converts_expected_build_failures_to_actionable_exit(
     monkeypatch.setattr(
         builder,
         "_build",
-        lambda public_key, key_id, vc_redist: (_ for _ in ()).throw(failure),
+        lambda public_key, key_id, vc_redist, **kwargs: (_ for _ in ()).throw(failure),
     )
 
     with pytest.raises(SystemExit, match=str(failure)):
@@ -947,3 +947,60 @@ def test_version_preflight_executes_comparison_without_product_mutation(
     )
     assert result.returncode == expected, result.stdout + result.stderr
     assert "CivicCast version preflight" in result.stdout
+
+
+@pytest.mark.parametrize("signing_fails", [False, True])
+def test_signed_normalization_signs_patched_launcher_before_nsis_and_restores_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    signing_fails: bool,
+) -> None:
+    main_binary = tmp_path / "release" / "CivicCast Native.exe"
+    nsis_dir = tmp_path / "release" / "nsis" / "x64"
+    nsis_dir.mkdir(parents=True)
+    script = nsis_dir / "installer.nsi"
+    script.write_text("Function .onInit\nFunctionEnd\n", encoding="utf-8")
+    original = b"prefix-" + builder.TAURI_UNKNOWN_BUNDLE_MARKER + b"-suffix"
+    main_binary.write_bytes(original)
+    generated = nsis_dir / "nsis-output.exe"
+    setup = tmp_path / "setup.exe"
+    for name, value in {
+        "MAIN_BINARY": main_binary,
+        "GENERATED_NSIS_DIR": nsis_dir,
+        "GENERATED_NSIS_SCRIPT": script,
+        "GENERATED_NSIS_OUTPUT": generated,
+        "SETUP_ARTIFACT": setup,
+    }.items():
+        monkeypatch.setattr(builder, name, value)
+    monkeypatch.setattr(builder.shutil, "which", lambda _: "C:/Program Files/PowerShell/7/pwsh.exe")
+    monkeypatch.setattr(builder, "_find_makensis", lambda: tmp_path / "makensis.exe")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if len(calls) == 1:
+            assert command[-2:] == ["-LiteralPath", str(main_binary.resolve())]
+            assert command[command.index("-WindowStyle") + 1] == "Hidden"
+            assert builder.TAURI_NSIS_BUNDLE_MARKER in main_binary.read_bytes()
+            if signing_fails:
+                raise RuntimeError("signing failed")
+            main_binary.write_bytes(main_binary.read_bytes() + b"-signed")
+        else:
+            assert main_binary.read_bytes().endswith(b"-signed")
+            normalized = script.read_text(encoding="utf-8")
+            assert normalized.startswith("!uninstfinalize '")
+            assert '-LiteralPath "%1"' in normalized
+            assert "' = 0\n" in normalized
+            generated.write_bytes(b"installer containing signed bytes")
+
+    monkeypatch.setattr(builder, "_run", fake_run)
+    if signing_fails:
+        with pytest.raises(RuntimeError, match="signing failed"):
+            builder.normalize_nsis_bootstrap(sign_installed_executables=True)
+        assert len(calls) == 1
+        assert not setup.exists()
+    else:
+        builder.normalize_nsis_bootstrap(sign_installed_executables=True)
+        assert len(calls) == 2
+        assert setup.read_bytes() == b"installer containing signed bytes"
+    assert main_binary.read_bytes() == original

@@ -1,6 +1,29 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N8 finishing / PR269 infrastructure failure - October 26, 2026
+## Current F5 source signing / PR269 attempt2 - October 26, 2026
+
+- F4 distinction: PR268 corrected the reproduced unsafe aborted-leg teardown /
+  mux hang with fenced release before NULL; native supersede and required Windows
+  checks passed. Original run40165319415 attempt1 filesrc11 stream error safely
+  aborted, but its source cause remains unexplained. No existing receipt proves
+  that original error shares the corrected teardown cause; original diagnostic
+  provenance remains unresolved under the exact F4 plan, no green-retry claim.
+- PR269 attempt2 Unit121470092494 active, sole waiter23640. Public accessibility
+ 121459714731 cancelled after30min apt/Playwright prerequisite install, before
+  tests; failed-job-only rerun requested on fresh runner, no second watcher.
+  Other terminal required checks SUCCESS; randomized informational SUCCESS.
+- N8 DCO103f870d28b0b723d9451fdc420b1c07dcd1465d complete locally/reviewed.
+  Active serial child fix/f5-installed-authenticode-signing. F5 source correction
+  signs patched launcher before NSIS and generated uninstaller via the same pinned
+  ArtifactSigning module/callback, inherited Azure credentials, fail-closed.
+  Existing builder/workflow95pass6.73s; final hidden callback and fail-closed
+  copy correction3pass1.68s. Ruff/diff and PowerShell parse passed. Existing
+  ArtifactSigning module command contract inspected locally; actual final signed package and isolated
+  installed/uninstalled signature acceptance remain, no build launched.
+  Callback explicitly Hidden, module child tools NoNewWindow, inherited ConPTY.
+  Python exit failure checked before any setup copy. Source ready DCO commit.
+
+### Historical N8 finishing / PR269 infrastructure failure
 
 - Parent owns roadmap/merge. PR269 frozen4b2dfe78; sole waiter16889 consumed
   terminal exit1, run40289108609. Unit121460108930 failed before pytest:
@@ -24,7 +47,7 @@
   PDF/DOCX8125 terminal0 (usual MiKTeX update warnings). N8 ready DCO commit;
   next F5 source-only signing seam, no installer build yet.
 
-## Active N7 finishing / PR269 CI - October 26, 2026
+## Historical N7 finishing / PR269 CI - October 26, 2026
 
 - Parent owns roadmap/merge. PR269 frozen4b2dfe786541294fa5f92a82ed0cc8e0edf823a2.
   Old ci-test40283658614 completed CANCELLED;69829 consumed exit1 (supersession).
