@@ -16,6 +16,7 @@ vi.mock('../api/client', () => ({
   },
   listStaffAssets: vi.fn(),
   packageStaffAsset: vi.fn(),
+  updateStaffAsset: vi.fn(),
   getStaffIdentity: vi.fn(),
   getReadinessDashboard: vi.fn(),
   uploadAssetFileWithProgress: vi.fn(),
@@ -26,6 +27,7 @@ import {
   getStaffIdentity,
   listStaffAssets,
   packageStaffAsset,
+  updateStaffAsset,
 } from '../api/client'
 import { AssetsScreen } from './AssetsScreen'
 
@@ -338,5 +340,34 @@ describe('AssetsScreen upload control (S7 candidate #17 finding 1/2)', () => {
         'A records clerk, meeting operator, or support administrator role is required to upload video.',
       ),
     ).toBeTruthy()
+  })
+})
+
+
+describe('selected metadata', () => {
+  it('edits only selected records, retains failed selections and reports conflict without retry', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue({ operator_id: 'clerk', operator_display_name: 'Clerk', roles: ['records_clerk'] })
+    vi.mocked(listStaffAssets).mockResolvedValue([asset('asset-public'), asset('asset-education'), asset('unselected')])
+    vi.mocked(updateStaffAsset).mockImplementation(async (id) => {
+      if (id === 'asset-education') throw new Error('409: changed by another operator; refresh before retry')
+      return asset(id)
+    })
+    const { findByRole, getByRole, getByLabelText, findByText } = renderScreen()
+    fireEvent.click(await findByRole('checkbox', { name: /Select .*asset-public/ }))
+    fireEvent.click(getByRole('checkbox', { name: /Select .*asset-education/ }))
+    fireEvent.click(getByRole('checkbox', { name: 'Apply common description' }))
+    fireEvent.change(getByLabelText('Common description'), { target: { value: 'Reviewed council recordings' } })
+    fireEvent.click(getByRole('button', { name: 'Apply metadata to selected assets' }))
+    expect(await findByText(/1 saved; 1 failed/)).toBeTruthy()
+    expect(updateStaffAsset).toHaveBeenCalledTimes(2)
+    expect(updateStaffAsset).toHaveBeenCalledWith('asset-public', { expected_version: 1, description: 'Reviewed council recordings' })
+    expect(updateStaffAsset).toHaveBeenCalledWith('asset-education', { expected_version: 1, description: 'Reviewed council recordings' })
+    expect((getByRole('checkbox', { name: /Select .*asset-public/ }) as HTMLInputElement).checked).toBe(false)
+    expect((getByRole('checkbox', { name: /Select .*asset-education/ }) as HTMLInputElement).checked).toBe(true)
+  })
+  it('does not offer metadata edits to a publish-only operator', async () => {
+    const { findByRole, queryByRole } = renderScreen()
+    await findByRole('button', { name: /Open detail for .*asset-public/ })
+    expect(queryByRole('region', { name: 'Selected asset metadata' })).toBeNull()
   })
 })

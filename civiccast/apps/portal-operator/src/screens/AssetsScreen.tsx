@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   listStaffAssets,
   packageStaffAsset,
+  updateStaffAsset,
   getStaffIdentity,
   getReadinessDashboard,
   ApiError,
@@ -138,6 +139,12 @@ export function AssetsScreen({
 }: AssetsScreenProps = {}) {
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterId>('all')
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [applyDescription, setApplyDescription] = useState(false)
+  const [description, setDescription] = useState('')
+  const [applyBody, setApplyBody] = useState(false)
+  const [meetingBody, setMeetingBody] = useState('')
+  const [editResults, setEditResults] = useState<Array<{ assetId: string; title: string; ok: boolean; detail: string }>>([])
 
   const query = useQuery<AssetRow[], Error>({
     queryKey: ['staff-assets'],
@@ -191,6 +198,34 @@ export function AssetsScreen({
     onSuccess: () => query.refetch(),
   })
   const queryClient = useQueryClient()
+
+  const canEditMetadata = canUpload
+  const metadataMutation = useMutation({
+    mutationFn: async () => {
+      const targets = (query.data ?? []).filter((row) => selected.has(row.asset_id))
+      const results: Array<{ assetId: string; title: string; ok: boolean; detail: string }> = []
+      setEditResults([])
+      for (const row of targets) {
+        try {
+          await updateStaffAsset(row.asset_id, {
+            expected_version: row.version,
+            ...(applyDescription ? { description: description.trim() || null } : {}),
+            ...(applyBody ? { meeting_body: meetingBody.trim() || null } : {}),
+          })
+          results.push({ assetId: row.asset_id, title: row.title, ok: true, detail: 'Saved' })
+        } catch (error) {
+          results.push({ assetId: row.asset_id, title: row.title, ok: false, detail: error instanceof ApiError ? error.detail ?? error.message : String(error) })
+        }
+        setEditResults([...results])
+      }
+      return results
+    },
+    onSuccess: (results) => {
+      const saved = new Set(results.filter((result) => result.ok).map((result) => result.assetId))
+      setSelected((prior) => new Set([...prior].filter((assetId) => !saved.has(assetId))))
+      void queryClient.invalidateQueries({ queryKey: ['staff-assets'] })
+    },
+  })
 
   const visible = useMemo<AssetRow[]>(() => {
     const rows = query.data ?? []
@@ -280,6 +315,21 @@ export function AssetsScreen({
         </div>
       </div>
 
+      {canEditMetadata && <section aria-label="Selected asset metadata" className="mx-6 my-3 grid gap-2 rounded-md border p-3 text-sm">
+        <h2 className="font-semibold">Edit selected assets</h2>
+        <p>{(query.data ?? []).filter((row) => selected.has(row.asset_id)).length} selected, including selections hidden by filters. Checked fields replace the value on every selected asset; blank clears it.</p>
+        <label><input type="checkbox" checked={applyDescription} onChange={(event) => setApplyDescription(event.target.checked)} disabled={metadataMutation.isPending} /> Apply common description</label>
+        <textarea aria-label="Common description" maxLength={2000} value={description} disabled={!applyDescription || metadataMutation.isPending} onChange={(event) => setDescription(event.target.value)} className="rounded-md border p-2" />
+        <label><input type="checkbox" checked={applyBody} onChange={(event) => setApplyBody(event.target.checked)} disabled={metadataMutation.isPending} /> Apply common meeting body</label>
+        <input aria-label="Common meeting body" maxLength={120} value={meetingBody} disabled={!applyBody || metadataMutation.isPending} onChange={(event) => setMeetingBody(event.target.value)} className="rounded-md border p-2" />
+        <div className="flex gap-3">
+          <button type="button" disabled={metadataMutation.isPending || !visible.length} onClick={() => setSelected(new Set([...selected, ...visible.map((row) => row.asset_id)]))}>Select visible assets</button>
+          <button type="button" disabled={metadataMutation.isPending} onClick={() => setSelected(new Set())}>Clear selection</button>
+          <button type="button" disabled={metadataMutation.isPending || !(applyDescription || applyBody) || !(query.data ?? []).some((row) => selected.has(row.asset_id))} onClick={() => metadataMutation.mutate()}>{metadataMutation.isPending ? 'Saving selected assets…' : 'Apply metadata to selected assets'}</button>
+        </div>
+        {editResults.length > 0 && <div role="status"><p>{editResults.filter((result) => result.ok).length} saved; {editResults.filter((result) => !result.ok).length} failed. Review failures before selecting and applying again; saved records are not rolled back.</p><ul>{editResults.map((result) => <li key={result.assetId}>{result.title} ({result.assetId}): {result.detail}</li>)}</ul></div>}
+      </section>}
+
       {query.isLoading && <LoadingState />}
       {query.isError && (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
@@ -307,6 +357,7 @@ export function AssetsScreen({
                 className="text-left text-[11px] uppercase tracking-wider"
                 style={{ color: 'var(--cc-ink-3)' }}
               >
+                {canEditMetadata && <th className="px-3 py-2">Select</th>}
                 <th className="px-3 py-2">Title</th>
                 <th className="px-3 py-2">State</th>
                 <th className="px-3 py-2">Status</th>
@@ -323,6 +374,7 @@ export function AssetsScreen({
                   key={row.asset_id}
                   style={{ borderTop: '1px solid var(--cc-line)' }}
                 >
+                  {canEditMetadata && <td className="px-3 py-2"><input type="checkbox" aria-label={`Select ${row.title} (${row.asset_id})`} checked={selected.has(row.asset_id)} disabled={metadataMutation.isPending} onChange={(event) => setSelected((prior) => { const next = new Set(prior); if (event.target.checked) next.add(row.asset_id); else next.delete(row.asset_id); return next })} /></td>}
                   <td className="px-3 py-3 align-top">
                     {onOpenAsset ? (
                       <button

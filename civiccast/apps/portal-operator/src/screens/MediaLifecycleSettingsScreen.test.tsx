@@ -24,6 +24,9 @@ vi.mock('../api/client', () => ({
   deleteRetentionPolicy: vi.fn(),
   applyRetentionPolicies: vi.fn(),
   getStorageBudget: vi.fn(),
+  listDispositionReviews: vi.fn().mockResolvedValue([]),
+  getStaffAsset: vi.fn().mockResolvedValue([]),
+  getAssetReadiness: vi.fn(),
 }))
 
 import {
@@ -33,6 +36,9 @@ import {
   deleteRetentionPolicy,
   deleteWatchFolderConfig,
   getStorageBudget,
+  listDispositionReviews,
+  getStaffAsset,
+  getAssetReadiness,
   listRetentionPolicies,
   listWatchFolderConfigs,
   scanWatchFolderNow,
@@ -432,4 +438,49 @@ describe('MediaLifecycleSettingsScreen', () => {
       expect(await findByText(/Permission denied/)).toBeTruthy()
     })
   })
+})
+
+
+describe('protected cleanup review', () => {
+  it('rechecks current holds/retention instead of trusting old expiry flags', async () => {
+    const ids = ['eligible', 'held', 'extended', 'permanent', 'unknown']
+    vi.mocked(listDispositionReviews).mockResolvedValue(ids.map((id) => ({ asset_id: id,
+      retention_policy: 'short', retention_until: '2020-01-01T00:00:00Z', status: 'pending_review', flagged_at: '2020-01-01T00:00:00Z' })))
+    vi.mocked(getStaffAsset).mockImplementation(async (id) => ({ asset_id: id, title: id,
+      file_size_bytes: 1024, retention_policy: id === 'permanent' ? 'permanent' : 'short',
+      retention_until: id === 'extended' ? '2099-01-01T00:00:00Z' : '2020-01-01T00:00:00Z' }) as Awaited<ReturnType<typeof getStaffAsset>>)
+    vi.mocked(getAssetReadiness).mockImplementation(async (id) => {
+      if (id === 'unknown') throw new Error('unavailable')
+      return { asset_id: id, legal_hold: id === 'held', in_flight_transcode_jobs: [],
+        readiness_state: 'ready', readiness_reason: null, loudness_status: 'ok', measured_lufs: -23,
+        archive_complete: true, archive_portal_verified: true, archive_ia_verified: false,
+        archive_nas_verified: false, updated_at: new Date().toISOString() }
+    })
+    const { findByText, getByRole, queryByRole } = renderScreen()
+    expect(await findByText('Eligible for records-officer review')).toBeTruthy()
+    expect(await findByText('Protected — legal hold')).toBeTruthy()
+    expect(await findByText('Protected — retention extended')).toBeTruthy()
+    expect(await findByText('Protected — permanent retention')).toBeTruthy()
+    expect(await findByText('Unavailable — current protection could not be checked')).toBeTruthy()
+    expect(getByRole('link', { name: 'held' }).getAttribute('href')).toBe('#/assets/held')
+    expect(queryByRole('button', { name: /purge|delete asset/i })).toBeNull()
+  })
+})
+
+
+it('pages all cleanup candidates while probing only the visible page', async () => {
+  vi.mocked(listDispositionReviews).mockResolvedValue(Array.from({ length: 51 }, (_, index) => ({
+    asset_id: `candidate-${index}`, retention_policy: 'short', retention_until: '2020-01-01T00:00:00Z',
+    status: 'pending_review', flagged_at: '2020-01-01T00:00:00Z',
+  })))
+  vi.mocked(getStaffAsset).mockRejectedValue(new Error('unavailable'))
+  vi.mocked(getAssetReadiness).mockRejectedValue(new Error('unavailable'))
+  const { findByRole, findByText } = renderScreen()
+  const next = await findByRole('button', { name: 'Next cleanup page' })
+  await waitFor(() => expect(getAssetReadiness).toHaveBeenCalledWith('candidate-49'))
+  expect(getAssetReadiness).not.toHaveBeenCalledWith('candidate-50')
+  fireEvent.click(next)
+  await waitFor(() => expect(getAssetReadiness).toHaveBeenCalledWith('candidate-50'))
+  expect(await findByText('Page 2 of 2')).toBeTruthy()
+  expect((next as HTMLButtonElement).disabled).toBe(true)
 })

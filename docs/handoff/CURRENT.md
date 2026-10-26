@@ -1,6 +1,6 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N5 / PR269 CI - October 26, 2026
+## Active N6 / PR269 CI - October 26, 2026
 
 - Parent owns roadmap/merge. PR269 frozen bfc4dc620b3958cbe839a63450fece84f2129a66,
   required CI run40283658614, sole watcher69829 started07:08UTC (~65min prior
@@ -11,28 +11,33 @@
   Focused102backend13.26s,32dashboard2.21s,both portals typecheck/affected ESLint,
   Ruff, built external-origin TS/Spanish parsed cue/keyboard/375px/access403
   workflow13.3s passed. Actual YouTube transmission/account activation deferred.
-- Active child feat/n5-live-agenda-markers based N4. N5 implementation now adds
-  nullable source_recording_job_id in existing agenda row (0096), named recording
-  choices, measured capture-media position including reconnect segments with a
-  five-second bounded probe, mark-now/item bounds. Existing RecordingJob.asset_id
-  resolves content-derived final recording; no finalizer/capture rewrite.
-- N5 behavior complete/reviewed: only capture-linked markers rebase through F1;
-  legacy/direct player times stay unchanged. Resolved final asset reads support
-  existing chapter sync; imported player chapters convert back to source basis.
-  Direct marker bounds use immutable packaged duration; public chapter text
-  checks current published package and N1 viewer proof/grants. No new controls,
-  inference, services, live station changes or capture restart.
-- Evidence: affected backend188 passed23.94s incl real UDP/FFmpeg capture,
-  measured mark-now, final asset linkage, correction and draft/publish behavior;
-  source trim/import + legacy preservation + bounds/access regressions. Operator
-  44 passed3.01s, typecheck/affected ESLint passed. Actual built resident HLS
-  playback/keyboard chapter seek to corrected0.5s passed3.2s. Browser initially
-  awaited play() on a pre-access-check element; waiting for media metadata fixed
-  that fixture race. API/help/manual/PDF/DOCX generated successfully (20037 exit0);
-  Ruff and regenerated operator types/affected ESLint passed. N5 ready for DCO
-  commit, then authorized serial N6 child (confidence/metadata/storage review).
-- No local jobs live; sole CI watcher69829 retained. Last consumed Windows
-  121442261136 SUCCESS; unit121442261074 still running. F5,N6-N8 pending.
+- N5 reviewed/local DCO7be2ab2255a3c4c26ddbba75d4466576ccf16ccc; capture-linked
+  source markers rebase through F1 while legacy/direct player times remain.
+  Named recording selection, measured capture clock (bounded five-second probe),
+  finalized asset linkage, hh:mm:ss correction, import basis and current public
+  package/viewer access delivered. Evidence188 backend23.94s incl real UDP/media,
+  44 operator3.01s, built resident HLS/keyboard corrected0.5s seek3.2s, types,
+  affected ESLint/Ruff, generated API/help/manual/PDF/DOCX passed. N4+N5 unpushed.
+- Active child feat/n6-daily-station-operations based N5. First product changes:
+  all-channel actual output/source/audio/caption confidence with stale/missing
+  readings; selected version-checked description/meeting-body edits with per-row
+  results and failed-only remaining selection; read-only cleanup review joins
+  existing expiry queue to current asset retention and legal-hold/readiness.
+  Cleanup pages50 rows with current per-asset GETs (not limited Assets firstpage);
+  only visible rows probe protection. No deletion/purge/control or station work.
+- N6 material review complete after paging correction. Existing UI82 passed1.81s;
+  changed direct-asset/selection3 passed890ms and paging1 passed807ms; types and
+  affected ESLint passed. Updated manual/help/PDF/DOCX generation6734 exit0;
+  final generated files include pagination wording. N6 ready for DCO commit.
+- PR269 is NOT GREEN: parent complete-rollup found formatter
+  tests/captions/test_review_persistence.py; AppStaffLogin new array mocks;
+  public routing search fixture; operator first-mile Saved/publish-caption copy
+  assertions. Informational randomized is not a gate, but exposed real affected
+  packaging approved legacy-ID preservation and obsolete migration-head tests.
+  Root logs in Temp/civiccast-pr269-{a11y,randomized}.log. Next finish/preserve
+  N6 commit then isolate corrections on PR269 branch; no N7 work until repaired.
+  Sole ci-test watcher69829 remains live; this watcher covers only ci-test,
+  not the entire PR rollup. Last Windows121442261136 SUCCESS/unit121442261074 live.
 
 ## N1-N3 combined delivery receipts - October 26, 2026
 

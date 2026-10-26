@@ -4121,3 +4121,8 @@ export function listAgendaMeetings(): Promise<AgendaMeetingOption[]> {
 export function markAgendaItemNow(agendaId: string, itemId: string): Promise<AgendaItem> {
   return request<AgendaItem>(`${AGENDAS}/${encodeURIComponent(agendaId)}/items/${encodeURIComponent(itemId)}/mark-now`, { method: 'POST' })
 }
+
+
+export function listDispositionReviews(): Promise<import('../types/api.generated').DispositionReviewResponse[]> {
+  return request('/api/staff/records/disposition-queue')
+}

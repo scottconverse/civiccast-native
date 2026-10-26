@@ -1291,6 +1291,10 @@ If it fails, the panel shows the reason (or "Finalization failed."). Fix the cau
 
 > **Known issue (beta.11):** the saving step looks for a recording file named after the session in the recording location (for example `council-live-room.mp4`). Nothing on this screen creates that file, and in testing we could not confirm which part of CivicCast does. If the panel stays on **Waiting** or fails, ask your IT person to check that the recording location is receiving the meeting recording. By default CivicCast gives up waiting for the file 30 minutes after **End Live Stream**, and the panel then reads "No recording file was found for this session (expected ...)". While CivicCast is still retrying by itself the tag reads "Retrying". **Retry finalization** appears only after CivicCast has given up. It is shown to every role, but only a Meeting operator can use it.
 
+### Channel confidence at a glance
+
+Open **Channels** to see every channel's current output state, source/program label, measured audio loudness and caption proof in the lineup cards. Readings refresh every 30 seconds. Samples older than two minutes are marked **Stale**; a missing measurement or failed request says **Not measured**, **Not verified** or **Unavailable**, rather than healthy. A program label with **last observed** is historical. Caption **Verified on** requires a recent passing decode-back proof; measured LUFS alone is not a loudness-compliance claim. Select a card for existing output controls, detailed proof and recovery information.
+
 ### Start a channel
 
 The **Channels** screen controls each channel's actual video feed.
@@ -1746,6 +1750,14 @@ CivicCast gives each person one or more roles. The role decides which buttons wo
 
 You should see a table with the columns Title, State, Status, Duration, Size, Codec and Published. The asset ID appears in small type under each title.
 
+#### Apply common metadata to selected recordings
+
+Records clerks, meeting operators and support administrators can check individual rows or use **Select visible assets**. Search and state filters do not clear a selection; the count includes hidden selections. **Clear selection** starts over.
+
+Check **Apply common description** and/or **Apply common meeting body**, enter the replacement value, then choose **Apply metadata to selected assets**. A checked blank field clears that value; an unchecked field stays unchanged. Title, trim, captions and retention are not changed by this form. Each selected record uses its observed version, so a concurrent edit can refuse that record without overwriting another operator's work.
+
+The result lists saved and failed recordings separately. Successful records leave the selection; failed records stay selected for review. Other successful saves are not rolled back. Refresh and review conflicts before applying again; there is no automatic retry. Sign-ins without the metadata-edit role do not see these controls, and the existing server permission gate still applies.
+
 The **State** and **Status** columns describe the same video in two ways.
 
 | State | What it means |
@@ -2014,11 +2026,12 @@ If you open the page with a role that is not allowed, you see "This action requi
 
 ### Watch folders, retention rules and storage (Media Lifecycle Settings)
 
-This page holds three station-wide settings. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
+This page holds station-wide settings and cleanup review. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
 
 - **Watch folders.** A watch folder is a folder on the station's computer (a local disk, a USB drive or a network share) that CivicCast checks automatically and copies new videos from. Type the folder path in **Watch folder path** or click **Browse…**, then click **Add watch folder**. A new file is imported once it has stopped growing. The original stays where it is, and the new video appears in Assets as Validated. Click **Scan now** to check immediately, or **Remove** to stop watching (files already imported stay).
 - **Retention automation.** A rule sets a video's retention policy by its meeting body. Fill in **Rule name**, **Meeting body (exact match)** and **Retention policy**, then click **Add rule**. Then click **Apply rules now**.
 - **Storage budget.** A read-only view of how much disk the library uses, with a table by retention policy.
+- **Storage cleanup review.** Shows recordings already flagged by the retention worker, 50 per page (use **Previous cleanup page** and **Next cleanup page** to review the rest), with current source-file size, expiry and protection checks. Each recording is fetched directly, including older records outside the Assets list's first page. Legal hold, permanent retention, an extended/no expiry, active processing or unavailable current protection prevent an eligibility label. **Eligible for records-officer review** is a review candidate, not permission to delete. Open its recording link to review retention/holds through existing controls. Nothing is purged from this screen; obtain the station's normal records-officer disposition authorization. These checks refresh every 30 seconds, and **Refresh cleanup review** reloads the flag queue.
 
 Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ingest" times, or **Degraded** with the reason, for example a drive that was unplugged.
 

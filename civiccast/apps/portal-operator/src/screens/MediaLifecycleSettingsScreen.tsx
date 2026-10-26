@@ -13,6 +13,9 @@ import {
   deleteRetentionPolicy,
   deleteWatchFolderConfig,
   getStorageBudget,
+  listDispositionReviews,
+  getStaffAsset,
+  getAssetReadiness,
   listRetentionPolicies,
   listWatchFolderConfigs,
   scanWatchFolderNow,
@@ -588,6 +591,48 @@ function StorageBudgetSection() {
   )
 }
 
+function CleanupReviewRow({ assetId }: { assetId: string }) {
+  const assetQuery = useQuery({ queryKey: ['staff-asset', assetId], queryFn: () => getStaffAsset(assetId), retry: false, refetchInterval: 30_000 })
+  const asset = assetQuery.isError ? undefined : assetQuery.data
+  const readiness = useQuery({ queryKey: ['asset-readiness', assetId], queryFn: () => getAssetReadiness(assetId), retry: false, refetchInterval: 30_000 })
+  const deadline = new Date(asset?.retention_until ?? '').getTime()
+  const blocked = !asset || readiness.isError || !readiness.data ? 'Unavailable — current protection could not be checked'
+    : readiness.data.legal_hold ? 'Protected — legal hold'
+    : asset.retention_policy === 'permanent' || asset.retention_term_unit === 'forever' ? 'Protected — permanent retention'
+    : !Number.isFinite(deadline) ? 'Protected — no current expiry'
+    : deadline > readiness.dataUpdatedAt ? 'Protected — retention extended'
+    : (readiness.data.in_flight_transcode_jobs?.length ?? 0) > 0 ? 'Protected — processing active'
+    : 'Eligible for records-officer review'
+  return <tr>
+    <td className="p-2"><a href={`#/assets/${encodeURIComponent(assetId)}`} className="underline">{asset?.title ?? 'Recording unavailable'}</a></td>
+    <td className="p-2">{asset?.file_size_bytes != null ? fmtBytes(asset.file_size_bytes) : 'Unknown'}</td>
+    <td className="p-2">{readiness.isPending || assetQuery.isPending ? 'Checking protection…' : blocked}</td>
+    <td className="p-2">{asset?.retention_until ? new Date(asset.retention_until).toLocaleString() : 'No expiry'}</td>
+  </tr>
+}
+
+function CleanupReviewSection() {
+  const [requestedPage, setPage] = useState(0)
+  const queue = useQuery({ queryKey: ['disposition-reviews'], queryFn: listDispositionReviews, retry: false, refetchInterval: 30_000 })
+  const page = Math.min(requestedPage, Math.max(0, Math.ceil((queue.data?.length ?? 0) / 50) - 1))
+  return <SectionCard title="Storage cleanup review" subtitle="Expired retention flags need current protection checks and a records-officer decision. Nothing is deleted here.">
+    <button type="button" onClick={() => { void queue.refetch() }}>Refresh cleanup review</button>
+    {queue.isPending && <p role="status">Loading cleanup candidates…</p>}
+    {queue.isError && <InlineError error={queue.error} />}
+    {queue.isSuccess && <>
+      <p>Showing {queue.data.length ? page * 50 + 1 : 0}–{Math.min((page + 1) * 50, queue.data.length)} of {queue.data.length} flagged recordings. Recheck retention and legal holds in each asset before any authorized disposition. A flag is not permission to delete; source-file sizes are estimates of potential review scope.</p>
+      {!queue.data.length ? <p>No recordings are flagged for cleanup review.</p> : <table className="w-full text-left text-xs"><thead><tr><th>Recording</th><th>Source size</th><th>Current protection</th><th>Current retention ends</th></tr></thead><tbody>
+        {queue.data.slice(page * 50, (page + 1) * 50).map((row) => <CleanupReviewRow key={row.asset_id} assetId={row.asset_id} />)}
+      </tbody></table>}
+      {queue.data.length > 50 && <nav aria-label="Cleanup review pages" className="flex gap-3">
+        <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous cleanup page</button>
+        <span>Page {page + 1} of {Math.ceil(queue.data.length / 50)}</span>
+        <button type="button" disabled={(page + 1) * 50 >= queue.data.length} onClick={() => setPage(page + 1)}>Next cleanup page</button>
+      </nav>}
+    </>}
+  </SectionCard>
+}
+
 export function MediaLifecycleSettingsScreen() {
   return (
     <div className="flex flex-col">
@@ -604,6 +649,7 @@ export function MediaLifecycleSettingsScreen() {
       <WatchFolderSection />
       <RetentionPolicySection />
       <StorageBudgetSection />
+      <CleanupReviewSection />
     </div>
   )
 }
