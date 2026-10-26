@@ -161,9 +161,22 @@ jobs:
 
       - name: Install pandoc and TeX (per ADR 0005)
         timeout-minutes: 10
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
+          set -euo pipefail
+          # Match the existing media prerequisite network/lock bounds. Keep
+          # progress visible so a timeout identifies the package and endpoint.
+          trap 'ps -eo pid,ppid,etimes,args | grep -E "apt-get|/usr/lib/apt/methods/|dpkg" || true; sudo -n fuser -v /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock || true' ERR
+          apt=(sudo -n apt-get
+            -o DPkg::Lock::Timeout=60
+            -o Acquire::Retries=1
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30)
+          echo "Updating apt indexes (180s bound)"
+          timeout 180 "${apt[@]}" update
+          echo "Installing Pandoc and TeX (360s bound)"
+          timeout 360 "${apt[@]}" install -y --no-install-recommends \
             pandoc \
             lmodern \
             texlive-xetex \

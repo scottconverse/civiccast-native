@@ -2,9 +2,38 @@
 
 ## Current consolidated N4-N8/F5 source delivery - October 26, 2026
 
-- PR270 branch fix/f5-installed-authenticode-signing: consolidated correction
-  ready for DCO push on3074f2b6. Parent material review accepted narrow static-PNG
-  correction; remaining unit failures were exact fixture/collection contracts.
+- PR270 frozen correction head8d64ce26cfc3649dfca121340dd105b0e705d809,
+  DCO pushed; parent reviewed static-PNG correction and exactfixture/policy fixes.
+  Sole CIwaiter15349 owns40310373196, Unit121529748660, Windows121529748466,
+  integration121529748206; started~10:49UTC, expected terminalsuccess/concrete
+  failure (~58min unit baseline,75min bound). Ctrl-C15349 stopswatcher only.
+- Replacement candidate40310416286 terminal FAILURE; owned67349/cell807 consumed
+  exit1. Station121529915153SUCCESS2m42s and signed component packs verified;
+  app121531088730 compiled and initial Tauri NSIS succeeded, normalization failed
+  11:06:46UTC: generated NSIS script already has an uninstaller finalizer.
+  Actual Tauri template emits a conditional UNINSTALLERSIGNCOMMAND hook even for
+  --no-sign (define is empty). No qualifying setup/signing/installed acceptance.
+  Exact log %TEMP%/civiccast-final-candidate-build.log. No obsolete run retry.
+- Local focused correction removes only that recognized conditional hook before
+  inserting our fail-closed hidden callback; unknown/custom finalizers rejected.
+  Existing normalization fixture now uses actual generated snippet and checks one
+  callback, sign-before-makensis and failure restoration;3PASS3.18s,Ruff/diffPASS.
+  Hold push until current required unit terminal, consolidate concrete failures.
+- Corrected Windows121529748466SUCCESS13m30s includes delayedPNG/native suite.
+  Last wholePRrollup20SUCCESS/3SKIP; Unit121529748660 and informational randomized
+  live, no failures. Sole live CI15349/cell806; no duplicate watcher.
+- Exactmanual121529915032 failed silent10min apt provisioning before render;
+  %TEMP%/civiccast-final-candidate-manual.log. Workflow-only progress/network/lock
+  bounds diagnostic delta remains local/actionlintPASS; not a delivery gate.
+  App packaging defect supersedes obsolete-candidate manual retry. Preserve
+  existing successful exactsource manual receipt and reused signed station packs.
+- Listener86662/PID14068 remains owned; no build currently executing. Last C211GB
+  free/RAM8978MB vs Sandbox16384MB. Preserve unknown VM/station, no tags,
+  publication/LFS/spending. Next consume CI, deliver focused source correction,
+  then justified corrected signing candidate and isolated acceptance when ready.
+
+### Historical prior candidate failure and correction receipts
+
 -40302184786 terminal FAILURE, sole67973/cell747 consumedexit1. Unit121502756357
  58m22s:3failed/11798passed/106skipped/5deselected. Exact native collection now
  2084pure/2326total/2323Windows(nonintegration); workflowfloors2034/2273 retain

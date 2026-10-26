@@ -959,7 +959,15 @@ def test_signed_normalization_signs_patched_launcher_before_nsis_and_restores_in
     nsis_dir = tmp_path / "release" / "nsis" / "x64"
     nsis_dir.mkdir(parents=True)
     script = nsis_dir / "installer.nsi"
-    script.write_text("Function .onInit\nFunctionEnd\n", encoding="utf-8")
+    script.write_text(
+        '!define UNINSTALLERSIGNCOMMAND ""\n'
+        "; Uninstaller signing command\n"
+        '!if "${UNINSTALLERSIGNCOMMAND}" != ""\n'
+        "  !uninstfinalize '${UNINSTALLERSIGNCOMMAND}'\n"
+        "!endif\n"
+        "Function .onInit\nFunctionEnd\n",
+        encoding="utf-8",
+    )
     original = b"prefix-" + builder.TAURI_UNKNOWN_BUNDLE_MARKER + b"-suffix"
     main_binary.write_bytes(original)
     generated = nsis_dir / "nsis-output.exe"
@@ -989,6 +997,7 @@ def test_signed_normalization_signs_patched_launcher_before_nsis_and_restores_in
             assert main_binary.read_bytes().endswith(b"-signed")
             normalized = script.read_text(encoding="utf-8")
             assert normalized.startswith("!uninstfinalize '")
+            assert normalized.count("!uninstfinalize") == 1
             assert '-LiteralPath "%1"' in normalized
             assert "' = 0\n" in normalized
             generated.write_bytes(b"installer containing signed bytes")
@@ -1004,3 +1013,8 @@ def test_signed_normalization_signs_patched_launcher_before_nsis_and_restores_in
         assert len(calls) == 2
         assert setup.read_bytes() == b"installer containing signed bytes"
     assert main_binary.read_bytes() == original
+
+
+def test_uninstaller_signing_rejects_unknown_finalizer() -> None:
+    with pytest.raises(ValueError, match="already has an uninstaller finalizer"):
+        builder.add_nsis_uninstaller_signing("!uninstfinalize 'custom-signer %1'\n")

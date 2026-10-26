@@ -418,6 +418,14 @@ def _installed_signing_command(path: str) -> list[str]:
 
 def add_nsis_uninstaller_signing(script: str) -> str:
     """Sign NSIS's final uninstaller bytes; any callback failure aborts packing."""
+    # Tauri emits this conditional even for --no-sign. Replace that known hook
+    # so only our checked callback signs the final generated uninstaller.
+    tauri_hook = (
+        '!if "${UNINSTALLERSIGNCOMMAND}" != ""\n'
+        "  !uninstfinalize '${UNINSTALLERSIGNCOMMAND}'\n"
+        "!endif\n"
+    )
+    script = script.replace(tauri_hook, "", 1)
     if "!uninstfinalize" in script:
         raise ValueError("generated NSIS script already has an uninstaller finalizer")
     command = subprocess.list2cmdline(_installed_signing_command("%1")[:-1]) + ' "%1"'
