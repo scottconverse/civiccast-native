@@ -1,6 +1,6 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Current N4-N8/F5 source ready / PR269 unit green - October 26, 2026
+## Current consolidated N4-N8/F5 source delivery - October 26, 2026
 
 - Source candidate ab3df74981a82367d6726baec464c8f0ccf05b85, reviewed/DCO,
   branch fix/f5-installed-authenticode-signing; N8 103f870d, F5 signing3cd74389,
@@ -9,7 +9,8 @@
   Unit12147009249454m14s, Claims12149162566030s; Windows13m25s and integration38s
   SUCCESS retained. Public-a11y retry SUCCESS per parentrollup. No CIwaiter alive;
   Parent fullrollup20SUCCESS/3SKIP verified; PR269 merged09:22:15UTC main
-  8608a4b55ae382fd21b6a8ebe5a315c0804a68ff. Next integrate main/push combinedPR.
+  8608a4b55ae382fd21b6a8ebe5a315c0804a68ff. Integrated main without conflicts;
+  valid focused evidence reused, no broad local rerun for merge alone.
 - Existing runnerlistener86662/PID14068 owned onlineidle; no build dispatched.
   Finalcandidate signing/isolatedinstalledacceptance remains, no release/tag.
 
