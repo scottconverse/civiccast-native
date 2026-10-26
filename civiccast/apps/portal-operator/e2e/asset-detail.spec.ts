@@ -144,7 +144,7 @@ async function mockBackend(
 async function openDetail(page: import('@playwright/test').Page) {
   await page.goto('/')
   await page.getByRole('button', { name: 'Assets' }).click()
-  await expect(page.getByRole('heading', { name: 'Assets' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
   await page
     .getByRole('button', { name: /Open detail for Council/ })
     .click()
@@ -248,7 +248,7 @@ test.describe('asset detail + metadata edit', () => {
     await mockBackend(page)
     await openDetail(page)
     await page.getByRole('button', { name: 'Back to assets' }).click()
-    await expect(page.getByRole('heading', { name: 'Assets' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible()
     await expect(
       page.getByRole('heading', { name: 'Council — May 8, 2026' }),
     ).toBeHidden()

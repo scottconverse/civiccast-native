@@ -2,6 +2,23 @@
 
 ## Current consolidated N4-N8/F5 source delivery - October 26, 2026
 
+- PR270 typing head e7e113bd required Windows121495510573 and integration
+  SUCCESS; lint/types/operator build/reproducibility and other completed checks
+  SUCCESS. At correction boundary:17SUCCESS/3SKIP, Unit121495510430,
+  public-a11y121494944327 and informational randomized still live.
+- Operator a11y121494944632 failed18 strict-selector assertions: Assets h1
+  also matched new Edit selected assets h2. Exact existing heading selectors
+  corrected in asset-detail/assets-upload; both files19PASS7.7s including axe.
+  No product behavior change. Log %TEMP%/civiccast-pr270-operator-a11y.log.
+  First local npm-owned preview disappeared after10passes; explicitly owned
+  existing Vite preview supplied the same checks, then stopped (32928).
+- Sole CI reader cell729 owns watcher10784 for40299903713 until supersession
+  or terminal result; no duplicate watcher. Next DCO fixture correction/push,
+  then one current-head waiter. Listener86662/PID14068 owned, no build.
+
+### Historical PR270 initial candidate and typing correction
+
+
 - PR270 initial lint121492497246 failed14 mypy types in8changedfiles. Exact
   log %TEMP%/civiccast-pr270-lint.log. Corrected annotations/invariant narrowing,
   typed conditional caption keyword and existing SQLAlchemy/callback type seams;
