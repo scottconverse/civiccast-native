@@ -25,6 +25,10 @@ export type CaptionReviewStatus = CaptionReviewItemResponse['status']
 export const CAPTION_LANGUAGE_META: Record<string, { code: string; label: string }> = {
   en: { code: 'EN', label: 'English' },
   es: { code: 'ES', label: 'Spanish' },
+  'zh-Hans': { code: 'ZH-HANS', label: 'Chinese (Simplified)' },
+  fil: { code: 'FIL', label: 'Tagalog / Filipino' },
+  vi: { code: 'VI', label: 'Vietnamese' },
+  ar: { code: 'AR', label: 'Arabic' },
 }
 
 export function captionLanguageOf(item: CaptionReviewItemResponse): string {

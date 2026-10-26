@@ -304,3 +304,40 @@ test('manifest override keeps portal navigation and uses truthful direct-preview
   await expect(page.getByText('No live broadcast is on air.')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Latest recordings' })).toHaveCount(0)
 })
+
+
+test('caption display follows channel, resizes, clears interrupted input and shares link', async ({ page }) => {
+  await page.clock.install()
+  await page.route('**/api/public/app/config', (route) => route.fulfill({ json: { channels: [
+    { channel_id: 'public', branding: { display_name: 'Public access' } },
+    { channel_id: 'council', branding: { display_name: 'Council channel' } },
+  ] } }))
+  let interrupted = false
+  let releaseCouncil: (() => void) | undefined
+  await page.route('**/api/public/channels/*/captions.vtt', async (route) => {
+    if (interrupted) return route.fulfill({ status: 404, body: 'Unavailable' })
+    const council = route.request().url().includes('/council/')
+    if (council && !releaseCouncil) await new Promise<void>((resolve) => { releaseCouncil = resolve })
+    const text = council ? 'Council caption' : 'Public caption'
+    return route.fulfill({ contentType: 'text/vtt', body: `WEBVTT\n\nc1\n00:00:01.000 --> 00:00:03.000\n${text}\n` })
+  })
+  await page.goto('/#/captions')
+  await expect(page.getByRole('log')).toContainText('Public caption')
+  await expect(page.getByRole('status')).toContainText('Latest available captions; waiting for new input')
+  await page.getByLabel('Caption display channel').selectOption('council')
+  await expect(page.getByRole('log')).toBeEmpty()
+  await expect.poll(() => Boolean(releaseCouncil)).toBe(true)
+  releaseCouncil!()
+  await expect(page.getByRole('log')).toContainText('Council caption')
+  await expect(page.getByRole('log')).not.toContainText('Public caption')
+  await page.getByLabel('Caption text size').fill('60')
+  await expect(page.getByRole('log')).toHaveCSS('font-size', '60px')
+  await expect(page.getByRole('link', { name: /Open this channel/ })).toHaveAttribute('href', /#\/captions\?channel=council$/)
+  await expect(page.getByText(/Live translation into other languages is unavailable/)).toBeVisible()
+  await page.clock.runFor(32_000)
+  await expect(page.getByRole('status')).toContainText('No new caption input')
+  await expect(page.getByRole('log')).toBeEmpty()
+  interrupted = true
+  await page.clock.runFor(2000)
+  await expect(page.getByRole('status')).toContainText('unavailable or input was interrupted')
+})

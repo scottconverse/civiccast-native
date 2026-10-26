@@ -1,3 +1,4 @@
+import { RECORDED_TRANSLATION_LANGUAGES } from '../types/recordedCaptions'
 import { CaptionBacklogPanel } from './CaptionBacklogPanel'
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -29,12 +30,12 @@ const FILTERS: ReadonlyArray<{ id: FilterId; label: string }> = [
   { id: 'rejected', label: 'Rejected' },
 ]
 
-type LanguageFilterId = 'all' | 'en' | 'es'
+type LanguageFilterId = 'all' | 'en' | typeof RECORDED_TRANSLATION_LANGUAGES[number]['id']
 
 const LANGUAGE_FILTERS: ReadonlyArray<{ id: LanguageFilterId; label: string }> = [
   { id: 'all', label: 'All languages' },
   { id: 'en', label: 'English' },
-  { id: 'es', label: 'Spanish' },
+  ...RECORDED_TRANSLATION_LANGUAGES,
 ]
 
 function LanguageBadge({ language }: { language: string }) {
@@ -621,7 +622,7 @@ export function ReviewQueueScreen() {
         </div>
         {spanishTabIsEmpty && (
           <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Spanish cues appear here after English captions are approved and translated. The
+            Selected translated cues appear here after English captions are approved and translated. The
             caption tracks attach only after review, following the station’s recorded-caption completion setting.
           </span>
         )}

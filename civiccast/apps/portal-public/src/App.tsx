@@ -1,3 +1,4 @@
+import { CaptionDisplayScreen } from './screens/CaptionDisplayScreen'
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 // Public portal shell (issue #107): header + nav + hash-route switch.
@@ -45,6 +46,7 @@ function analyticsSection(route: PortalRoute, manifestOverride: string | null): 
   if (route.view === 'recordings') return 'recordings_browse'
   if (route.view === 'watch') return 'watch_recording'
   if (route.view === 'schedule') return 'channel_guide'
+  if (route.view === 'captions') return 'caption_display'
   return 'portal_home'
 }
 
@@ -134,6 +136,7 @@ function App() {
               <NavLink href={buildScheduleHash()} current={route.view === 'schedule'}>
                 Schedule
               </NavLink>
+              <NavLink href="#/captions" current={route.view === 'captions'}>Live captions</NavLink>
             </nav>
             <a
               href={BETA_FEEDBACK_URL}
@@ -164,6 +167,8 @@ function App() {
             <WatchScreen assetId={route.assetId} startSeconds={route.startSeconds} />
           ) : route.view === 'redeem' ? (
             <MagicLinkRedeemScreen />
+          ) : route.view === 'captions' ? (
+            <CaptionDisplayScreen key={route.channel} channel={route.channel} />
           ) : route.view === 'schedule' ? (
             <ChannelGuideScreen channel={route.channel} />
           ) : (

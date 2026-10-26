@@ -2371,7 +2371,7 @@ def test_cancel_during_translation_prevents_local_and_cdn_publication(
         ),
     )
 
-    def cancel_during_translation(*args):
+    def cancel_during_translation(*args, **kwargs):
         jobs.save(row.model_copy(update={"state": "cancelled"}))
         return
 
@@ -2385,3 +2385,88 @@ def test_cancel_during_translation_prevents_local_and_cdn_publication(
     assert jobs.get(row.job_id).state == "cancelled"
     assert attached == []
     assert not published_caption_sidecar(package).exists()
+
+
+@pytest.mark.parametrize(
+    "language,label",
+    [
+        ("es", "Spanish"),
+        ("zh-Hans", "Chinese (Simplified)"),
+        ("fil", "Tagalog / Filipino"),
+        ("vi", "Vietnamese"),
+        ("ar", "Arabic"),
+    ],
+)
+def test_selected_language_review_publish_and_repackage(
+    tmp_path: Path,
+    fake_ffmpeg: None,
+    language: str,
+    label: str,
+) -> None:
+    from civiccast.captions.cdn_republish import caption_artifact_paths
+    from civiccast.captions.vod import reattach_packaged_captions
+
+    outputs = {
+        "es": "La reunión del consejo comienza a las 18:00. Los comentarios públicos seguirán la discusión sobre el presupuesto.",
+        "zh-Hans": "市政会议将于下午 6 点开始。在讨论预算之后，将进行公众意见发表环节。",  # noqa: RUF001 - exact local model sample
+        "fil": "Magsisimula ang pagpupulong ng konseho sa ika-6 na gabi. Susundan ang talakayan tungkol sa badyet ang mga komento mula sa publiko.",
+        "vi": "Cuộc họp của hội đồng bắt đầu lúc 18:00. Sau phần thảo luận về ngân sách, sẽ có thời gian nhận ý kiến từ công chúng.",
+        "ar": "تبدأ الجلسة التشريعية في الساعة 6 مساءً. سيتم تلقي تعليقات الجمهور بعد مناقشة الميزانية.",
+    }
+    corrections = {
+        "zh-Hans": "市议会会议将于下午6点开始。预算讨论之后将进行公众评论。",
+        "fil": "Magsisimula ang pagpupulong ng konseho sa ika-6 na gabi. Susundan ng mga komento mula sa publiko ang talakayan tungkol sa badyet.",
+        "ar": "يبدأ اجتماع المجلس في الساعة السادسة مساءً. تلي مناقشة الميزانية تعليقات الجمهور.",
+    }
+    source_text = (
+        "The council meeting begins at 6 p.m. Public comment follows the budget discussion."
+    )
+
+    class Translator:
+        def translate_text(self, text, *, source_language, target_language, glossary=None):
+            assert source_language == "en" and target_language == language
+            return outputs[language]
+
+    source = _write_wav(tmp_path / "meeting.wav", seconds=2)
+    package = _package(tmp_path / "packages")
+    jobs = InMemoryOfflineCaptionJobStore()
+    review = InMemoryCaptionReviewStore()
+    worker = OfflineCaptionJobWorker(
+        jobs,
+        review,
+        runtime_factory=lambda: _ScriptedRuntime([source_text]),
+        translation_provider_factory=Translator,
+        settings=OfflineCaptionJobSettings(languages=("en", language)),
+        retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+            storage_root=tmp_path / "egress"
+        ),
+    )
+    enqueue_offline_caption_job(jobs, asset_id=_ASSET_ID, source_path=source, package_dir=package)
+    worker.run_once()
+    _approve_language(review, "en")
+    assert worker.run_once()[0].state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+    assert len(review.list(asset_id=_ASSET_ID, language=language)) == 1
+    assert not published_caption_sidecar(package).exists()
+    translated_row = review.list(asset_id=_ASSET_ID, language=language)[0]
+    if language in corrections:
+        review.edit(
+            translated_row.review_item_id,
+            CaptionReviewEdit(
+                text=corrections[language],
+                reviewer_note="Draft sample terminology/order correction; not professional language certification.",
+            ),
+        )
+    _approve_language(review, language)
+    assert worker.run_once()[0].state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+    manifest = (package / "playlist.m3u8").read_text(encoding="utf-8")
+    assert f'LANGUAGE="{language}"' in manifest and f'NAME="{label}"' in manifest
+    assert corrections.get(language, outputs[language]) in (
+        package / "captions" / f"captions.{language}.vtt"
+    ).read_text(encoding="utf-8")
+    replacement = _package(tmp_path / "replacement")
+    attached = reattach_packaged_captions(
+        package, replacement, asset_id=_ASSET_ID, review_store=review
+    )
+    assert attached.translated_sidecar_paths[language] in caption_artifact_paths(
+        replacement, attached
+    )

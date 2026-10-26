@@ -8568,7 +8568,7 @@ rule (S13 §5.1).
 
 - `completion_requirement` (optional): `'all_selected_languages' | 'english_reviewed'`
 - `enabled` (optional): `boolean`
-- `languages` (optional): `Array<'en' | 'es'>`
+- `languages` (optional): `Array<'en' | 'es' | 'zh-Hans' | 'fil' | 'vi' | 'ar'>`
 - `vocabulary` (optional): `CustomVocabulary`
 
 ### `RecordingInputPreset`

@@ -1,16 +1,42 @@
 # CivicCast portable handoff — October 24, 2026
 
-## Active N7 preparation / PR269 correction CI - October 26, 2026
+## Active N7 finishing / PR269 CI - October 26, 2026
 
-- PR269 correction pushed4b2dfe786541294fa5f92a82ed0cc8e0edf823a2; full rollup
-  new required checks running at07:58UTC, no terminal failures yet. Old waiter69829
-  still owns previous ci-test until superseded; replace with one new-head waiter.
-- N6 preserved56614c62 and merged correction; actual descendant migration head0096
-  reflected in explicit assertions. N4-N6 remain local/unpushed pending predecessor.
-- Next N7 serial child: selected Spanish, Simplified Chinese (zh-Hans), Tagalog/
-  Filipino, Vietnamese, Arabic. Qualified language review availability remains
-  explicit acceptance input; model language metadata is not accuracy evidence.
-  No N7 product changes yet. F5/N8 pending. Root owns roadmap/merge.
+- Parent owns roadmap/merge. PR269 frozen4b2dfe786541294fa5f92a82ed0cc8e0edf823a2.
+  Old ci-test40283658614 completed CANCELLED;69829 consumed exit1 (supersession).
+  Sole waiter16889 owns40289108609, started08:00UTC, ~64min baseline; Ctrl-C16889
+  cancels watcher only. Full rollup08:03UTC lint/operator/operator-a11y/docs/security
+  SUCCESS; public-a11y/unit/Windows/repro still running, no failure then. Next
+  consume at commit boundary; do not infer all CI from ci-test alone.
+- N4-N6 preserved; correction merged26359142 on N6, explicit head0096. Active
+  child feat/n7-selected-languages-caption-display, no downstream push until merge.
+- N7 selected es,zh-Hans(Simplified Chinese),fil(Tagalog/Filipino),vi,ar; Spanish
+  preserved. Existing target-aware Ollama prompt/glossary validation, station
+  controls/review filters, worker review gate, HLS/flat-sidecar/CDN/repackage path
+  implemented. Public selected-channel large-text display/link uses existing
+  sidecar; first snapshot honest, new-change status, missing/interrupted/unchanged
+  30s clear, channel-key clears old text before new request. Live translation off.
+- Focused backend85pass6.81s with2 cancellation fake keyword mismatches corrected;
+  those2pass1.46s. Actual-sample edit/approve/publish/repackage5pass1.79s. Operator
+  review/settings34pass1.49s, native-player all-five selection6pass209ms; both
+  portal typechecks, operator affected ESLint passed. Public built workflow401ms
+  covers delayed new channel/text clearing,60px/link,30s/noinput/error. Public
+  lint mechanical helper export corrected; final affected ESLint/types/Ruff passed.
+- Actual local model five samples completed87322 exit0 (~28s), no helper live.
+  Input: "The council meeting begins at 6 p.m. Public comment follows the budget
+  discussion." Exact outputs retained in test_offline_caption_job.py and temporary
+  civiccast-n7-translation-samples.json. Runtime translategemma:4b digest
+  c49d986b0764f5881c476eb21435bb62b7abc62347aab3d4a6071e811be510a1, Ollama0.30.6.
+  Bounded model-assisted/root sample review: Spanish/Vietnamese preserve meaning;
+  Chinese generalizes council to municipal meeting; Arabic incorrectly says
+  legislative session; Filipino order sentence ambiguous. Explicit draft edits
+  for those three passed existing edit/approve→published tracks. No professional
+  or native-language certification claimed; stations need qualified reviewers.
+- Parent N7 material review complete. API/manual/help generated; PDF/DOCX82632
+  terminal0 (usual MiKTeX update warnings only), docsite12764 terminal0. N7 ready
+  for DCO commit then N8 exact scope. Full rollup08:08UTC reproducibility SUCCESS;
+  public-a11y/unit/Windows still live; no failures. Sole waiter16889 retained.
+  N8/F5 pending; no release/build/live-provider claim.
 
 ## PR269 correction receipts - October 26, 2026
 

@@ -86,6 +86,7 @@ def caption_artifact_paths(package_dir: Path, attached: AttachedCaptions) -> lis
     paths.append(attached.sidecar_path)
     if attached.spanish_sidecar_path is not None:
         paths.append(attached.spanish_sidecar_path)
+    paths.extend(path for path in attached.translated_sidecar_paths.values() if path not in paths)
     return [path for path in paths if path.is_file()]
 
 

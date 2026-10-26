@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from civiccast.captions.models import CustomVocabulary
 
-RecordedCaptionLanguage = Literal["en", "es"]
+RecordedCaptionLanguage = Literal["en", "es", "zh-Hans", "fil", "vi", "ar"]
 CaptionCompletionRequirement = Literal["all_selected_languages", "english_reviewed"]
 _TRUE_ENV_VALUES = ("1", "true", "on", "yes", "es")
 _FALSE_ENV_VALUES = ("0", "false", "off", "no")

@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, getRecordedCaptionSettings, saveRecordedCaptionSettings } from '../api/client'
-import type { RecordedCaptionSettings } from '../types/recordedCaptions'
+import { RECORDED_TRANSLATION_LANGUAGES } from '../types/recordedCaptions'
+import type { RecordedCaptionLanguage, RecordedCaptionSettings } from '../types/recordedCaptions'
 
 const DEFAULT_SETTINGS: RecordedCaptionSettings = {
   enabled: true,
@@ -44,9 +45,8 @@ export function RecordedCaptionSettingsPanel({ canWrite }: { canWrite: boolean }
     setDraft((previous) => ({ ...(previous ?? current ?? DEFAULT_SETTINGS), [key]: value }))
   }
 
-  function toggleSpanish(enabled: boolean) {
-    const languages: RecordedCaptionSettings['languages'] = enabled ? ['en', 'es'] : ['en']
-    update('languages', languages)
+  function toggleLanguage(language: RecordedCaptionLanguage, enabled: boolean) {
+    update('languages', enabled ? [...settings.languages, language] : settings.languages.filter((code) => code !== language))
   }
 
   return (
@@ -108,19 +108,18 @@ export function RecordedCaptionSettingsPanel({ canWrite }: { canWrite: boolean }
               <input type="checkbox" checked disabled aria-label="English captions are selected" />
               <span>English <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>(recording transcription)</span></span>
             </label>
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                aria-label="Spanish captions"
-                checked={settings.languages.includes('es')}
-                disabled={!canWrite || busy}
-                onChange={(event) => toggleSpanish(event.target.checked)}
-              />
-              <span>Spanish <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>(translated from reviewed English)</span></span>
-            </label>
+            {RECORDED_TRANSLATION_LANGUAGES.map(({ id, label }) => (
+              <label key={id} className="flex items-start gap-2 text-sm">
+                <input type="checkbox" aria-label={`${label} captions`}
+                  checked={settings.languages.includes(id)} disabled={!canWrite || busy}
+                  onChange={(event) => toggleLanguage(id, event.target.checked)} />
+                <span>{label} <span className="text-xs">(translated from reviewed English)</span></span>
+              </label>
+            ))}
+            <p className="text-xs">Chinese uses Simplified writing; other Chinese written or spoken varieties are not claimed. Each translation needs a reviewer who knows the language.</p>
           </fieldset>
 
-          {settings.languages.includes('es') && (
+          {settings.languages.some((code) => code !== 'en') && (
             <fieldset className="grid gap-2 rounded-md p-3" style={{ border: '1px solid var(--cc-line)' }}>
               <legend className="px-1 text-sm font-semibold">Completion requirement</legend>
               <label className="flex items-start gap-2 text-sm">
@@ -135,7 +134,7 @@ export function RecordedCaptionSettingsPanel({ canWrite }: { canWrite: boolean }
                 <span>
                   <span className="block font-semibold">Wait for every selected language</span>
                   <span className="block text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-                    Attach English and Spanish together after both tracks are reviewed.
+                    Attach English and every selected translation together after review.
                   </span>
                 </span>
               </label>
@@ -151,7 +150,7 @@ export function RecordedCaptionSettingsPanel({ canWrite }: { canWrite: boolean }
                 <span>
                   <span className="block font-semibold">Attach English after its review</span>
                   <span className="block text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-                    The job stays active while Spanish is translated and reviewed, then attaches the Spanish track.
+                    The job stays active while selected translations are prepared and reviewed, then attaches those tracks.
                   </span>
                 </span>
               </label>

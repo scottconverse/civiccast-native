@@ -57168,7 +57168,11 @@
               "type": "string",
               "enum": [
                 "en",
-                "es"
+                "es",
+                "zh-Hans",
+                "fil",
+                "vi",
+                "ar"
               ]
             },
             "type": "array",

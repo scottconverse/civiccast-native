@@ -3700,7 +3700,7 @@ export interface RecordExportResponse {
 export interface RecordedCaptionSettings {
   vocabulary?: CustomVocabulary
   enabled?: boolean
-  languages?: Array<'en' | 'es'>
+  languages?: Array<'en' | 'es' | 'zh-Hans' | 'fil' | 'vi' | 'ar'>
   completion_requirement?: 'all_selected_languages' | 'english_reviewed'
 }
 

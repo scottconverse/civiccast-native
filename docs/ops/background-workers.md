@@ -469,12 +469,22 @@ outcome is known), so it raises a 409 that says plainly that the portal
 publish succeeded and the caption job did not queue.
 
 **Recorded-caption station settings.** Under **Setup > Station Profile >
-Recorded captions**, choose enabled/disabled processing, English with optional
-Spanish, and whether caption completion requires all selected languages or
+Recorded captions**, choose enabled/disabled processing, English with selected recorded translations, and whether caption completion requires all selected languages or
 reviewed English. Existing stations retain the enabled English-and-Spanish,
 all-selected-languages defaults. English-only operation needs no translation
 runtime. Disabled processing skips new caption jobs and pauses existing work;
 it does not reject station startup or mark missing captions complete.
+
+Recorded target codes are `es`, `zh-Hans` (Simplified Chinese only), `fil`
+(Tagalog/Filipino), `vi`, and `ar`. The existing local translation adapter uses
+the requested target name and supplied terminology; unsupported targets fail
+explicitly. Each target uses the same source-wording/window review identity,
+completeness gate and human review as the Spanish example below. Published
+`captions.<code>.vtt` sidecars and HLS tracks are included in CDN republishing
+and rebuilt from matching reviewed cues during repackaging. English remains
+the default. A missing model or rejected/pending target leaves the job actionable;
+no unreviewed translation is attached. No live-translation or language-accuracy
+certification is implied.
 
 With the Spanish leg running, `awaiting_review`
 becomes a two-phase gate. Once the **English** review pass is complete and
