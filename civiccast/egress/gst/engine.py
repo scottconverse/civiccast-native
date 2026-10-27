@@ -5607,7 +5607,14 @@ class GstPlayoutEngine:
                     )
                     pending["readiness_probes"].append((pad, probe_id))
             for element in new_elements:
-                element.sync_state_with_parent()  # preroll the new leg
+                # State refusal is returned as False, not necessarily raised.
+                # Stop activation here so the existing build-error unwind owns
+                # the incoming leg before any later producer can start.
+                if not element.sync_state_with_parent():
+                    raise RuntimeError(
+                        f"failed to sync incoming element {element.get_name()!r} "
+                        "with the playing pipeline"
+                    )
         except Exception:  # ENG-008: a preroll/arm failure must not wedge
             self._abort_pending_reload("build-error")
             raise

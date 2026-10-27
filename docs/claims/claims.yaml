@@ -1094,7 +1094,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 5e11f09e7db0110c81c0f88cb54db50f33285fd4
+          blob: c2facb35a255e8da7601ebd0e7df5398bd60ae8e
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2022,7 +2022,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 5e11f09e7db0110c81c0f88cb54db50f33285fd4
+          blob: c2facb35a255e8da7601ebd0e7df5398bd60ae8e
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py

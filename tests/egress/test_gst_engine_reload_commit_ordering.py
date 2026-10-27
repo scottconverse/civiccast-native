@@ -4564,6 +4564,66 @@ class _StubLeg:
     audio: tuple[Any, ...] = ()
 
 
+def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A boolean state refusal must unwind the incoming leg immediately."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    engine._plan_eos_held = False
+    engine.reload_timeout_s = 10
+    monkeypatch.setattr(engine_module.Gst.PadProbeType, "BLOCK", 16, raising=False)
+    monkeypatch.setattr(
+        engine_module.GLib, "timeout_add_seconds", lambda *_args: 123, raising=False
+    )
+    old_video = _FakeOldPad("old-video", recorder, None)
+    old_audio = _FakeOldPad("old-audio", recorder, None)
+    old_elements = [_FakeOldElement("outgoing", recorder)]
+    engine.selector_sink_pads = [old_video]
+    engine.audio_sink_pads = [old_audio]
+    engine._source_leg_elements = [old_elements]
+    video = _FakeOldPad("incoming-video", recorder, None)
+    audio = _FakeOldPad("incoming-audio", recorder, None)
+
+    class _IncomingElement(_FakeOldElement):
+        def sync_state_with_parent(self) -> bool:
+            recorder.calls.append(f"sync:{self.name}")
+            return self.name != "refused"
+
+    incoming = [_IncomingElement(name, recorder) for name in ("started", "refused", "later")]
+    monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
+    monkeypatch.setattr(engine, "_link_leg_to_selectors", lambda *_args: (video, audio))
+    retired: list[list[Any]] = []
+    monkeypatch.setattr(
+        engine,
+        "_start_aborted_leg_retirement",
+        lambda _reason, _video, _audio, elements, **_kwargs: retired.append(elements),
+    )
+    settled: list[tuple[bool, str | None]] = []
+
+    with pytest.raises(RuntimeError, match="refused"):
+        engine.reload_program(
+            _StubLeg(),
+            switch_at_end_of_current=True,
+            on_settled=lambda applied, reason: settled.append((applied, reason)),
+        )
+
+    assert [call for call in recorder.calls if call.startswith("sync:")] == [
+        "sync:started",
+        "sync:refused",
+    ]
+    assert engine._pending_reload is None
+    assert settled == [(False, "build-error")]
+    assert retired == [incoming]
+    assert engine.selector_sink_pads == [old_video]
+    assert engine.audio_sink_pads == [old_audio]
+    assert engine._source_leg_elements == [old_elements]
+    assert not any(call.startswith("set_state:outgoing:") for call in recorder.calls)
+    assert any(call.startswith("remove_probe:incoming-video:") for call in recorder.calls)
+    assert any(call.startswith("remove_probe:incoming-audio:") for call in recorder.calls)
+
+
 def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
     engine_module, capsys: pytest.CaptureFixture[str]
 ) -> None:
