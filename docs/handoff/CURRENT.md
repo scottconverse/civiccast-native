@@ -1,5 +1,79 @@
 # CivicCast current handoff — October 27, 2026
 
+## Current task — October 27, 2026: black/silent outage cause, fix, local hotfix
+
+The worker/session/route lines that used to open this file recorded the first,
+now-superseded investigation pass; the outcome below replaces them. Historical
+detail remains in the dated sections further down.
+
+**Result: cause proven and corrected; the corrected Python module is deployed on
+this TEST host and the installed station is verified airing real program A/V on
+all three channels.** Cause is observed, not inferred: every content-reload
+encoder probe re-ran `bootstrap_installed_gstreamer_runtime`, which called
+`os.add_dll_directory` unconditionally; the Windows loader search path is a fixed
+32,767-character buffer, so the 461st registration inside the long-running
+control plane raised `FileNotFoundError [WinError 206] The filename or extension
+is too long` (a 70-character, existing path) and every later probe failed
+permanently. Reload dispatch therefore died, the channels pinned TRANSITIONING
+with zero source-chain input while the mux kept emitting black/silent filler,
+and every recovery retry re-entered the same poisoned probe.
+
+- Source fix (branch `fix/black-silent-20261027`): per-directory registration
+  guard in `civiccast/native/gstreamer_runtime.py`; red/green tests in
+  `tests/native/test_gstreamer_runtime.py`; report
+  `docs/ops/black-silent-hotfix-2026-10-27.md` with sanitized evidence JSON.
+- Local test-host hotfix (NOT a signed package): installed
+  `runtime\Lib\site-packages\civiccast\native\gstreamer_runtime.py` replaced
+  through the elevated helper; the original is kept beside it as
+  `gstreamer_runtime.py.bak-20261027-113835-local-hotfix`. sha256
+  `ff8d8dc7adad05b9f0d433b4cea4432796083b97bee588869fd89bce1fb35e84` to
+  `959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6`.
+  Launcher, uninstaller, manifest provenance, schedules, database and
+  credentials are untouched.
+- One bounded supervisor restart (11:39 MDT) released the exhausted loader
+  state: all three channels returned ON_AIR on their scheduled programs, and an
+  operator `reload` command on public was accepted through the previously fatal
+  dispatch path, with zero dispatch errors and zero ERROR records afterwards.
+- Installed FFmpeg observation at 11:41 MDT over three consecutive 2.5s segments
+  per channel: all three 1280x720 H.264 + AAC; blackdetect reports no black
+  segment; mean frame RGB about (120,108,100) public, (75,66,56) education,
+  (77,73,75) government; mean_volume -9.7 to -21.0 dB and max -1.4 to -5.7 dB,
+  against the outage signature of a black picture at -91.0 dB.
+- Owned background jobs: none. No endurance claim is made: the ~95h soak result
+  and the historical filesrc11 cause are unchanged and not requalified.
+
+
+## Current owner scope — YouTube live acceptance completed October 27
+
+Scott requested setup and real YouTube validation. Installed Setup now holds the
+existing authorized YouTube credentials. Installed Publish sent channel public to
+unlisted event Ubr_pbAoTwc: YouTube active/good/live, CivicCast live, signed-out
+Chrome visible moving video and non-silent decoded audio. CivicCast Stop passed;
+YouTube complete/recorded. No owned sender/browser/helper remains. No code change
+or rebuild. Report docs/ops/youtube-live-2026-10-27.md and matching JSON evidence.
+This closes the previously deferred live YouTube check. One short run only, not
+long-term endurance or caption acceptance. The historical station black/silent
+failure remains UNRESOLVED; prior checklist/source delivery completion below does
+not establish a fix for that operational failure. Scott deferred investigating it
+until after this YouTube test. No tag/public release authorized by this test.
+
+
+## Delivery complete — October 27, 2026, 02:57 MDT
+
+PR272 merged normally at 08:57:42 UTC as 69c2bcaea51e573ab1fd707a42260ae14bdc6e9e,
+head 677d800f16b1c67d5e849aefd6ccc9efc47e9d43. Independently verified GitHub
+MERGED state and 21 successful checks / 3 expected skips. Source CI40471253320
+passed, including Unit tests and Windows runtime probes. Completion receipt:
+outputs/native-install-42339334/pr272-delivery.json in the coordinator workspace.
+Completion process25248 is terminal. All selected roadmap outcomes are delivered
+under the explicit F4 acceptance revision below: the historical filesrc11 cause
+remains unknown, accepted as residual risk, never diagnosed by passing retries.
+Native installed signed42339334 acceptance passed; PR272 source changes are merged
+but are not packaged in those installed bytes. No tag or publication authorized.
+Live YouTube transmission/playback remains deferred by Scott. No further work or
+checks are required by this assignment. This completion supersedes waiting text
+in the detailed execution record below.
+
 ## Current outcomes and owner authority
 
 F1–F3, F5–F7 and N1–N8 are delivered through PR267–271; do not reopen them. F2 live
@@ -42,8 +116,15 @@ the existing three-worker/six-rollover source scenario passed69.94s (18commits,
 continuity/audio/tap/clean teardown). No repeated full native run after RESYNC.
 The Linux unit image is pinned to the last passing Ubuntu24.04 baseline after a
 rolling-image prerequisite delay; no tests or requirements removed. Root is
-consolidating this correction and native evidence before final-head required CI.
-Prior failed-head waiter29782 must be stopped before starting the new waiter.
+waiting on final delivery head677d800f after consolidating source/evidence and the
+explicit acceptance decision below. Hidden completion waiter49111 runs coordinator
+work/finish-pr272.ps1: source CI40471253320, applicable check validation, exact-head
+normal merge and verification. Receipt outputs/native-install-42339334/pr272-delivery.json;
+log work/pr272-merge-wait.log. Expected source CI duration can approach the last
+passing run's58minutes; current Ubuntu24.04 media setup completed in17seconds.
+On failure inspect actual receipt/log before another run. Cancel only this verified
+owned waiter/session if Scott stops; remote jobs require separate owned cancellation.
+Prior waiters29782,37137 and51242 are terminal. Do not start a competing merge.
 The new source correction is not included in installed signed42339334 bytes.
 
 Original run40165319415 at0fb01b0: incoming reload2 fourth clip filesrc11 errored
@@ -989,3 +1070,78 @@ historical acceptance is renewed. All 125 claims-evidence policy tests passed lo
 The next candidate must complete same-run CI.
 The previous finite merge watcher exited on these required failures without
 merging. No merge is currently armed while this follow-up is prepared.
+
+
+### October 27, 2026 -- October 26 station black/silent outage: proven cause, correction
+
+Working branch `fix/black-silent-20261027` from current tree (head `677d800f`, merge
+`69c2bcae`). Nothing committed, pushed or merged; no installer rebuild, no service
+configuration change, no station interruption.
+
+Observed cause (log, not inference). Retained control-plane log
+`C:\ProgramData\CivicCast\logs\control_plane-app.log.6` (now `.4`) line 5832-5859:
+
+- `2026-10-25 07:49:55,675` content-reload *source preparation succeeded* (`took 5.4s
+  for 1 segment(s)`). Only the dispatch step then failed: `07:49:55,679 ERROR
+  civiccast.egress.daemon: Content-reload dispatch failed for public; restarting
+  encoder.` followed by
+  `FileNotFoundError: [WinError 206] The filename or extension is too long:
+  'C:\Program Files\CivicCast (Native)\runtime\dependencies\gstreamer\bin'`
+  raised from `gstreamer_runtime.py:137 _DLL_HANDLES.append(os.add_dll_directory(bin_dir))`,
+  reached via `daemon.py:6045 _reload_steps` -> `strategy.py:1538 reload_content` ->
+  `strategy.py:1253 _resolve_encoder_override` -> `encoder_probe.py:140/57/30/43`.
+- The named path exists and is 70 characters long, so this was NOT a missing path or
+  an over-long name. `os.add_dll_directory` appends to a process-wide loader search
+  path whose buffer is a fixed 32,767 characters; `bootstrap_installed_gstreamer_runtime`
+  had no per-directory guard and is re-entered by every reload encoder probe, so the
+  buffer was exhausted. Reproduced on this host with the installed bin directory in a
+  fresh CPython 3.12 process: 460 registrations succeed, the next raises exactly this
+  exception and every later call fails permanently.
+- That single process-wide counter explains the otherwise puzzling evidence: three
+  independent channels all went TRANSITIONING within ~21s of one another (public
+  07:49:55.724, education 07:50:16.9xx) and never returned to ON_AIR, while 171
+  dispatch errors (57/channel) and 168 transition-stall errors accumulated over the
+  following 26h. Worker PIDs never changed, and the retained worker tails show the
+  mux still encoding (26247449 buffers, +26247444 since PLAYING) with
+  `chain-in 5.0s: in video=+0 audio=+0` -- zero source-chain input into the selector
+  while 150 video / 234 audio buffers per 5s of black/silent filler reached the mux.
+- Failed recovery has the same cause, not a second one: `_request_reload` catches the
+  exception, logs "restarting encoder" and returns False, which arms a `_pending_reloads`
+  pin (wait for worker plan EOS). Recovery then re-enters the SAME probe -- both the
+  reload-stall watchdog re-issue and the restart's `strategy.start()` path call
+  `_resolve_encoder_override` -- so every retry raised the same WinError 206 in that
+  process. Nothing but a process restart could have cleared it. This is distinct from
+  the historical filesrc11 CI failure and from the HLS relay log-cap warnings.
+
+Correction (smallest sufficient behavior): `bootstrap_installed_gstreamer_runtime` now
+records each registered directory (normcase key) in `_REGISTERED_DLL_DIRECTORIES` and
+calls `os.add_dll_directory` at most once per directory per process, appending the
+handle (keeping it referenced) only after a successful call. This mirrors the existing
+`civiccast.captions.runtime._CUDA_DLL_DIRECTORY_HANDLES` pattern. The unguarded call
+also exists in installed `2e196124` and in the signed `42339334` build, so the running
+station is expected to hit the same wall ~460 reload probes after each control-plane
+start unless this is delivered.
+
+Focused red/green (same scenarios, same runtime, retained receipts in
+`.agent-runs/black-silent-20261027/`):
+
+- RED, production-exact: installed `runtime\python.exe` + installed `civiccast`
+  2e196124 running the probe loop -> `RESULT probe #460 raised` with the byte-identical
+  06:49 traceback lines and WinError 206. GREEN, fixed repo source on the same
+  interpreter/runtime -> `RESULT all 600 probes succeeded`, one loader directory.
+- `tests/native/test_gstreamer_runtime.py` adds
+  `test_repeated_reload_probes_register_the_dll_directory_only_once` (deterministic
+  loader-budget stub) and `test_real_loader_survives_repeated_reload_probes` (real
+  loader, 600 probes). Both FAIL before the correction with the production exception
+  and pass after (`2 failed` -> `32 passed` with the encoder-probe/decision tests).
+- Actual native A/V after the previously fatal count: one process performs 600 real
+  `probe_hardware_encoder` calls, then runs a real production-shape worker with a real
+  content reload; `CTRL reload committed` is present, and the emitted 640x360 h264 +
+  AAC 48k stereo TS decodes to mean RGB (249,0,3) solid red program (ffmpeg
+  blackdetect reports no black segment) with mean_volume -20.0 dB, max -1.3 dB.
+
+Limits: this proves the mechanism, the correction and the reload A/V path; it does not
+prove that a ~95h soak now stays clean, and no new installer was built, so the
+installed station still carries the unguarded call. Remaining executable action: root
+review of the bounded diff, then commit/PR and a delivered build if the station is to
+carry the fix.

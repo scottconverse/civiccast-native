@@ -287,3 +287,88 @@ def test_bootstrap_gives_a_fresh_subprocess_the_bin_dir_with_no_inherited_gst_en
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().split(os.pathsep)[0] == bin_dir
+
+
+def test_repeated_reload_probes_register_the_dll_directory_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 2026-10-26 black/silent station outage, at the seam that caused it.
+
+    ``bootstrap_installed_gstreamer_runtime`` is re-entered on the control
+    plane's every content-reload encoder probe (``encoder_probe.
+    gst_factory_klass`` -> ``bootstrap_installed_gstreamer_runtime``). Each
+    ``os.add_dll_directory`` call appends another entry to a process-wide
+    loader search path whose buffer is a fixed 32,767 characters, so a
+    long-running control plane eventually exhausted it: after that, EVERY
+    bootstrap -- and so every reload probe -- raised
+    ``FileNotFoundError: [WinError 206] The filename or extension is too long``
+    with the (perfectly valid, 70-character) installed ``bin`` path, for the
+    life of the process. The reload dispatch died, the channel pinned
+    TRANSITIONING, and each retry re-entered the same poisoned probe.
+
+    Measured on the installed runtime (probe #460 raised, byte-identical
+    traceback) before this test's fix; 600 probes all succeed after it.
+    """
+    import civiccast.native.gstreamer_runtime as runtime
+
+    root = _root(tmp_path)
+    bin_dir = str(root / "dependencies/gstreamer/bin")
+    monkeypatch.setenv("CIVICCAST_GSTREAMER_RUNTIME_ROOT", str(root))
+    # The Windows-only tail of the bootstrap runs on every CI runner this way.
+    monkeypatch.setattr(runtime.os, "name", "nt")
+    monkeypatch.setattr(runtime, "_DLL_HANDLES", [])
+    monkeypatch.setattr(runtime, "_REGISTERED_DLL_DIRECTORIES", set())
+
+    # Faithful model of the Windows loader, calibrated against this host with
+    # the installed GStreamer bin path: the search path is a fixed 32,767
+    # character buffer, a call that would overflow it fails with WinError 206,
+    # and once the buffer is full every later call fails too.
+    budget = 32767
+    registered: list[str] = []
+    handles: list[object] = []
+
+    def add_dll_directory(path: str) -> object:
+        if sum(len(item) + 1 for item in registered) + len(path) + 1 > budget:
+            raise OSError(206, "The filename or extension is too long", path)
+        registered.append(path)
+        handle = object()
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(runtime.os, "add_dll_directory", add_dll_directory, raising=False)
+
+    for _ in range(600):
+        assert runtime.bootstrap_installed_gstreamer_runtime() is True
+
+    assert registered == [bin_dir], "the bin directory must be registered exactly once"
+    assert len(handles) == 1, "the single returned handle must stay referenced"
+
+
+@pytest.mark.skipif(
+    os.name != "nt" or not os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT"),
+    reason="needs native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT naming an installed runtime",
+)
+def test_real_loader_survives_repeated_reload_probes() -> None:
+    """Same defect against the REAL Windows loader, no stub.
+
+    Run with the installed runtime root set (the production configuration):
+    600 real encoder probes in one process -- past the ~460 at which the
+    unguarded bootstrap exhausted the search path on 2026-10-25 and killed
+    every subsequent content-reload dispatch.
+    """
+    from civiccast.egress.gst.encoder_probe import probe_hardware_encoder
+    from civiccast.native.gstreamer_runtime import _DLL_HANDLES
+
+    # Other tests in a shared session legitimately register their own fixture
+    # directories, so assert on the GROWTH across these 600 probes, not the
+    # absolute count: one first-time registration is allowed, 600 is the bug.
+    before = len(_DLL_HANDLES)
+    for _ in range(600):
+        probe_hardware_encoder("mfh264enc")
+
+    grew_by = len(_DLL_HANDLES) - before
+    assert grew_by <= 1, (
+        f"the Windows loader search path grew by {grew_by} entries across 600 reload "
+        "probes; its buffer is a fixed 32,767 characters and the resulting WinError 206 "
+        "is what killed every content-reload dispatch in the 2026-10-26 station outage"
+    )
