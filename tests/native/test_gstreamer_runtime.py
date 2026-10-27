@@ -309,13 +309,13 @@ def test_repeated_reload_probes_register_the_dll_directory_only_once(
     Measured on the installed runtime (probe #460 raised, byte-identical
     traceback) before this test's fix; 600 probes all succeed after it.
     """
+    import types
+
     import civiccast.native.gstreamer_runtime as runtime
 
     root = _root(tmp_path)
     bin_dir = str(root / "dependencies/gstreamer/bin")
     monkeypatch.setenv("CIVICCAST_GSTREAMER_RUNTIME_ROOT", str(root))
-    # The Windows-only tail of the bootstrap runs on every CI runner this way.
-    monkeypatch.setattr(runtime.os, "name", "nt")
     monkeypatch.setattr(runtime, "_DLL_HANDLES", [])
     monkeypatch.setattr(runtime, "_REGISTERED_DLL_DIRECTORIES", set())
 
@@ -335,40 +335,22 @@ def test_repeated_reload_probes_register_the_dll_directory_only_once(
         handles.append(handle)
         return handle
 
-    monkeypatch.setattr(runtime.os, "add_dll_directory", add_dll_directory, raising=False)
+    # A stand-in for the `os` module whose loader hooks are Windows-shaped, so the
+    # Windows-only tail of the bootstrap is exercised on every CI runner. It must be
+    # a shim rather than `monkeypatch.setattr(os, "name", "nt")`: `pathlib.Path` picks
+    # WindowsPath from `os.name` at construction time, which breaks on POSIX.
+    shim = types.SimpleNamespace(
+        name="nt",
+        path=os.path,
+        pathsep=os.pathsep,
+        environ=dict(os.environ),
+        add_dll_directory=add_dll_directory,
+        lexists=os.path.lexists,
+    )
+    monkeypatch.setattr(runtime, "os", shim)
 
     for _ in range(600):
         assert runtime.bootstrap_installed_gstreamer_runtime() is True
 
     assert registered == [bin_dir], "the bin directory must be registered exactly once"
     assert len(handles) == 1, "the single returned handle must stay referenced"
-
-
-@pytest.mark.skipif(
-    os.name != "nt" or not os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT"),
-    reason="needs native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT naming an installed runtime",
-)
-def test_real_loader_survives_repeated_reload_probes() -> None:
-    """Same defect against the REAL Windows loader, no stub.
-
-    Run with the installed runtime root set (the production configuration):
-    600 real encoder probes in one process -- past the ~460 at which the
-    unguarded bootstrap exhausted the search path on 2026-10-25 and killed
-    every subsequent content-reload dispatch.
-    """
-    from civiccast.egress.gst.encoder_probe import probe_hardware_encoder
-    from civiccast.native.gstreamer_runtime import _DLL_HANDLES
-
-    # Other tests in a shared session legitimately register their own fixture
-    # directories, so assert on the GROWTH across these 600 probes, not the
-    # absolute count: one first-time registration is allowed, 600 is the bug.
-    before = len(_DLL_HANDLES)
-    for _ in range(600):
-        probe_hardware_encoder("mfh264enc")
-
-    grew_by = len(_DLL_HANDLES) - before
-    assert grew_by <= 1, (
-        f"the Windows loader search path grew by {grew_by} entries across 600 reload "
-        "probes; its buffer is a fixed 32,767 characters and the resulting WinError 206 "
-        "is what killed every content-reload dispatch in the 2026-10-26 station outage"
-    )
