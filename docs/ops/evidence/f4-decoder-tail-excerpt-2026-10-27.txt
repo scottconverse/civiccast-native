@@ -1,0 +1,38 @@
+18877: 0:00:00.752183000       6552      12716 INFO              GST_STATES gstbin.c:3233:gst_bin_continue_func:<civiccast-playout> continue state change PAUSED to PLAYING, final PLAYING
+39181: 0:00:02.514026700       6552       9080 INFO              GST_STATES gstbin.c:3233:gst_bin_continue_func:<civiccast-playout> continue state change PAUSED to PLAYING, final PLAYING
+42622: 0:00:02.643503300 CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+58061: 0:00:04.316259900       6552      10364 INFO                 basesrc gstbasesrc.c:3098:gst_base_src_loop:<filesrc11> pausing after gst_pad_push() = flushing
+58062: 0:00:04.316282000       6552      10364 DEBUG                basesrc gstbasesrc.c:3140:gst_base_src_loop:<filesrc11> pausing task, reason flushing
+58304: 0:00:04.322490100       6552       5904 DEBUG               GST_PADS gstpad.c:1031:pre_activate:<filesrc11:src> setting pad into pull mode, unset flushing
+58306: 0:00:04.322535800       6552       5904 DEBUG                basesrc gstbasesrc.c:4010:gst_base_src_activate_pull:<filesrc11> Activating in pull mode
+58314: 0:00:04.322742100       6552       5904 DEBUG               GST_PADS gstpad.c:1254:activate_mode_internal:<filesrc11:src> activated in pull mode
+58317: 0:00:04.322810700       6552       5904 DEBUG               GST_PADS gstpad.c:1358:gst_pad_activate_mode:<filesrc11:src> already activated in pull mode
+58351: DIAG decoder-tail delay enter decoder=decodebin11 sync=True tails=['videoconvert12:null', 'videoscale12:null', 'videorate11:null', 'capsfilter35:null', 'audioconvert13:null', 'audioresample13:null', 'capsfilter36:null'] installed_worker=C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py
+66491: 0:00:04.587045800       6552       6236 DEBUG              decodebin gstdecodebin2.c:4828:gst_decode_bin_expose:<decodebin11> About to expose dpad decodepad33 as src_0
+67132: 0:00:04.606958000       6552       6236 DEBUG              decodebin gstdecodebin2.c:4828:gst_decode_bin_expose:<decodebin11> About to expose dpad decodepad35 as src_1
+67894: 0:00:04.627248100       6552       9080 INFO              GST_STATES gstbin.c:3233:gst_bin_continue_func:<civiccast-playout> continue state change PAUSED to PLAYING, final PLAYING
+70986: 0:00:04.718380400       6552       9080 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current NULL pending VOID_PENDING, desired next PLAYING
+70988: 0:00:04.718441900       6552       9080 INFO              GST_STATES gstelement.c:2702:_priv_gst_element_state_changed:<videoconvert12> notifying about state-changed NULL to READY (PLAYING pending)
+70998: 0:00:04.718692700       6552       9080 INFO              GST_STATES gstelement.c:2702:_priv_gst_element_state_changed:<videoconvert12> notifying about state-changed READY to PAUSED (PLAYING pending)
+71001: 0:00:04.718775600       6552       9080 INFO              GST_STATES gstelement.c:2702:_priv_gst_element_state_changed:<videoconvert12> notifying about state-changed PAUSED to PLAYING (VOID_PENDING pending)
+71460: DIAG decoder-tail delay exit decoder=decodebin11 tails=['videoconvert12:playing', 'videoscale12:playing', 'videorate11:playing', 'capsfilter35:playing', 'audioconvert13:playing', 'audioresample13:playing', 'capsfilter36:playing']
+71505: CTRL reload: new leg preroll verified (reload_id=2) held_streams=2 timing=finite mode=deferred
+107483: CTRL reload committed (elements=79)
+107916: 0:00:11.094447700       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current PLAYING pending VOID_PENDING, desired next PAUSED
+107918: 0:00:11.094491900       6552       3192 INFO              GST_STATES gstelement.c:2702:_priv_gst_element_state_changed:<videoconvert12> notifying about state-changed PLAYING to PAUSED (VOID_PENDING pending)
+110436: 0:00:11.163263500       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current PAUSED pending VOID_PENDING, desired next READY
+110446: 0:00:11.163483700       6552       3192 INFO              GST_STATES gstelement.c:2702:_priv_gst_element_state_changed:<videoconvert12> notifying about state-changed PAUSED to READY (VOID_PENDING pending)
+111026: 0:00:11.183173800       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current READY pending VOID_PENDING, desired next READY
+111027: 0:00:11.183194400       6552       3192 INFO              GST_STATES gstbin.c:2606:gst_bin_element_set_state:<videoconvert12> skipping transition from READY to  READY
+111551: 0:00:11.200658900       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current READY pending VOID_PENDING, desired next READY
+111552: 0:00:11.200679200       6552       3192 INFO              GST_STATES gstbin.c:2606:gst_bin_element_set_state:<videoconvert12> skipping transition from READY to  READY
+112076: 0:00:11.217928100       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current READY pending VOID_PENDING, desired next READY
+112077: 0:00:11.217948400       6552       3192 INFO              GST_STATES gstbin.c:2606:gst_bin_element_set_state:<videoconvert12> skipping transition from READY to  READY
+112228: 0:00:11.225919900       6552       3192 DEBUG                basesrc gstbasesrc.c:4014:gst_base_src_activate_pull:<filesrc11> Deactivating in pull mode
+112235: 0:00:11.226081200       6552       3192 DEBUG               GST_PADS gstpad.c:1254:activate_mode_internal:<filesrc11:src> deactivated in pull mode
+112237: 0:00:11.226123200       6552       3192 DEBUG               GST_PADS gstpad.c:1358:gst_pad_activate_mode:<filesrc11:src> already deactivated in pull mode
+112601: 0:00:11.234677800       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current READY pending VOID_PENDING, desired next READY
+112602: 0:00:11.234698000       6552       3192 INFO              GST_STATES gstbin.c:2606:gst_bin_element_set_state:<videoconvert12> skipping transition from READY to  READY
+113077: 0:00:11.246597800       6552       3192 INFO              GST_STATES gstbin.c:2483:gst_bin_element_set_state:<videoconvert12> current READY pending VOID_PENDING, desired next NULL
+113081: 0:00:11.246691400       6552       3192 INFO              GST_STATES gstelement.c:2702:_priv_gst_element_state_changed:<videoconvert12> notifying about state-changed READY to NULL (VOID_PENDING pending)
+113154: WORKER_RESULT {'error': None, 'teardown_clean': True}

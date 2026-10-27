@@ -1,0 +1,937 @@
+Public CI run40165319415 retained log; ANSI and trailing whitespace normalized.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	﻿2026-10-25T05:22:49.4373250Z Current runner version: '2.338.0'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4397163Z ##[group]Runner Image Provisioner
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4397965Z Hosted Compute Agent
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4398502Z Version: 20261021.618
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4399590Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4400329Z Build Date: 2026-10-21T00:45:21Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4400975Z Worker ID: {fd564294-1740-4dcf-a2e4-79c7f6492329}
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4401667Z Region: westcentralus
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4402246Z Cloud: Azure
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4402810Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4404173Z ##[group]Operating System
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4404781Z Microsoft Windows Server 2025
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4405392Z 10.0.26100
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4405863Z Datacenter
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4406376Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4406884Z ##[group]Runner Image
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4407429Z Image: windows-2025-vs2026
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4407978Z Version: 20261021.278.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4409387Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20261021.278/images/windows/Windows2025-VS2026-Readme.md
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4411020Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20261021.278
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4411937Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4413003Z ##[group]GITHUB_TOKEN Permissions
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4414736Z Contents: read
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4415313Z Metadata: read
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4415857Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4417761Z Secret source: Actions
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4418653Z Cache mode: write
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4419708Z Prepare workflow directory
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4796787Z Prepare all required actions
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.4843616Z Getting action download info
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.7420054Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:49.8765671Z Download action repository 'astral-sh/setup-uv@v8.1.0' (SHA:08807647e7069bb48b6ef5acd8ec9567f424441b)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:50.4347531Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:50.5907045Z Download action repository 'actions/upload-artifact@v7.0.1' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:50.8383749Z Complete job name: WS4 dual-runtime guard (real Windows probes)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0063771Z ##[group]Run actions/checkout@v4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0065220Z with:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0066079Z   ref: 0fb01b0bc51bfa648dac2fc419890fd3d18d15f2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0067249Z   repository: scottconverse/civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0075939Z   token: ***
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0076727Z   ssh-strict: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0077791Z   ssh-user: git
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0079315Z   persist-credentials: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0080785Z   clean: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0081655Z   sparse-checkout-cone-mode: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0082859Z   fetch-depth: 1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0083724Z   fetch-tags: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0084608Z   show-progress: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0085424Z   lfs: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0086178Z   submodules: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0087047Z   set-safe-directory: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0087971Z   allow-unsafe-pr-checkout: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.0089281Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.1649173Z Syncing repository: scottconverse/civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.1652553Z ##[group]Getting Git version info
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.1654250Z Working directory is 'D:\a\civiccast-native\civiccast-native'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.2784231Z [command]"C:\Program Files\Git\bin\git.exe" version
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.6524063Z git version 2.56.0.windows.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.6578652Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.6601070Z Temporarily overriding HOME='D:\a\_temp\55ffb89b-c901-4ead-9471-e62103a8d4d9' before making global git config changes
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.6605241Z Adding repository directory to the temporary git global config as a safe directory
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.6614910Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\civiccast-native\civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.7363878Z Deleting the contents of 'D:\a\civiccast-native\civiccast-native'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.7370369Z ##[group]Initializing the repository
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.7382632Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\civiccast-native\civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.8389809Z Initialized empty Git repository in D:/a/civiccast-native/civiccast-native/.git/
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.8437125Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/scottconverse/civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.9192157Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.9194118Z ##[group]Disabling automatic garbage collection
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.9199401Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.9658464Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.9660446Z ##[group]Setting up auth
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:51.9673164Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:52.0143919Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:53.6918109Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:53.7304592Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:54.3035678Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:54.3396703Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:54.9110636Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:54.9511898Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:54.9525250Z ##[group]Fetching the repository
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:54.9529156Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 0fb01b0bc51bfa648dac2fc419890fd3d18d15f2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:56.9907916Z From https://github.com/scottconverse/civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:56.9908846Z  * branch            0fb01b0bc51bfa648dac2fc419890fd3d18d15f2 -> FETCH_HEAD
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:56.9952337Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:56.9953043Z ##[group]Determining the checkout info
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:56.9955343Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:56.9966088Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:57.0481865Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:57.0849872Z ##[group]Checking out the ref
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:57.0858808Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force 0fb01b0bc51bfa648dac2fc419890fd3d18d15f2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.1501491Z Updating files:  68% (2594/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.1613573Z Updating files:  69% (2595/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.1728456Z Updating files:  70% (2632/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.1849969Z Updating files:  71% (2670/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2103532Z Updating files:  72% (2708/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2233093Z Updating files:  73% (2745/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2327863Z Updating files:  74% (2783/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2450145Z Updating files:  75% (2820/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2571594Z Updating files:  76% (2858/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2683478Z Updating files:  77% (2896/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2795083Z Updating files:  78% (2933/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.2904730Z Updating files:  79% (2971/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3014102Z Updating files:  80% (3008/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3134785Z Updating files:  81% (3046/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3253940Z Updating files:  82% (3084/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3387923Z Updating files:  83% (3121/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3501216Z Updating files:  84% (3159/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3603757Z Updating files:  85% (3196/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3723945Z Updating files:  86% (3234/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3822634Z Updating files:  87% (3272/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.3935425Z Updating files:  88% (3309/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4039113Z Updating files:  89% (3347/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4156412Z Updating files:  90% (3384/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4291367Z Updating files:  91% (3422/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4398833Z Updating files:  92% (3460/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4507082Z Updating files:  93% (3497/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4611375Z Updating files:  94% (3535/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4738274Z Updating files:  95% (3572/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4849046Z Updating files:  96% (3610/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.4977984Z Updating files:  97% (3648/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5081984Z Updating files:  98% (3685/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5223911Z Updating files:  99% (3723/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5224370Z Updating files: 100% (3760/3760)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5224824Z Updating files: 100% (3760/3760), done.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5359070Z Note: switching to '0fb01b0bc51bfa648dac2fc419890fd3d18d15f2'.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5359583Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5359858Z You are in 'detached HEAD' state. You can look around, make experimental
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5360342Z changes and commit them, and you can discard any commits you make in this
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5360822Z state without impacting any branches by switching back to a branch.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5361092Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5361399Z If you want to create a new branch to retain commits you create, you may
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5362195Z do so (now or later) by using -c with the switch command. Example:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5362660Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5362800Z   git switch -c <new-branch-name>
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5362978Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5363074Z Or undo this operation with:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5363404Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5363497Z   git switch -
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5363620Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5365149Z Turn off this advice by setting config variable advice.detachedHead to false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5365545Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5365774Z HEAD is now at 0fb01b0 fix: require patched Brotli for optional agenda imports
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5488711Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.5948310Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6276366Z 0fb01b0bc51bfa648dac2fc419890fd3d18d15f2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6753497Z ##[group]Run astral-sh/setup-uv@v8.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6753833Z with:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6754012Z   version: latest
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6754206Z   enable-cache: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6754419Z   activate-environment: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6754647Z   no-project: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6754928Z   working-directory: D:\a\civiccast-native\civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6757823Z   github-token: ***
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6758384Z   cache-dependency-glob: **/*requirements*.txt
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	**/*requirements*.in
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	**/*constraints*.txt
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	**/*constraints*.in
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	**/pyproject.toml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	**/uv.lock
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	**/*.py.lock
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6758987Z   restore-cache: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6759175Z   save-cache: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6759355Z   prune-cache: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6759528Z   cache-python: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6759726Z   ignore-nothing-to-cache: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6759964Z   ignore-empty-workdir: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6760189Z   add-problem-matchers: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6760495Z   resolution-strategy: highest
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.6760733Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:58.8673363Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.0124514Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip" ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.6568991Z [command]C:\Windows\system32\tar.exe x -C D:\a\_temp\2345c429-133d-4114-ac24-ab01ebcaef86 -f D:\a\_temp\fbfee9c6-0c7a-4ca0-96c6-1ebf4234862a
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8033747Z Set UV_TOOL_BIN_DIR to D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8038171Z Added D:\a\_temp\uv-tool-bin-dir to the path
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8051351Z Added C:\hostedtoolcache\windows\uv\0.13.5\x86_64 to the path
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8054429Z Set UV_TOOL_DIR to D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8057501Z Set UV_PYTHON_INSTALL_DIR to D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8060933Z Added D:\a\_temp\uv-python-dir to the path
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8081467Z Set UV_CACHE_DIR to D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:22:59.8081803Z Successfully installed uv version 0.13.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.0184646Z Searching files using cache dependency glob: D:\a\civiccast-native\civiccast-native\**\*requirements*.txt,D:\a\civiccast-native\civiccast-native\**\*requirements*.in,D:\a\civiccast-native\civiccast-native\**\*constraints*.txt,D:\a\civiccast-native\civiccast-native\**\*constraints*.in,D:\a\civiccast-native\civiccast-native\**\pyproject.toml,D:\a\civiccast-native\civiccast-native\**\uv.lock,D:\a\civiccast-native\civiccast-native\**\*.py.lock
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6406920Z D:\a\civiccast-native\civiccast-native\pyproject.toml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6430567Z D:\a\civiccast-native\civiccast-native\requirements-native-app-build.in
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6441151Z D:\a\civiccast-native\civiccast-native\requirements-native-app-build.txt
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6452325Z D:\a\civiccast-native\civiccast-native\requirements-native-app.txt
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6465841Z D:\a\civiccast-native\civiccast-native\requirements-native-pyav-build.in
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6474177Z D:\a\civiccast-native\civiccast-native\requirements-native-pyav-build.txt
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6483996Z D:\a\civiccast-native\civiccast-native\requirements-native-runtime.in
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.6494478Z D:\a\civiccast-native\civiccast-native\requirements-native-runtime.txt
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.8523797Z D:\a\civiccast-native\civiccast-native\uv.lock
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.8552617Z Found 9 files to hash.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:01.8562537Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-pc-windows-msvc-windows-2025-3.12.10-pruned-d7000936539be0164df3258e930eca448ff684644af5d187e35124aa1e6a4d24
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.1423284Z No GitHub Actions cache found for key: setup-uv-2-x86_64-pc-windows-msvc-windows-2025-3.12.10-pruned-d7000936539be0164df3258e930eca448ff684644af5d187e35124aa1e6a4d24
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2461977Z ##[group]Run actions/setup-python@v5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2462303Z with:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2462486Z   python-version: 3.12
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2462703Z   check-latest: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2465437Z   token: ***
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2465635Z   update-environment: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2465857Z   allow-prereleases: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2466063Z   freethreaded: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2466254Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2466440Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2466711Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2466977Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2467260Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.2467497Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4022894Z ##[group]Installed versions
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4156113Z (node:3556) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4156893Z (Use `node --trace-deprecation ...` to show where the warning was created)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4158222Z Successfully set up CPython (3.12.10)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4158841Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4476336Z ##[group]Run choco install ffmpeg --yes --no-progress
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4476818Z ^[[36;1mchoco install ffmpeg --yes --no-progress^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4477183Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4477697Z ^[[36;1mffmpeg -version^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4477953Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4478237Z ^[[36;1mffprobe -version^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4478490Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4831079Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4831544Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4831796Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4832156Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4832515Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4832891Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4833408Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4834054Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4834571Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4835025Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4835460Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:02.4835805Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:05.7770312Z Chocolatey v2.7.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:06.0479475Z Installing the following packages:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:06.0485009Z ffmpeg
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:06.0488550Z By installing, you accept licenses for the packages.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:09.4382002Z Downloading package from source 'https://community.chocolatey.org/api/v2/'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:10.4477610Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:10.4478050Z ffmpeg v9.0.2 [Approved]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:10.4695983Z ffmpeg package files install completed. Performing other installation steps.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:13.7691751Z Extracting 64-bit C:\ProgramData\chocolatey\lib\ffmpeg\tools\ffmpeg-release-essentials.7z to C:\ProgramData\chocolatey\lib\ffmpeg\tools...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:16.6412208Z C:\ProgramData\chocolatey\lib\ffmpeg\tools
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:16.6419029Z Removing extracted archive.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:16.6478841Z Sleeping for 2 seconds to allow anti-viruses to finish scanning...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:18.6639928Z Renaming ffmpeg directory to common name (Try 1 / 3)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:18.6678433Z Successfully renamed directory.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:22.0347430Z  ShimGen has successfully created a shim for ffmpeg.exe
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:24.2775871Z  ShimGen has successfully created a shim for ffplay.exe
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.6972720Z  ShimGen has successfully created a shim for ffprobe.exe
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.7491183Z  The install of ffmpeg was successful.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.7494368Z   Deployed to 'C:\ProgramData\chocolatey\lib\ffmpeg\tools'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.7709773Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.7710124Z Chocolatey installed 1/1 packages.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.7710827Z  See the log for details (C:\ProgramData\chocolatey\logs\chocolatey.log).
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9215873Z ffmpeg version 9.0.2-essentials_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9216839Z built with gcc 16.2.0 (Rev3, Built by MSYS2 project)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9224764Z configuration: --enable-gpl --enable-version3 --enable-static --disable-w32threads --disable-autodetect --enable-cairo --enable-fontconfig --enable-iconv --enable-gnutls --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-zlib --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-sdl2 --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libaom --enable-libopenjpeg --enable-libvpx --enable-mediafoundation --enable-libass --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-libvidstab --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid --enable-dxva2 --enable-d3d11va --enable-d3d12va --enable-ffnvcodec --enable-libvpl --enable-nvdec --enable-nvenc --enable-vaapi --enable-openal --enable-libgme --enable-libopenmpt --enable-libopencore-amrwb --enable-libmp3lame --enable-libtheora --enable-libvo-amrwbenc --enable-libgsm --enable-libopencore-amrnb --enable-libopus --enable-libspeex --enable-libvorbis --enable-librubberband
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9229595Z libavutil      61.  1.102 / 61.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9229856Z libavcodec     63.  1.102 / 63.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9230107Z libavformat    63.  1.102 / 63.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9230348Z libavdevice    63.  1.102 / 63.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9230573Z libavfilter    12.  1.102 / 12.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9230805Z libswscale     10.  1.102 / 10.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9231262Z libswresample   7.  1.102 /  7.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9231430Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9231509Z Exiting with exit code 0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9995690Z ffprobe version 9.0.2-essentials_build-www.gyan.dev Copyright (c) 2007-2026 the FFmpeg developers
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:25.9996639Z built with gcc 16.2.0 (Rev3, Built by MSYS2 project)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0002336Z configuration: --enable-gpl --enable-version3 --enable-static --disable-w32threads --disable-autodetect --enable-cairo --enable-fontconfig --enable-iconv --enable-gnutls --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-zlib --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-sdl2 --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libaom --enable-libopenjpeg --enable-libvpx --enable-mediafoundation --enable-libass --enable-libfreetype --enable-libfribidi --enable-libharfbuzz --enable-libvidstab --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid --enable-dxva2 --enable-d3d11va --enable-d3d12va --enable-ffnvcodec --enable-libvpl --enable-nvdec --enable-nvenc --enable-vaapi --enable-openal --enable-libgme --enable-libopenmpt --enable-libopencore-amrwb --enable-libmp3lame --enable-libtheora --enable-libvo-amrwbenc --enable-libgsm --enable-libopencore-amrnb --enable-libopus --enable-libspeex --enable-libvorbis --enable-librubberband
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0006506Z libavutil      61.  1.102 / 61.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0006754Z libavcodec     63.  1.102 / 63.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0006992Z libavformat    63.  1.102 / 63.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0007227Z libavdevice    63.  1.102 / 63.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0007460Z libavfilter    12.  1.102 / 12.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0007683Z libswscale     10.  1.102 / 10.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.0008127Z libswresample   7.  1.102 /  7.  1.102
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1131207Z ##[group]Run uv sync --group dev
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1131558Z ^[[36;1muv sync --group dev^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1203643Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1203982Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1204182Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1204462Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1204738Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1205023Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1205361Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1205799Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1206233Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1206635Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1207082Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.1207386Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.4121973Z Using CPython 3.12.10 interpreter at: C:\hostedtoolcache\windows\Python\3.12.10\x64\python3.exe
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.4123947Z Creating virtual environment at: .venv
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.4439324Z Resolved 200 packages in 2ms
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.4823358Z    Building civiccast @ file:///D:/a/civiccast-native/civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6221627Z Downloading pillow (6.9MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6437640Z Downloading lxml (3.8MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6441835Z Downloading pydantic-core (2.0MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6445143Z Downloading psycopg-binary (3.4MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6462078Z Downloading ruff (11.3MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6465046Z Downloading rapidfuzz (1.5MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6467937Z Downloading pikepdf (3.1MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6470930Z Downloading moto (6.4MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6476063Z Downloading pygments (1.2MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6487636Z Downloading sqlalchemy (2.0MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6492836Z Downloading pip (1.7MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6498371Z Downloading numpy (11.7MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6503970Z Downloading pywin32 (9.1MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6507072Z Downloading reportlab (1.9MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6522373Z Downloading virtualenv (5.2MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6525666Z Downloading ast-serialize (1.1MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6530800Z Downloading mypy (10.5MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6535281Z Downloading botocore (14.3MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:26.6539637Z Downloading cryptography (3.7MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:27.9657630Z  Downloaded ast-serialize
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.0148802Z  Downloaded pygments
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.0387212Z  Downloaded rapidfuzz
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.0739813Z  Downloaded pydantic-core
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.1051976Z  Downloaded reportlab
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.1188405Z  Downloaded sqlalchemy
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.1452706Z  Downloaded pip
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.2152512Z  Downloaded pikepdf
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.2301170Z  Downloaded psycopg-binary
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.2817789Z  Downloaded cryptography
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.3220036Z  Downloaded lxml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.3809514Z  Downloaded virtualenv
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.4654091Z  Downloaded pillow
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.6661308Z  Downloaded ruff
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.6861427Z  Downloaded pywin32
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.7000257Z  Downloaded numpy
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.8338294Z  Downloaded moto
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:28.9756755Z  Downloaded botocore
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:29.0277249Z  Downloaded mypy
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:30.3288694Z       Built civiccast @ file:///D:/a/civiccast-native/civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:30.3482782Z Prepared 130 packages in 3.89s
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5175493Z Installed 130 packages in 1.16s
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5178855Z  + alembic==1.18.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5179942Z  + annotated-doc==0.0.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5182266Z  + annotated-types==0.7.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5184771Z  + anyio==4.14.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5185131Z  + asn1crypto==1.5.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5185441Z  + ast-serialize==0.3.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5189080Z  + bandit==1.9.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5189510Z  + boolean-py==5.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5189839Z  + boto3==1.43.6
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5191394Z  + botocore==1.43.6
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5192677Z  + build==1.5.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5193944Z  + cachecontrol==0.14.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5195071Z  + certifi==2026.10.19
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5196415Z  + cffi==2.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5197551Z  + cfgv==3.5.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5199139Z  + charset-normalizer==3.4.7
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5201695Z  + civiccast==1.0.0b20 (from file:///D:/a/civiccast-native/civiccast-native)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5202551Z  + click==8.3.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5203950Z  + colorama==0.4.6
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5205567Z  + coverage==7.13.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5206836Z  + cryptography==50.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5208204Z  + cyclonedx-python-lib==11.11.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5209475Z  + defusedxml==0.7.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5210983Z  + deprecated==1.3.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5212301Z  + detect-test-pollution==1.2.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5213573Z  + distlib==0.4.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5215165Z  + docker==7.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5216439Z  + fastapi==0.136.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5217740Z  + filelock==3.29.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5219069Z  + greenlet==3.5.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5220211Z  + h11==0.16.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5221901Z  + httpcore==1.0.9
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5222555Z  + httptools==0.7.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5224334Z  + httpx==0.28.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5226025Z  + hypothesis==6.152.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5227222Z  + identify==2.6.19
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5228642Z  + idna==3.18
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5229857Z  + iniconfig==2.3.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5231460Z  + jaraco-classes==3.4.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5232324Z  + jaraco-context==6.1.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5234088Z  + jaraco-functools==4.5.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5235379Z  + jiwer==4.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5236413Z  + jmespath==1.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5237969Z  + keyring==25.7.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5239276Z  + librt==0.10.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5240451Z  + license-expression==30.4.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5242351Z  + lxml==6.1.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5242934Z  + mako==1.3.12
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5244387Z  + markdown-it-py==4.2.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5246022Z  + markupsafe==3.0.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5247248Z  + mdurl==0.1.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5249001Z  + more-itertools==11.0.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5250258Z  + moto==5.2.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5251306Z  + msgpack==1.2.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5252849Z  + mypy==2.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5253897Z  + mypy-extensions==1.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5255458Z  + nodeenv==1.10.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5256750Z  + numpy==2.4.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5257833Z  + nvidia-ml-py==13.595.45
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5259399Z  + packageurl-python==0.17.6
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5260164Z  + packaging==26.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5261770Z  + pathspec==1.1.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5262749Z  + pefile==2024.8.26
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5264515Z  + pikepdf==10.6.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5266189Z  + pillow==13.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5267167Z  + pip==26.2.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5268770Z  + pip-api==0.0.34
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5269977Z  + pip-audit==2.10.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5271275Z  + pip-requirements-parser==32.0.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5272008Z  + platformdirs==4.9.6
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5273845Z  + pluggy==1.6.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5275072Z  + portalocker==3.2.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5276350Z  + pre-commit==4.6.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5277522Z  + psutil==7.2.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5279289Z  + psycopg==3.3.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5280517Z  + psycopg-binary==3.3.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5281749Z  + py-partiql-parser==0.6.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5283941Z  + py-serializable==2.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5286001Z  + pycparser==3.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5287231Z  + pydantic==2.13.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5288685Z  + pydantic-core==2.46.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5289535Z  + pygments==2.20.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5291239Z  + pyparsing==3.3.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5292434Z  + pypdf==6.21.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5293766Z  + pyproject-hooks==1.2.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5294594Z  + pytest==9.0.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5297173Z  + pytest-asyncio==1.3.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5297791Z  + pytest-cov==7.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5299133Z  + pytest-randomly==4.1.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5300655Z  + python-dateutil==2.9.0.post0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5301108Z  + python-discovery==1.6.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5303415Z  + python-dotenv==1.2.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5304171Z  + python-multipart==0.0.32
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5305628Z  + pywin32==311
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5306728Z  + pywin32-ctypes==0.2.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5308319Z  + pyyaml==6.0.3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5309510Z  + rapidfuzz==3.14.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5310587Z  + regex==2026.5.9
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5312080Z  + reportlab==4.5.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5313158Z  + requests==2.33.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5314796Z  + responses==0.26.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5316037Z  + rich==15.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5317077Z  + ruff==0.15.12
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5318685Z  + s3transfer==0.17.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5319519Z  + sacrebleu==2.6.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5321216Z  + shellingham==1.5.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5322547Z  + six==1.17.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5324239Z  + sortedcontainers==2.4.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5325469Z  + sqlalchemy==2.0.49
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5326630Z  + starlette==1.3.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5328197Z  + stevedore==5.9.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5329501Z  + tabulate==0.10.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5330553Z  + testcontainers==4.14.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5332090Z  + tomli==2.4.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5333229Z  + tomli-w==1.2.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5334524Z  + typer==0.25.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5335994Z  + types-defusedxml==0.7.0.20260504
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5337096Z  + types-psutil==7.2.2.20260508
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5338976Z  + types-reportlab==4.5.0.20260509
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5339849Z  + typing-extensions==4.15.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5341722Z  + typing-inspection==0.4.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5342111Z  + tzdata==2026.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5343995Z  + urllib3==2.8.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5345061Z  + uvicorn==0.46.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5346578Z  + virtualenv==21.14.9
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5347682Z  + watchfiles==1.1.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5349148Z  + websockets==16.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5350457Z  + werkzeug==3.1.9
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5351492Z  + wrapt==2.1.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.5353103Z  + xmltodict==1.0.4
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7211209Z ##[group]Run $runtime = (Resolve-Path .venv/Scripts).Path
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7212004Z ^[[36;1m$runtime = (Resolve-Path .venv/Scripts).Path^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7213168Z ^[[36;1muv run python scripts/build_native_runtime_closure.py --stage "$env:RUNNER_TEMP/gstreamer-stage" --out "$runtime/dependencies/gstreamer"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7214427Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7215368Z ^[[36;1muv run python scripts/verify_native_runtime_closure.py --tree "$runtime/dependencies/gstreamer"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7216326Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7217282Z ^[[36;1m"CIVICCAST_GSTREAMER_RUNTIME_ROOT=$runtime" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7218144Z ^[[36;1m@'^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7218432Z ^[[36;1mimport os^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7218772Z ^[[36;1mfrom pathlib import Path^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7219717Z ^[[36;1mfrom scripts.provision_native_runtime_dependencies import load_lock, fetch_locked_artifact, safe_extract_zip^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7220758Z ^[[36;1martifact = load_lock()["artifacts"]["tsduck"]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7221691Z ^[[36;1marchive = fetch_locked_artifact("tsduck", artifact, Path(os.environ["RUNNER_TEMP"]) / "media-downloads")^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7222737Z ^[[36;1mdestination = Path(os.environ["RUNNER_TEMP"]) / "tsduck"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7224106Z ^[[36;1msafe_extract_zip(archive, destination, strip_prefix=artifact["strip_prefix"], include=artifact.get("include"))^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7225171Z ^[[36;1massert (destination / "bin/tsp.exe").is_file()^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7225929Z ^[[36;1mwith open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as handle:^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7226679Z ^[[36;1m    handle.write(str(destination / "bin") + "\n")^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7227457Z ^[[36;1m# The same Tauri NSIS 3.11 layout used by the four compile/preflight fixtures.^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7228402Z ^[[36;1m# Pin the tiny upstream tool archive; no installer/app/model build is needed.^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7229092Z ^[[36;1mnsis = {^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7229484Z ^[[36;1m    "filename": "nsis-3.11.zip", "bytes": 2361546,^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7230267Z ^[[36;1m    "sha256": "c7d27f780ddb6cffb4730138cd1591e841f4b7edb155856901cdf5f214394fa1",^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7231444Z ^[[36;1m    "url": "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip",^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7232291Z ^[[36;1m}^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7233010Z ^[[36;1marchive = fetch_locked_artifact("Tauri NSIS", nsis, Path(os.environ["RUNNER_TEMP"]) / "media-downloads")^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7234026Z ^[[36;1mcompiler_root = Path.home() / "AppData/Local/tauri/NSIS"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7234806Z ^[[36;1msafe_extract_zip(archive, compiler_root, strip_prefix="nsis-3.11")^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7235585Z ^[[36;1massert (compiler_root / "Bin/makensis.exe").is_file()^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7236153Z ^[[36;1m'@ | uv run python -^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7236614Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7237275Z ^[[36;1m$encoders = ffmpeg -hide_banner -encoders 2>&1 | Out-String^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7238250Z ^[[36;1mif ($LASTEXITCODE -ne 0 -or $encoders -notmatch 'libx264') { throw "FFmpeg fixture requires libx264" }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7240376Z ^[[36;1m$protocols = ffmpeg -hide_banner -protocols 2>&1 | Out-String^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7241409Z ^[[36;1mif ($LASTEXITCODE -ne 0 -or $protocols -notmatch '(?m)^\s+srt\s*$') { throw "FFmpeg fixture requires SRT" }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7356476Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7357056Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7357375Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7357856Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7358334Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7360955Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7361650Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7362869Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7364620Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7365414Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7366155Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:31.7366722Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.2821475Z Using CPython 3.12.10 interpreter at: .venv\Scripts\python.exe
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.4635800Z Resolved 8 packages in 180ms
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.5610255Z Downloading gstreamer-libs (31.5MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.5616138Z Downloading gstreamer-plugins (44.5MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.5620573Z Downloading gstreamer-plugins-libs (20.2MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.5626682Z Downloading gstreamer-cli (6.0MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.5631108Z Downloading gstreamer-plugins-restricted (1.4MiB)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.6778870Z  Downloaded gstreamer-plugins-restricted
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.7816842Z  Downloaded gstreamer-cli
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:33.9611013Z  Downloaded gstreamer-plugins-libs
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.1284531Z  Downloaded gstreamer-libs
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.2859273Z  Downloaded gstreamer-plugins
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.2867163Z Prepared 8 packages in 822ms
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4499334Z Installed 8 packages in 162ms
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4501106Z  + gstreamer-cli==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4502980Z  + gstreamer-ext-runtime==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4504594Z  + gstreamer-libs==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4506266Z  + gstreamer-plugins==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4508028Z  + gstreamer-plugins-libs==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4509943Z  + gstreamer-plugins-restricted==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4511657Z  + gstreamer-python==1.28.5
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:34.4513500Z  + setuptools==83.0.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9186858Z Staging pinned upstream wheels into D:\a\_temp\gstreamer-stage ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9187999Z Indexing staged distributions from *.dist-info/RECORD ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9188735Z   1175 files indexed across 8 distribution(s)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9189781Z Locating named plugins in the staged tree ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9190418Z   69/71 named factories resolved to a staged plugin
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9191017Z   39 seed plugin file(s) selected
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9191666Z   4 Python extension module(s) added as closure seeds
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9192380Z   2 pinned gstreamer-cli consumer executable(s) added as closure seeds
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9193178Z   1 non-factory plugin(s) added as closure seeds (typefinders)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9193815Z Walking the PE import closure ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9194271Z   113 PE file(s) in the closure
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9195247Z Copying the closure and non-PE resources into D:\a\civiccast-native\civiccast-native\.venv\Scripts\dependencies\gstreamer ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9196335Z Writing upstream license notices for 7 distribution(s) ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9197002Z Bundling license text for 17 distinct license(s) ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9215163Z Hashing the packaged tree and building trust artifacts ...
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9215739Z Build complete.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9216013Z   file_count  = 229
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:36.9216282Z   total_bytes = 78981429
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7696605Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7697222Z ==============================================================================
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7697785Z CHECK                   STATUS    DETAIL
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7698214Z ------------------------------------------------------------------------------
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7699089Z manifest_verification   PASS      runtime-manifest.json verified against 229 on-disk file(s) (sibling trust artifacts excluded)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7700134Z cli_consumer_verificationPASS      both gstreamer-cli 1.28.5 consumers are present, hashed, and lock-bound
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7702363Z factory_sweep           PASS      checked 55 required factories. genuine misses: none. hardware-gated (expected absent without matching GPU/MFT, plugin file confirmed present): ['d3d12h264dec', 'mfh265enc'].
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7703609Z plugin_origin_check     PASS      all loaded plugins resolve inside the tree
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7705137Z caption_leg             PASS      caption text survived the embed+decode-back round trip, decoded entirely in-tree via tsdemux -> h264parse -> h264ccextractor -> ccconverter -> cea608tott (no ffmpeg): 'WEBVTT\r\n\r\n00:00:00.691 --> 00:00:04.691\r\nCIVICCAST CLOSURE PROBE 3f9a\r\n\r\n'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7706802Z gpl_negative_control    PASS      no GPL plugin files present (gstx264.dll, gstx265.dll absent); no GPL-excluded factories resolve
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7710040Z dynamic_trace           PASS      152 traced path(s) inside the tree or a permitted root, via the audit hook, mapped-file scan, and sampled open handles: 42 Python-mediated opens (incl. ctypes.dlopen), 179 executable mappings, 17 known non-executable data mappings, 0 unknown-protection mappings, and 52 file handle(s) caught open by 150 poll(s) of the process handle table -- the last of which is what observes native code opening files without going through Python. REMAINING BLIND SPOT, stated rather than glossed: handle polling is SAMPLED, so a file opened and closed entirely between two polls is not seen, and this covers only this process (a file opened by a spawned child would be missed). Closing both needs kernel ETW file-I/O tracing, which requires administrator rights.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7712981Z ==============================================================================
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:40.7713402Z 7 PASS, 0 FAIL, 0 SKIPPED
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5403833Z ##[group]Run $env:PSModulePath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5404901Z ^[[36;1m$env:PSModulePath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5405453Z ^[[36;1m@'^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5405685Z ^[[36;1mimport sys, xml.etree.ElementTree as ET^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5405984Z ^[[36;1mimport pytest^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5406196Z ^[[36;1mnodes = """^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5406583Z ^[[36;1mtests/certs/test_private_key_acl.py::test_machine_account_name_grant_reproduces_1332_red^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5407262Z ^[[36;1mtests/certs/test_private_key_acl.py::test_restrict_real_icacls_succeeds_and_grants_expected_principals^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5407928Z ^[[36;1mtests/certs/test_private_key_acl.py::test_unregistered_service_sid_uses_native_acl_fallback^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5408575Z ^[[36;1mtests/certs/test_private_key_acl.py::test_first_admin_completes_under_localsystem_username^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5409258Z ^[[36;1mtests/dr/test_station_backup_runtime.py::test_runtime_backup_includes_station_state_and_portable_credentials^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5409907Z ^[[36;1mtests/gate_a/test_gate_a_download_only_payload.py::test_builder_script_present^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5410670Z ^[[36;1mtests/gate_a/test_gate_a_download_only_payload.py::test_download_only_payload_builder_produces_no_reparse_points_and_cleanup_restores_kit_download^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5411616Z ^[[36;1mtests/gate_a/test_gate_a_download_only_payload.py::test_download_only_payload_builder_counts_forced_copy_fallback_within_threshold^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5412766Z ^[[36;1mtests/gate_a/test_gate_a_download_only_payload.py::test_download_only_payload_builder_fails_closed_when_forced_copy_fallback_exceeds_tiny_threshold^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5413695Z ^[[36;1mtests/installer/test_install_transaction.py::test_restores_files_activation_database_after_late_failure_and_preserves_media^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5414532Z ^[[36;1mtests/installer/test_install_transaction.py::test_interrupted_restore_keeps_recovery_point_and_retries_idempotently^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5415322Z ^[[36;1mtests/installer/test_install_transaction.py::test_dead_installer_recovery_restores_but_live_installer_is_untouched^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5416081Z ^[[36;1mtests/installer/test_install_transaction.py::test_commit_keeps_candidate_and_recovery_cannot_roll_it_back^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5416844Z ^[[36;1mtests/installer/test_install_transaction.py::test_restores_existing_shortcut_and_removes_only_new_installer_shortcut^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5417615Z ^[[36;1mtests/installer/test_install_transaction.py::test_insufficient_snapshot_space_refuses_before_replacement^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5418374Z ^[[36;1mtests/installer/test_install_transaction.py::test_snapshot_and_restore_keep_hardlinks_without_sharing_live_bytes^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5419141Z ^[[36;1mtests/installer/test_install_transaction.py::test_service_restore_preserves_start_mode_and_prior_running_state^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5419937Z ^[[36;1mtests/installer/test_nsis_bootstrap_hooks.py::test_transaction_macros_compile_with_tauri_early_hook_include[initial-tauri]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5421226Z ^[[36;1mtests/installer/test_nsis_bootstrap_hooks.py::test_transaction_macros_compile_with_tauri_early_hook_include[final-patched]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5422097Z ^[[36;1mtests/installer/test_nsis_bootstrap_hooks.py::test_version_preflight_preserves_extraction_destination_and_caller_state[False]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5422972Z ^[[36;1mtests/installer/test_nsis_bootstrap_hooks.py::test_version_preflight_preserves_extraction_destination_and_caller_state[True]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5423804Z ^[[36;1mtests/installer/test_wait_native_uninstall_cleanup.py::test_wait_succeeds_only_after_arp_and_install_root_disappear^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5426029Z ^[[36;1mtests/installer/test_wait_native_uninstall_cleanup.py::test_wait_times_out_when_cleanup_never_completes^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5426840Z ^[[36;1mtests/installer/test_wait_native_uninstall_cleanup.py::test_wait_times_out_when_only_arp_remains^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5427555Z ^[[36;1mtests/installer/test_wait_native_uninstall_cleanup.py::test_wait_times_out_when_only_install_root_remains^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5428287Z ^[[36;1mtests/installer/test_wait_native_uninstall_cleanup.py::test_default_roots_detect_standard_hkcu_arp_entry^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5429043Z ^[[36;1mtests/policy/test_native_installer_identity.py::test_repository_install_progress_matchers_accept_timestamp_prefix^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5429830Z ^[[36;1mtests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[complete]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5430619Z ^[[36;1mtests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[traversal]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5431392Z ^[[36;1mtests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[conflict]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5432193Z ^[[36;1mtests/policy/test_windows_release_downloader.py::test_station_archive_verification_and_safe_extraction[index-mismatch]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5432989Z ^[[36;1mtests/installer/test_install_transaction.py::test_service_restore_rejects_missing_or_unsupported_identity^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5433492Z ^[[36;1m""".strip().splitlines()^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5433908Z ^[[36;1mcode = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-windows-installer.xml"])^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5434335Z ^[[36;1mif code:^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5434531Z ^[[36;1m    sys.exit(code)^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5435007Z ^[[36;1mcases = list(ET.parse("junit-windows-installer.xml").iter("testcase"))^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5435490Z ^[[36;1massert len(cases) >= len(nodes), "Selected cases did not all execute"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5436169Z ^[[36;1massert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5436854Z ^[[36;1mprint(f"Required coverage executed: {len(cases)} passed, no skips")^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5437239Z ^[[36;1m'@ | uv run python -^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5437526Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5510075Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5510412Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5510618Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5510899Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5511176Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5511483Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5511818Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5512264Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5512704Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5513112Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5513505Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5513967Z   CIVICCAST_GSTREAMER_RUNTIME_ROOT: D:\a\civiccast-native\civiccast-native\.venv\Scripts
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:23:43.5514365Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.3639000Z ...................................                                      [100%]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.3639584Z 35 passed in 28.74s
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.3639896Z Required coverage executed: 35 passed, no skips
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6384211Z ##[group]Run $env:PSModulePath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6385272Z ^[[36;1m$env:PSModulePath = "$env:WINDIR\System32\WindowsPowerShell\v1.0\Modules;$env:ProgramFiles\WindowsPowerShell\Modules"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6385818Z ^[[36;1m@'^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6386042Z ^[[36;1mimport sys, xml.etree.ElementTree as ET^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6386320Z ^[[36;1mimport os^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6386824Z ^[[36;1mfrom civiccast.native.gstreamer_runtime import bootstrap_installed_gstreamer_runtime, installed_gstreamer_environment^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6387430Z ^[[36;1massert bootstrap_installed_gstreamer_runtime()^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6388055Z ^[[36;1mos.environ.update(installed_gstreamer_environment(os.environ["CIVICCAST_GSTREAMER_RUNTIME_ROOT"], base_environment=os.environ))^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6388645Z ^[[36;1mimport pytest^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6388847Z ^[[36;1mnodes = """^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6389217Z ^[[36;1mtests/egress/test_compliance.py::test_managed_tsduck_dir_windows_default^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6389890Z ^[[36;1mtests/egress/test_gst_engine_caption_flow_native.py::test_live_caption_queue_probe_releases_real_event_reservations^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6390715Z ^[[36;1mtests/egress/test_gst_engine_caption_flow_native.py::test_three_captioned_workers_finish_complex_playlist_without_reload^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6391514Z ^[[36;1mtests/egress/test_gst_engine_reload_commit_ordering.py::test_u16_diagnostics_print_on_a_real_packaged_pipeline^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6392307Z ^[[36;1mtests/egress/test_gst_engine_reload_commit_ordering.py::test_u16_packaged_runtime_resolution_matches_its_declared_root^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6392999Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_caption_embed_survives_to_emitted_stream^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6393649Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_live_caption_appsrc_starts_without_a_cue_and_decodes_a_later_cue^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6394308Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_secondary_audio_muxes_an_extra_pid^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6395144Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_live_worker_forks_selected_program_audio_into_atomic_caption_wavs^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6395887Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_audio_tap_queue_and_appsink_carry_the_item88_safety_properties_live^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6396501Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6397017Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_swap_role_continuity^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6397475Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_content_reload_continuity^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6397939Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_swap_role_continuity_av^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6398410Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_content_reload_continuity_av^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6398891Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_repeated_reloads_no_leak^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6399391Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_reload_never_buffers_recovers[False]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6399927Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_reload_never_buffers_recovers[True]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6400436Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_control_stop_does_not_hang^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6400919Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_live_udp_ingest_continuity^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6401450Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_stall_watchdog_fires_when_live_source_freezes^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6402562Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_stall_watchdog_commits_ready_deferred_reload_when_live_source_freezes^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6403324Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_per_stream_watchdog_forces_a_ready_deferred_switch_that_never_fires^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6405421Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_stall_watchdog_does_not_fire_on_healthy_output^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6406244Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_per_stream_watchdog_fires_when_one_stream_stops_after_a_committed_reload[video]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6407084Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_per_stream_watchdog_fires_when_one_stream_stops_after_a_committed_reload[audio]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6407815Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_content_reload_to_live_udp_ingest_continuity^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6408467Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_graphics_overlay_composites_station_bug_and_lower_third^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6409134Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_board_live_video_is_visible_above_the_board_raster^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6409734Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_content_reload_reapplies_graphics_overlay^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6410398Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_content_reload_deletes_the_superseded_banner_png_not_the_live_one^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6411125Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_graphics_overlay_disabled_matches_existing_no_overlay_behavior^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6411892Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_deferred_rollover_switches_at_the_common_av_end_without_eos[audio-tail-longer]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6412714Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_deferred_rollover_switches_at_the_common_av_end_without_eos[video-tail-longer]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6413551Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_deferred_rollover_switches_at_the_common_av_end_without_eos[planar-audio-tail]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6414315Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6415066Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6415808Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6416674Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6417440Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_emergency_late_image_reaches_pixels_and_clear_preserves_logo[compositor]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6418236Z ^[[36;1mtests/egress/test_gst_engine_wsl.py::test_emergency_late_image_reaches_pixels_and_clear_preserves_logo[d3d11compositor]^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6418979Z ^[[36;1mtests/egress/test_gst_strategy.py::test_reconnect_channel_replays_desired_state_through_strategy^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6419610Z ^[[36;1mtests/egress/test_gst_strategy.py::test_caption_delivery_id_reaches_the_worker_envelope^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6420200Z ^[[36;1mtests/egress/test_gst_strategy.py::test_reconnect_channel_is_noop_for_unknown_channel^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6420768Z ^[[36;1mtests/egress/test_gst_strategy.py::test_start_replacement_closes_old_pipe_server^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6421339Z ^[[36;1mtests/egress/test_gst_strategy.py::test_close_channel_closes_server_and_forgets_channel^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6422512Z ^[[36;1mtests/egress/test_hls_relay_live_playability.py::test_gstreamer_fed_hls_directory_serves_an_advancing_manifest_over_http^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6423373Z ^[[36;1mtests/egress/test_hls_relay_live_playability.py::test_relay_writes_to_the_channels_unchanged_configured_directory^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6424193Z ^[[36;1mtests/egress/test_hls_relay_stderr_log.py::test_rotation_needs_the_predecessors_handles_closed_so_it_runs_after_terminate^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6424973Z ^[[36;1mtests/egress/test_hls_sink_captions.py::test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6425647Z ^[[36;1mtests/egress/test_ts_relay.py::test_real_tsp_relay_makes_cc_continuous_across_session_reset^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6426839Z ^[[36;1mtests/egress/test_u36_rollover_sliver_real_ffmpeg.py::test_u36_a_real_boundary_does_not_kill_the_worker^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6427606Z ^[[36;1mtests/egress/test_worker_pipe_seam.py::test_worker_module_imports_and_exposes_windows_branch_when_gi_available^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6428349Z ^[[36;1mtests/egress/test_worker_pipe_seam.py::test_worker_pipe_default_acl_roundtrips_for_current_windows_identity^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6429061Z ^[[36;1mtests/tools/test_capture_emitted_hls_audio_proof.py::test_junction_replacing_owned_scratch_is_refused^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6429765Z ^[[36;1mtests/tools/test_capture_emitted_hls_audio_proof.py::test_real_ffmpeg_measures_normalized_synthetic_window^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6430257Z ^[[36;1m""".strip().splitlines()^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6430666Z ^[[36;1mcode = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-windows-media.xml"])^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6431073Z ^[[36;1mif code:^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6431267Z ^[[36;1m    sys.exit(code)^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6431604Z ^[[36;1mcases = list(ET.parse("junit-windows-media.xml").iter("testcase"))^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6432072Z ^[[36;1massert len(cases) >= len(nodes), "Selected cases did not all execute"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6432747Z ^[[36;1massert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6433433Z ^[[36;1mprint(f"Required coverage executed: {len(cases)} passed, no skips")^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6433802Z ^[[36;1m'@ | uv run python -^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6434075Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6517634Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6517973Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6518585Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6518906Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6519187Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6519483Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6519819Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6520713Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6521204Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6521617Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6522017Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6522492Z   CIVICCAST_GSTREAMER_RUNTIME_ROOT: D:\a\civiccast-native\civiccast-native\.venv\Scripts
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:24:20.6522903Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4296534Z ......................................F.................                 [100%]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4297174Z ================================== FAILURES ===================================
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4297992Z __ test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air ___
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4298332Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4299183Z tmp_path = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4300186Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4300650Z     def test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air(
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4301684Z         tmp_path: Path,
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4302446Z     ) -> None:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4303034Z         """Round-2 finding 1: aborting a HELD deferred reload must not starve the leg
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4303802Z         that is still on air.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4304253Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4304818Z         ``_abort_pending_reload`` promises the current program keeps playing. The
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4305528Z         round-1 review recorded a run where it did not: a deferred replacement errored
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4306106Z         before commit, the abort released that leg's hold probes, and the mux output
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4306898Z         counter then flatlined until the stall watchdog killed the worker.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4307311Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4307686Z         An error is a rare, load-dependent way to reach that abort. Supersession is a
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4308253Z         deterministic one: a second deferred reload arriving while the first is still
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4308847Z         held aborts the first through the SAME path, with its hold probes released
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4309421Z         into the input-selector on a pad that is still INACTIVE. This test drives that
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4310003Z         path on purpose and asserts what the abort contract actually promises -- the
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4310561Z         channel stays up, output keeps advancing, and a later reload still commits.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4310981Z         """
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4311655Z         clips = [tmp_path / f"segment-{index:04d}.ts" for index in range(1, 5)]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4312183Z         for index, clip in enumerate(clips):
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4312516Z             _write_short_av_ts_clip(
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4312972Z                 clip, seconds=2.5, pattern=(0, 18)[index % 2], video_caps=_PRODUCTION_CAPS
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4313401Z             )
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4313621Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4313854Z         payloads: list[Path] = []
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4314153Z         for name in ("first", "second"):
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4314543Z             path = tmp_path / f"{name}{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4314945Z             path.write_text(
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4315233Z                 graphmod.graph_to_json(
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4315670Z                     _multi_segment_playlist_reload_graph(clips, video_caps=_PRODUCTION_CAPS)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4316137Z                 ),
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4316381Z                 encoding="utf-8",
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4316650Z             )
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4316892Z             payloads.append(path)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4317159Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4317387Z         out_ts = tmp_path / "output.ts"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4317717Z         tap_dir = tmp_path / "caption-tap"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4318369Z         graph = _production_pressure_playlist_graph(clips, out_ts=out_ts, audio_tap_dir=tap_dir)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4318919Z         proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4319301Z         try:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4319625Z             _wait_for_log(log, "CTRL first-output:", timeout=25.0)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4320026Z             _send(control, f"reload {payloads[0]}")
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4320480Z             # Let the first replacement finish prerolling and PARK on its hold probe.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4321009Z             # It is now built, playing, and blocked at its own first buffer, waiting
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4321525Z             # for the outgoing leg's boundary -- the exact state the round-1 abort
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4321936Z             # was observed in.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4322208Z             time.sleep(2.0)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4322609Z             _send(control, f"reload {payloads[1]}")  # supersedes and aborts the held leg
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4323152Z             _wait_for_log(log, "superseding a still-settling reload", timeout=10.0)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4323690Z             # The whole point: the abort must not take the channel down. If the
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4324200Z             # released-but-inactive leg starves the active one, the stall watchdog
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4324640Z             # kills the worker here instead.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4325012Z >           _wait_for_log(log, "CTRL reload committed", timeout=40.0)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4325291Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4325759Z clip       = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/segment-0004.ts')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4327275Z clips      = [WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/s.../Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/segment-0004.ts')]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4328570Z control    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x0000014D61F71400>
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4329755Z graph      = PlayoutGraph(sources=(PlaylistLeg(label='program', subchains=((ElementSpec(factory='filesrc', name=None, props={'locat...None, props={'config-interval': -1}, secret_props={}))), secondary_audio=(), graphics_overlay=None, output_branches=())
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4330731Z index      = 3
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4331334Z log        = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/worker.log')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4332390Z name       = 'second'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4332994Z out_ts     = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/output.ts')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4334045Z path       = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/second.defer-eos.json')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4335497Z payloads   = [WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/f.../runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/second.defer-eos.json')]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4336706Z proc       = <Popen: returncode: 0 args: ['D:\\a\\civiccast-native\\civiccast-native\\.ve...>
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4337521Z tap_dir    = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/caption-tap')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4338525Z tmp_path   = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4339024Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4339171Z tests\egress\test_gst_engine_wsl.py:3353:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4339544Z _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4339797Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4341227Z log = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/worker.log')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4341898Z marker = 'CTRL reload committed'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4342100Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4342352Z     def _wait_for_log(log: Path, marker: str, *, count: int = 1, timeout: float = 15.0) -> None:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4342975Z         """Poll the worker log until ``marker`` has appeared ``count`` times (a readiness
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4344477Z         signal instead of a fixed sleep � QA-003)."""
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4344855Z         deadline = time.monotonic() + timeout
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4345195Z         while time.monotonic() < deadline:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4345497Z             if (
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4345745Z                 log.exists()
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4346153Z                 and log.read_text(encoding="utf-8", errors="replace").count(marker) >= count
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4346592Z             ):
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4346871Z                 return
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4347124Z             time.sleep(0.1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4347577Z         got = log.read_text(encoding="utf-8", errors="replace") if log.exists() else "<no log>"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4348230Z >       raise AssertionError(f"marker {marker!r} x{count} not seen within {timeout}s; log:\n{got}")
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4348849Z E       AssertionError: marker 'CTRL reload committed' x1 not seen within 40.0s; log:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4349546Z E       CTRL start diagnostic: mux-first-buffer stream=audio pad=sink_66 pts=0.125 running_time=0.000 segment_base=0.000
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4350166Z E       CTRL preroll: reached PLAYING after 0.1s pid=5112
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4350766Z E       CTRL start diagnostic: mux-first-buffer stream=video pad=sink_65 pts=0.000 running_time=0.000 segment_base=0.000
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4351373Z E       CTRL first-output: first buffer after 1.1s pid=5112
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4352990Z E       CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4353744Z E       CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4354429Z E       CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4354978Z E       CTRL reload superseding a still-settling reload
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4355666Z E       CTRL reload: contained error from an already-aborted reload leg (source=tsdemux5): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4356642Z E       CTRL reload: contained error from an already-aborted reload leg (source=tsdemux6): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4357605Z E       CTRL reload: contained error from an already-aborted reload leg (source=tsdemux7): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4358592Z E       CTRL reload aborted: new program errored before commit (source=filesrc11): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4359560Z E       CTRL output: 394 buffers (+393) since PLAYING [mux-in 5.1s: video=+153 audio=+246] [chain-in 5.1s: sel video=+166 audio=+243 | queue video=+157 audio=+243]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.4360589Z E       CTRL output: 780 buffers (+779) since PLAYING [mux-in 5.0s: video=+147 audio=+233] [chain-in 5.0s: sel video=+134 audio=+182 | queue video=+143 audio=+230]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8564051Z E       CTRL output: pipeline EOS from civiccast-playout -- quitting the worker [mux-in 0.1s: video=+0 audio=+0] [chain-in 0.1s: sel video=+0 audio=+0 | queue video=+0 audio=+0] [eos-arrivals: out:audio, sel:audio[active=sink_0], out:video, sel:video[active=sink_0], queue:video, queue:audio, mux-sink:video, mux-sink:audio, mux-src]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8565861Z E       WORKER_RESULT {'error': None, 'teardown_clean': True}
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8566217Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8566351Z count      = 1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8596010Z deadline   = 650.015
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8597592Z got        = "CTRL start diagnostic: mux-first-buffer stream=audio pad=sink_66 pts=0.125 running_time=0.000 segment_base=0.000\nCTR...:video, queue:audio, mux-sink:video, mux-sink:audio, mux-src]\nWORKER_RESULT {'error': None, 'teardown_clean': True}\n"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8599740Z log        = WindowsPath('C:/Users/runneradmin/AppData/Local/Temp/pytest-of-runneradmin/pytest-1/test_superseding_a_held_deferr0/worker.log')
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8600877Z marker     = 'CTRL reload committed'
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8601334Z timeout    = 40.0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8601581Z
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8601748Z tests\egress\test_gst_engine_wsl.py:609: AssertionError
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8602194Z =========================== short test summary info ===========================
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8603285Z FAILED tests/egress/test_gst_engine_wsl.py::test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air - AssertionError: marker 'CTRL reload committed' x1 not seen within 40.0s; log:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8604402Z CTRL start diagnostic: mux-first-buffer stream=audio pad=sink_66 pts=0.125 running_time=0.000 segment_base=0.000
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8605005Z CTRL preroll: reached PLAYING after 0.1s pid=5112
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8605619Z CTRL start diagnostic: mux-first-buffer stream=video pad=sink_65 pts=0.000 running_time=0.000 segment_base=0.000
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8606216Z CTRL first-output: first buffer after 1.1s pid=5112
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8606738Z CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8607395Z CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8608051Z CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8608561Z CTRL reload superseding a still-settling reload
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8609477Z CTRL reload: contained error from an already-aborted reload leg (source=tsdemux5): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8610457Z CTRL reload: contained error from an already-aborted reload leg (source=tsdemux6): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8611669Z CTRL reload: contained error from an already-aborted reload leg (source=tsdemux7): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8612594Z CTRL reload aborted: new program errored before commit (source=filesrc11): gst-stream-error-quark: Internal data stream error. (1)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8613594Z CTRL output: 394 buffers (+393) since PLAYING [mux-in 5.1s: video=+153 audio=+246] [chain-in 5.1s: sel video=+166 audio=+243 | queue video=+157 audio=+243]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8614773Z CTRL output: 780 buffers (+779) since PLAYING [mux-in 5.0s: video=+147 audio=+233] [chain-in 5.0s: sel video=+134 audio=+182 | queue video=+143 audio=+230]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8616302Z CTRL output: pipeline EOS from civiccast-playout -- quitting the worker [mux-in 0.1s: video=+0 audio=+0] [chain-in 0.1s: sel video=+0 audio=+0 | queue video=+0 audio=+0] [eos-arrivals: out:audio, sel:audio[active=sink_0], out:video, sel:video[active=sink_0], queue:video, queue:audio, mux-sink:video, mux-sink:audio, mux-src]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8617519Z WORKER_RESULT {'error': None, 'teardown_clean': True}
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:14.8617859Z 1 failed, 55 passed in 471.47s (0:07:51)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2315409Z ##[error]Process completed with exit code 1.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2531554Z ##[group]Run python scripts/verify_native_junit_floor.py \
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2532442Z ^[[36;1mpython scripts/verify_native_junit_floor.py \^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2533078Z ^[[36;1m  --junit junit-native-win.xml \^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2533605Z ^[[36;1m  --floor 2271 \^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2534125Z ^[[36;1m  --label "tests/native Windows suite"^[[0m
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2557532Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2558465Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2558866Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2559775Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2560339Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2560907Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2561518Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2562353Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2563198Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2563953Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2564694Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2565575Z   CIVICCAST_GSTREAMER_RUNTIME_ROOT: D:\a\civiccast-native\civiccast-native\.venv\Scripts
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.2566311Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.4870540Z ##[error]tests/native Windows suite execution is unproven: JUnit file is missing: junit-native-win.xml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.4961222Z ##[error]Process completed with exit code 1.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5130233Z ##[group]Run actions/upload-artifact@v7.0.1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5130655Z with:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5130916Z   name: windows-native-junit
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5131475Z   path: junit-native-win.xml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	junit-windows-installer.xml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	junit-windows-media.xml
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	caption-worker-failure/
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5132061Z   if-no-files-found: error
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5132340Z   retention-days: 1
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5132595Z   compression-level: 6
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5132859Z   overwrite: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5133135Z   include-hidden-files: false
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5133409Z   archive: true
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5133598Z env:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5133858Z   UV_TOOL_BIN_DIR: D:\a\_temp\uv-tool-bin-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5134195Z   UV_TOOL_DIR: D:\a\_temp\uv-tool-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5134532Z   UV_PYTHON_INSTALL_DIR: D:\a\_temp\uv-python-dir
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5134926Z   UV_CACHE_DIR: D:\a\_temp\setup-uv-cache
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5135387Z   pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5135892Z   PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5136390Z   Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5136845Z   Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5137296Z   Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5137821Z   CIVICCAST_GSTREAMER_RUNTIME_ROOT: D:\a\civiccast-native\civiccast-native\.venv\Scripts
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.5138646Z ##[endgroup]
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.6872230Z Multiple search paths detected. Calculating the least common ancestor of all paths
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.6876753Z The least common ancestor is D:\a\civiccast-native\civiccast-native. This will be the root directory of the artifact
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.6877458Z With the provided path, there will be 2 files uploaded
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.6881624Z Artifact name is valid!
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:15.6883313Z Root directory input is valid!
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.0113724Z Uploading artifact: windows-native-junit.zip
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.0158567Z Beginning upload of artifact content to blob storage
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.2586772Z Uploaded bytes 6401
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.3148489Z Finished uploading artifact content to blob storage!
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.3149772Z SHA256 digest of uploaded artifact is 692309b928dc4d2027def3e3e0bd7e6491c7ed403e1168471549f6084038d8b0
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.3152935Z Finalizing artifact upload
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.8441732Z Artifact windows-native-junit successfully finalized. Artifact ID 12588566414
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.8442917Z Artifact windows-native-junit has been successfully uploaded! Final size is 6401 bytes. Artifact ID is 12588566414
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.8449755Z Artifact download URL: https://github.com/scottconverse/civiccast-native/actions/runs/40165319415/artifacts/12588566414
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:16.8945368Z Post job cleanup.
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.1449250Z [command]"C:\Program Files\Git\bin\git.exe" version
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.1981943Z git version 2.56.0.windows.2
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.2077553Z Temporarily overriding HOME='D:\a\_temp\bf5fc6a8-3820-486c-8451-32b993e1745f' before making global git config changes
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.2079469Z Adding repository directory to the temporary git global config as a safe directory
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.2095084Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\civiccast-native\civiccast-native
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.2626166Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.3059422Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.9177395Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.9556761Z http.https://github.com/.extraheader
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:17.9600366Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:18.0094133Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:18.8268561Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:18.8664952Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:19.4617482Z Cleaning up orphan processes
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:19.5450018Z Terminate orphan process: pid (548) (conhost)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:19.5584190Z Terminate orphan process: pid (492) (ffmpeg)
+WS4 dual-runtime guard (real Windows probes)	UNKNOWN STEP	2026-10-25T05:32:19.5793699Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

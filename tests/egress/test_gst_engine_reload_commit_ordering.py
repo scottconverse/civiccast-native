@@ -565,6 +565,94 @@ def _index_of(calls: list[str], prefix: str) -> int:
     raise AssertionError(f"{prefix!r} never called; calls={calls}")
 
 
+@pytest.mark.parametrize(
+    ("retirement_alive", "caption_attached", "unrelated_attached", "expected"),
+    [
+        (True, True, False, (2, 1)),
+        (False, True, False, (2, 0)),
+        (True, True, True, (3, 1)),
+        (True, False, False, (1, 0)),
+    ],
+)
+def test_commit_counts_only_attached_inflight_caption_children_as_retiring(
+    engine_module, retirement_alive, caption_attached, unrelated_attached, expected
+) -> None:
+    """Completed caption leftovers and unrelated growth remain visible as leaks."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    caption, active, unrelated = object(), object(), object()
+    thread = types.SimpleNamespace(is_alive=lambda: retirement_alive)
+    engine._caption_retire_legs = [{"thread": thread, "elements": [caption]}]
+    children = [active] + ([caption] if caption_attached else [])
+    if unrelated_attached:
+        children.append(unrelated)
+
+    def iterator():
+        # Retirement can finish after its identities were snapshotted; don't
+        # recategorize that snapshot midway through the pipeline enumeration.
+        thread.is_alive = lambda: False
+        remaining = iter(children)
+        return types.SimpleNamespace(
+            next=lambda: next(
+                ((engine_module.Gst.IteratorResult.OK, child) for child in remaining),
+                (engine_module.Gst.IteratorResult.DONE, None),
+            )
+        )
+
+    engine.pipeline.iterate_elements = iterator
+    raw, retiring = engine._reload_element_counts()
+    assert (raw, retiring) == expected
+    assert (raw - retiring == 1) is (
+        not unrelated_attached and (retirement_alive or not caption_attached)
+    )
+    assert engine._element_count() == len(children)
+
+
+def test_commit_counts_restart_after_caption_removal_resync(engine_module, monkeypatch) -> None:
+    """A child removed mid-enumeration cannot turn a partial count into a leak result."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    caption, active, unrelated = object(), object(), object()
+    alive_calls: list[bool] = []
+
+    def alive():
+        alive_calls.append(True)
+        return len(alive_calls) == 1
+
+    engine._caption_retire_legs = [
+        {"thread": types.SimpleNamespace(is_alive=alive), "elements": [caption]}
+    ]
+    monkeypatch.setattr(engine_module.Gst.IteratorResult, "RESYNC", "RESYNC", raising=False)
+
+    class _RemovingIterator:
+        def __init__(self):
+            self.results = iter(
+                [
+                    (engine_module.Gst.IteratorResult.OK, caption),
+                    (engine_module.Gst.IteratorResult.RESYNC, None),
+                ]
+            )
+            self.resyncs = 0
+
+        def next(self):
+            return next(self.results, (engine_module.Gst.IteratorResult.DONE, None))
+
+        def resync(self):
+            self.resyncs += 1
+            self.results = iter(
+                [
+                    (engine_module.Gst.IteratorResult.OK, active),
+                    (engine_module.Gst.IteratorResult.OK, unrelated),
+                ]
+            )
+
+    iterator = _RemovingIterator()
+    engine.pipeline.iterate_elements = lambda: iterator
+    assert engine._reload_element_counts() == (2, 0)
+    assert iterator.resyncs == 1
+    assert alive_calls == [True]  # retain the original ownership snapshot
+
+
 def _unready_reload(recorder: _Recorder, txn_id: int = 1) -> dict[str, Any]:
     video = _FakeHoldPad("new-video", recorder)
     audio = _FakeHoldPad("new-audio", recorder)
@@ -4562,6 +4650,66 @@ class _StubLeg:
     label = "program"
     elements: tuple[Any, ...] = ()
     audio: tuple[Any, ...] = ()
+
+
+def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A boolean state refusal must unwind the incoming leg immediately."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    engine._plan_eos_held = False
+    engine.reload_timeout_s = 10
+    monkeypatch.setattr(engine_module.Gst.PadProbeType, "BLOCK", 16, raising=False)
+    monkeypatch.setattr(
+        engine_module.GLib, "timeout_add_seconds", lambda *_args: 123, raising=False
+    )
+    old_video = _FakeOldPad("old-video", recorder, None)
+    old_audio = _FakeOldPad("old-audio", recorder, None)
+    old_elements = [_FakeOldElement("outgoing", recorder)]
+    engine.selector_sink_pads = [old_video]
+    engine.audio_sink_pads = [old_audio]
+    engine._source_leg_elements = [old_elements]
+    video = _FakeOldPad("incoming-video", recorder, None)
+    audio = _FakeOldPad("incoming-audio", recorder, None)
+
+    class _IncomingElement(_FakeOldElement):
+        def sync_state_with_parent(self) -> bool:
+            recorder.calls.append(f"sync:{self.name}")
+            return self.name != "refused"
+
+    incoming = [_IncomingElement(name, recorder) for name in ("started", "refused", "later")]
+    monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
+    monkeypatch.setattr(engine, "_link_leg_to_selectors", lambda *_args: (video, audio))
+    retired: list[list[Any]] = []
+    monkeypatch.setattr(
+        engine,
+        "_start_aborted_leg_retirement",
+        lambda _reason, _video, _audio, elements, **_kwargs: retired.append(elements),
+    )
+    settled: list[tuple[bool, str | None]] = []
+
+    with pytest.raises(RuntimeError, match="refused"):
+        engine.reload_program(
+            _StubLeg(),
+            switch_at_end_of_current=True,
+            on_settled=lambda applied, reason: settled.append((applied, reason)),
+        )
+
+    assert [call for call in recorder.calls if call.startswith("sync:")] == [
+        "sync:started",
+        "sync:refused",
+    ]
+    assert engine._pending_reload is None
+    assert settled == [(False, "build-error")]
+    assert retired == [incoming]
+    assert engine.selector_sink_pads == [old_video]
+    assert engine.audio_sink_pads == [old_audio]
+    assert engine._source_leg_elements == [old_elements]
+    assert not any(call.startswith("set_state:outgoing:") for call in recorder.calls)
+    assert any(call.startswith("remove_probe:incoming-video:") for call in recorder.calls)
+    assert any(call.startswith("remove_probe:incoming-audio:") for call in recorder.calls)
 
 
 def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(

@@ -1,47 +1,108 @@
-# CivicCast portable handoff — October 26, 2026
+# CivicCast current handoff — October 27, 2026
 
-## Current outcome and next action
+## Current outcomes and owner authority
 
-- F1-F3, F6-F7 and N1-N8 source delivery is merged through PR267-270.
-  PR270 merged as `2ebe16eb65c73b7e3610b36625d4bab4749c1e92` after
-  23 successful checks and 3 expected skips. Required CI run `40321638869`
-  passed. Later changes were test-only and did not invalidate the signed kit.
-- **F5 is complete.** The unchanged signed candidate installed, activated,
-  started its isolated service, and uninstalled successfully in a headless
-  Windows Sandbox with 12,288 MB allocated. Both installed executables had valid
-  expected Authenticode signatures and timestamps. The checked operator upload
-  and PostgreSQL `PG_VERSION` survived uninstall; service/runtime/packs were removed.
-  See [the report](../ops/f5-installed-acceptance-2026-10-26.md) and
-  [machine-readable receipt](../ops/evidence/f5-installed-acceptance-2026-10-26.json).
-- **Only F4 remains unresolved:** original run `40165319415`'s `filesrc11`
-  failure lacks a concrete cause. The later corrected abort-isolation defect
-  does not prove the cause of that earlier incident. Scott's decision on accepting
-  this documented limitation remains pending. Do not silently close it or start
-  an open-ended reproduction campaign.
-- F2 live YouTube transmission/playback remains explicitly deferred by Scott,
-  not a new gate. Setup was accepted.
-- Scott says the host station is down: **leave it down**. Do not start, restart,
-  upgrade, or modify it. The earlier pre-reboot soak report/evidence remains local
-  in `docs/ops/beta20-station-soak-2026-10-26.md` and its evidence JSON. It describes
-  degraded output on older installed source `2e196124`, not a clean soak pass or
-  acceptance of the new candidate. Reboot ended that old uptime interval.
-- No owned installer, runner, Sandbox, or worker jobs remain. Both owned Sandbox
-  instances were stopped and absence verified. Disposable installation trees and
-  exported executable copies were removed. Do not restart completed tests/builds.
-- Push/merge is authorized. Tags, publication, and release replacement still need
-  Scott's approval. No LFS transfers or spending through October; no host reboot.
+F1–F3, F5–F7 and N1–N8 are delivered through PR267–271; do not reopen them. F2 live
+YouTube transmission/playback remains explicitly deferred, not a gate.
+Scott resumed the work and explicitly directed native host installation/testing,
+no sandbox, finish the goal. This supersedes the prior leave-station-untouched
+restriction within that scope. Push/merge authorized; no tag/publication/release
+replacement, LFS transfer/spending through October, reboot or physical hardware.
 
-## Retained candidate and evidence
+## Direct native installation: complete
 
-- Signed run: `40317362877`; source: `423393349f87148e7253f93691a9a70478cc120c`.
-- Setup SHA-256: `9b01304429a07220dd5f35b061a779fdc07744fb6d0ae45defec232eccb0375a`.
-- Local kit: `C:/CivicCastTester/kit-staging/423393349f87148e7253f93691a9a70478cc120c`.
-- Raw F5 receipts/scripts: `C:/CivicCastTester/f5-installed-42339334/evidence`
-  and its parent directory. The successful installation used native guest disk
-  `C:\CivicCastF5`; the first mapped-folder attempt failed service ACL migration
-  after activation passed. No product rebuild or weakened checks were needed.
-- The old 16 GB pre-launch requirement was too rigid and is superseded by the
-  actual passing 12 GB result. Do not resume RAM polling or repeat F5 acceptance.
+The retained signed423393349f87148e7253f93691a9a70478cc120c candidate installed
+on this machine at C:/Program Files/CivicCast (Native), exit0, 07:30:57–07:41:37UTC.
+Normal installer recovery snapshot protected the previous app/database. Installed
+manifest matched source; launcher/uninstaller signatures valid and matched prior
+F5 hashes. Supervisor is running; operator/public pages HTTP200. These page and
+health checks are not broadcast-health proof. PG_VERSION hash remained unchanged.
+Installed worker held-supersession and never-buffering replacement/recovery both
+passed, worker exits0. Receipt/report: docs/ops/native-host-install-2026-10-27.md
+and docs/ops/evidence/native-host-install-2026-10-27.json (currently local).
+Raw evidence: C:/CivicCastTester/f4-installed-transition-20261027 and coordinator
+outputs/native-install-42339334. Installer helper96c6854002e84bc882616b8fbd01a261
+and waiter10991 are terminal; no sandbox or rebuild was used.
+
+## F4 source correction and remaining causal boundary
+
+PR272 fix/f4-reload-state-sync-20261027: code2a880a4e corrects ignored False from
+sync_state_with_parent. Incoming activation now aborts through existing build-error
+cleanup; outgoing elements/pads remain intact and later incoming producers never
+start. Regression red before fix, green afterward. Affected ordering129pass/2skip,
+policy2pass, lint/format/governed bindings pass. This does not prove original cause.
+Follow-up4d14011c pins only accessibility jobs to Ubuntu24.04 after actual26.04
+Playwright installation failures; no accessibility requirement was removed.
+PR272 Windows CI found raw element counts79/86 during independent caption cleanup.
+Correction retains raw counts, separately records exact attached children owned by
+active caption retirement threads, and preserves detection of completed leftovers
+and unrelated leaks. Enumeration handles RESYNC without partial counts. Five
+focused cases passed; ordering133pass/2skip before the final RESYNC-only addition;
+the existing three-worker/six-rollover source scenario passed69.94s (18commits,
+continuity/audio/tap/clean teardown). No repeated full native run after RESYNC.
+The Linux unit image is pinned to the last passing Ubuntu24.04 baseline after a
+rolling-image prerequisite delay; no tests or requirements removed. Root is
+consolidating this correction and native evidence before final-head required CI.
+Prior failed-head waiter29782 must be stopped before starting the new waiter.
+The new source correction is not included in installed signed42339334 bytes.
+
+Original run40165319415 at0fb01b0: incoming reload2 fourth clip filesrc11 errored
+before readiness/commit. Outgoing playback continued; clean teardown. Raw Gst flow
+debug was discarded and not uploaded. Later connected-tail abort fix is distinct.
+Prior current/original-SHA/source-before-decoder-delay passes did not diagnose it.
+
+One distinct installed experiment delayed after decodebin11 sync before manual
+activation of seven NULL tails. It passed: GstBin async continuation independently
+advanced tails to PLAYING during the0.5s delay, then reload2 committed with TS/audio
+continuity and clean teardown. No incoming bus error. This rules out calling that
+manual-delay observation a demonstrated defect; no downstream-first patch or sweep.
+Evidence: C:/CivicCastTester/f4-installed-decoder-tail-delay-ready-20261027/receipt.json
+and decoder-tail-debug-excerpt.log; raw worker.log retained locally,19MB.
+Worker /root/f4_resume finished; no owned local test jobs remain.
+The historical exact cause remains unknown. The following explicit acceptance
+revision replaces that forensic clause; it does not claim the old cause was found.
+
+## Adopted owner-delegated F4 decision — acceptance revision
+
+Scott instructed the coordinator to record issue, options/pros/cons, recommendation
+and reasons, then take that recommendation as his decision and continue. Root
+communicated this decision in chat after the direct host installation and checks.
+Issue: original raw flow diagnostics were discarded; the bounded experiments and
+installed checks show safe replacement/recovery but cannot recover the old cause.
+Options: continue open-ended reproduction (possible discovery, unbounded time and
+contrary to Scott's no-loop directive); leave the item blocked indefinitely (keeps
+old forensic wording, fails requested delivery); accept the historical unknown as
+a documented residual risk after operational acceptance (finite evidence-based
+delivery, but cannot promise that historical failure will never recur).
+Recommend/adopt the third option using Scott's delegated decision authority.
+This is a transparent change to F4 acceptance, not proof that the original exact-
+cause requirement passed. Revised completion: demonstrated activation-refusal
+containment, successful native installed replacement/failure recovery, corrected
+required-CI accounting with leak detection retained, applicable green CI and merged
+delivery. Historical cause remains documented; no additional timing sweep or new
+gate. Operational checks passed; final CI and PR272 merge remain pending.
+
+## Next action and coordination
+
+Finish applicable PR272 CI and merge the demonstrated correction to close revised
+F4 delivery. Preserve the accepted historical uncertainty explicitly. Do not turn
+optional randomized CI into a new
+gate, repeat passing scenarios, rebuild, or ask the same owner-acceptance question.
+Scott delegated routine decisions via written options/pros/cons/recommendation;
+that does not create missing historical evidence. Stay within concrete F4 actions.
+Recurring watch civiccast-remaining-f4-delivery was successfully created; it uses
+this state and newer instructions. Never resume old paused CivicCast chats.
+
+## Retained assets and historical station finding
+
+Signed build40317362877; kit C:/CivicCastTester/kit-staging/423393349f87148e7253f93691a9a70478cc120c.
+F5 sandbox install/activation/signature/uninstall evidence remains valid, PR271
+main379d7bc95d3d46402a7d8fccd494ac2b1cb94154; no16GB blocker remains.
+Older installed2e196124 black/silent sampled HLS and false-health observation is
+local in docs/ops/beta20-station-soak-2026-10-26.md and evidence JSON. It is not
+new-candidate acceptance or a proved original F4 cause. Preserve those dirty files.
+Full transfer snapshot remains in coordinator outputs/CIVICCAST-FULL-CONTEXT-HANDOFF-2026-10-26.md.
+Everything below is historical evidence, not current execution instructions.
 
 ## Archived execution history — not current instructions
 

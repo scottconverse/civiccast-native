@@ -1,4 +1,59 @@
 # Beta 20 current-source review tripwire renewal
+## October 27 CI image baseline
+
+Accessibility run40468193498 failed before tests: Playwright1.59.1 explicitly
+rejected Ubuntu26.04, reached through ubuntu-latest. Its two browser jobs now
+use Ubuntu24.04 and passed on follow-up head4d14011c. The Linux unit job is also
+pinned to its last passing image,24.04 in run40321638869; that run installed media
+prerequisites in20 seconds, while the current rolling-image job remained in that
+step for over13 minutes. This does not establish the cause of the latter delay.
+No test, assertion, prerequisite, required check or product dependency was removed.
+Only the six registered ci-test workflow bindings are renewed for that runner pin.
+
+## October 27 concurrent caption-retirement accounting
+
+Required Windows job122070003698 completed all six replacements but its final
+raw direct-child count was86 after five counts of79. Program retirement had
+finished; the independently retiring previous caption source can still own seven
+direct children (four caption specs, forwarding queue, erase source and concat).
+The original log did not inventory those seven objects, so their exact identity
+is inferred from the matching lifecycle and size rather than recovered debug.
+
+Commit diagnostics now preserve the raw count and separately identify actual
+attached children owned by a caption retirement thread that was alive at the
+ownership snapshot. The existing leak assertion compares the resulting settled
+count. It does not subtract absent children, completed-retirement leftovers,
+or unrelated elements. Four focused cases verify those boundaries, including
+completion during enumeration; the ordering suite passed133 tests with2 skips.
+The existing three-worker/six-rollover native scenario passed69.94 seconds using
+the source worker and installed runtime, including18 commits, TS/audio continuity,
+caption-tap output and clean teardown. That run's samples were raw79/retiring0;
+the focused cases establish sensitivity to concurrent caption ownership and leaks.
+A subsequent iterator-removal regression reproduced partial counts on RESYNC;
+the new helper now resyncs and restarts both counters, retaining its ownership
+snapshot. All five counting cases passed after this correction. The native
+scenario was not repeated for this deterministic iterator-only correction.
+Only the changed engine and native-test source tripwires are renewed here.
+This required-CI correction does not diagnose historical filesrc11 or change
+the separately recorded installed candidate's bytes or acceptance.
+
+## October 27 incoming reload state refusal
+
+`reload_program` previously ignored a false `sync_state_with_parent()` return
+and continued activating the incoming leg. A focused regression reproduced that
+failure to abort. The loop now raises with the refusing element's name and uses
+the existing `build-error` unwind. The test verifies one failure settlement,
+retirement of only the incoming elements, preserved outgoing pads/elements,
+released incoming holds, and no activation of later elements. The affected
+ordering suite passed 129 tests with 2 skips in 2.47 seconds.
+
+This is a proven failure-handling correction, not a diagnosis of historical
+run40165319415's incoming filesrc11 stream error. No preserved evidence shows
+that run returned a state-sync refusal. Existing incoming bus-error logging
+already retains URI-redacted Gst debug detail for a matching recurrence.
+Only the engine current-source tripwire is renewed; historical installed and
+release evidence is unchanged. Hosted CI and installed testing remain separate.
+
 ## October 26 retained caption stream PMT discovery correction
 
 Required Windows121552808917 retained the exact failing TS/worker/decoder log.
