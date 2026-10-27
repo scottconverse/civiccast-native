@@ -1,0 +1,70 @@
+{
+  "scope": "Native host installation and installed transition acceptance",
+  "source": "423393349f87148e7253f93691a9a70478cc120c",
+  "setup_sha256": "9b01304429a07220dd5f35b061a779fdc07744fb6d0ae45defec232eccb0375a",
+  "started_utc": "2026-10-27T07:30:57.9117503Z",
+  "finished_utc": "2026-10-27T07:41:37.0182105Z",
+  "installer_exit": 0,
+  "installed_source": "423393349f87148e7253f93691a9a70478cc120c",
+  "service_state": "Running",
+  "signatures": [
+    {
+      "subject": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+      "status": "Valid",
+      "sha256": "571769CE27CE49A9C254802012D22AFD1E245521C403CCA81B2CD28A37308A88",
+      "name": "CivicCast Native.exe"
+    },
+    {
+      "subject": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+      "status": "Valid",
+      "sha256": "2C03BBA7314A2BAE386AAE69CACAFD43497DCDADF1D43351599994BC0A49C314",
+      "name": "uninstall.exe"
+    }
+  ],
+  "preserved_pg_version_hash": true,
+  "transitions": [
+    {
+      "name": "held-supersession",
+      "directory": "C:\\CivicCastTester\\f4-installed-transition-20261027\\held-supersession",
+      "result": "PASS"
+    },
+    {
+      "name": "failed-replacement-recovery",
+      "directory": "C:\\CivicCastTester\\f4-installed-transition-20261027\\failed-replacement-recovery",
+      "result": "PASS"
+    }
+  ],
+  "worker_returncodes": [
+    0,
+    0
+  ],
+  "installed_files": {
+    "C:\\Program Files\\CivicCast (Native)\\runtime\\Lib\\site-packages\\civiccast\\egress\\gst\\worker.py": "c4b768c9abd89ee93367d6fc73aaf9155eac08b014de1e689aac7d4b38ac1b09",
+    "C:\\Program Files\\CivicCast (Native)\\runtime\\Lib\\site-packages\\civiccast\\egress\\gst\\engine.py": "ea51157092d9ac2e1fbb808f18c6795a2fdf5a9ebda67db81a5a87373ddf0eaa",
+    "C:\\Program Files\\CivicCast (Native)\\runtime\\python.exe": "4d6f5f81a4bca11191c4c7c6b43632694d0a4ce74e068619d8fdc161d469859a"
+  },
+  "surfaces": [
+    {
+      "http_status": 200,
+      "path": "/operator/"
+    },
+    {
+      "http_status": 200,
+      "path": "/"
+    }
+  ],
+  "historical_f4_cause": "unresolved; successful installed scenarios do not establish historical cause",
+  "source_pr": 272,
+  "source_correction_installed": false,
+  "schema_db_revision": "0097_agenda_minutes",
+  "controlled_decoder_tail_experiment": {
+    "tail_state_at_entry": "NULL",
+    "historical_error_reproduced": false,
+    "tail_state_at_exit": "PLAYING due to GstBin async continuation",
+    "evidence": "f4-decoder-tail-excerpt-2026-10-27.txt",
+    "delay_seconds": 0.5,
+    "result": "PASS",
+    "worker_exit": 0
+  },
+  "historical_log": "f4-historical-ci-40165319415.txt"
+}

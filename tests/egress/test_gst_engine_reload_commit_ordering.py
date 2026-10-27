@@ -565,6 +565,94 @@ def _index_of(calls: list[str], prefix: str) -> int:
     raise AssertionError(f"{prefix!r} never called; calls={calls}")
 
 
+@pytest.mark.parametrize(
+    ("retirement_alive", "caption_attached", "unrelated_attached", "expected"),
+    [
+        (True, True, False, (2, 1)),
+        (False, True, False, (2, 0)),
+        (True, True, True, (3, 1)),
+        (True, False, False, (1, 0)),
+    ],
+)
+def test_commit_counts_only_attached_inflight_caption_children_as_retiring(
+    engine_module, retirement_alive, caption_attached, unrelated_attached, expected
+) -> None:
+    """Completed caption leftovers and unrelated growth remain visible as leaks."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    caption, active, unrelated = object(), object(), object()
+    thread = types.SimpleNamespace(is_alive=lambda: retirement_alive)
+    engine._caption_retire_legs = [{"thread": thread, "elements": [caption]}]
+    children = [active] + ([caption] if caption_attached else [])
+    if unrelated_attached:
+        children.append(unrelated)
+
+    def iterator():
+        # Retirement can finish after its identities were snapshotted; don't
+        # recategorize that snapshot midway through the pipeline enumeration.
+        thread.is_alive = lambda: False
+        remaining = iter(children)
+        return types.SimpleNamespace(
+            next=lambda: next(
+                ((engine_module.Gst.IteratorResult.OK, child) for child in remaining),
+                (engine_module.Gst.IteratorResult.DONE, None),
+            )
+        )
+
+    engine.pipeline.iterate_elements = iterator
+    raw, retiring = engine._reload_element_counts()
+    assert (raw, retiring) == expected
+    assert (raw - retiring == 1) is (
+        not unrelated_attached and (retirement_alive or not caption_attached)
+    )
+    assert engine._element_count() == len(children)
+
+
+def test_commit_counts_restart_after_caption_removal_resync(engine_module, monkeypatch) -> None:
+    """A child removed mid-enumeration cannot turn a partial count into a leak result."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    caption, active, unrelated = object(), object(), object()
+    alive_calls: list[bool] = []
+
+    def alive():
+        alive_calls.append(True)
+        return len(alive_calls) == 1
+
+    engine._caption_retire_legs = [
+        {"thread": types.SimpleNamespace(is_alive=alive), "elements": [caption]}
+    ]
+    monkeypatch.setattr(engine_module.Gst.IteratorResult, "RESYNC", "RESYNC", raising=False)
+
+    class _RemovingIterator:
+        def __init__(self):
+            self.results = iter(
+                [
+                    (engine_module.Gst.IteratorResult.OK, caption),
+                    (engine_module.Gst.IteratorResult.RESYNC, None),
+                ]
+            )
+            self.resyncs = 0
+
+        def next(self):
+            return next(self.results, (engine_module.Gst.IteratorResult.DONE, None))
+
+        def resync(self):
+            self.resyncs += 1
+            self.results = iter(
+                [
+                    (engine_module.Gst.IteratorResult.OK, active),
+                    (engine_module.Gst.IteratorResult.OK, unrelated),
+                ]
+            )
+
+    iterator = _RemovingIterator()
+    engine.pipeline.iterate_elements = lambda: iterator
+    assert engine._reload_element_counts() == (2, 0)
+    assert iterator.resyncs == 1
+    assert alive_calls == [True]  # retain the original ownership snapshot
+
+
 def _unready_reload(recorder: _Recorder, txn_id: int = 1) -> dict[str, Any]:
     video = _FakeHoldPad("new-video", recorder)
     audio = _FakeHoldPad("new-audio", recorder)

@@ -1244,6 +1244,7 @@ class GstPlayoutEngine:
         self._source_leg_seq = 0
         self._reload_txn_counter = count(1)
         self._abort_retire_threads: list[threading.Thread] = []
+        self._caption_retire_legs: list[dict[str, Any]] = []
         # Item 3 (education exit 1, 2026-09-25 14:51:22): an aborted reload leg is
         # NOT gone when ``_abort_pending_reload`` returns -- its disposal runs on a
         # worker thread -- so its elements are still live and still post to the bus
@@ -1744,6 +1745,10 @@ class GstPlayoutEngine:
             item for item in self._abort_retire_threads if item.is_alive()
         ]
         self._abort_retire_threads.append(thread)
+        self._caption_retire_legs = [
+            record for record in self._caption_retire_legs if record["thread"].is_alive()
+        ]
+        self._caption_retire_legs.append({"thread": thread, "elements": old_elements})
         thread.start()
         print(f"CTRL caption program changed: {token}", flush=True)
 
@@ -7395,10 +7400,11 @@ class GstPlayoutEngine:
                 pad.remove_probe(probe_id)
         # Element count proves disposal reclaimed (the POSIX leak test asserts it is flat
         # across many reloads — a dispose leak would grow it).
-        element_count = self._element_count()
+        element_count, retiring_caption_count = self._reload_element_counts()
         print(f"CTRL reload committed (elements={element_count})", flush=True)
         print(
-            f"CTRL reload diagnostic: stage=committed elements={element_count}",
+            f"CTRL reload diagnostic: stage=committed elements={element_count} "
+            f"retiring_caption_elements={retiring_caption_count}",
             file=sys.stderr,
             flush=True,
         )
@@ -8625,6 +8631,36 @@ class GstPlayoutEngine:
                 break
             count += 1
         return count
+
+    def _reload_element_counts(self) -> tuple[int, int]:
+        """Count raw children and the specific caption children still retiring.
+
+        Caption retirement is independent of completed program-leg retirement.
+        Snapshot its live ownership before enumeration: completion during the
+        enumeration must not reclassify children from that same snapshot. Only
+        children actually present are subtracted, and completed-thread leftovers
+        remain visible to the reload leak check.
+        """
+        retiring = [
+            element
+            for record in getattr(self, "_caption_retire_legs", ())
+            if record["thread"].is_alive()
+            for element in record["elements"]
+        ]
+        iterator = self.pipeline.iterate_elements()
+        count = retiring_count = 0
+        resync_result = getattr(Gst.IteratorResult, "RESYNC", None)
+        while True:
+            result, element = iterator.next()
+            if resync_result is not None and result == resync_result:
+                iterator.resync()
+                count = retiring_count = 0
+                continue
+            if result != Gst.IteratorResult.OK:
+                break
+            count += 1
+            retiring_count += element in retiring
+        return count, retiring_count
 
     def _dispose_source_leg(
         self,

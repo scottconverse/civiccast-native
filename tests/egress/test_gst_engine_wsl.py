@@ -3307,9 +3307,14 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
         assert text.count("CTRL reload committed") == 6, text
         assert text.count("stage=selector-handoff-confirmed") == 6, text
         assert text.count("stage=old-tail-detached") == 6, text
-        element_counts = {
-            int(match) for match in re.findall(r"CTRL reload committed \(elements=([0-9]+)\)", text)
-        }
+        # Program retirement has completed; the independent caption retirement
+        # thread can still own attached children. Deduct only those exact live
+        # children, leaving completed retirement leftovers and other leaks visible.
+        samples = re.findall(
+            r"stage=committed elements=([0-9]+) retiring_caption_elements=([0-9]+)", text
+        )
+        assert len(samples) == 6, text
+        element_counts = {int(raw) - int(retiring) for raw, retiring in samples}
         assert len(element_counts) == 1, (
             f"pipeline element count changed across retirements: {element_counts};\n{text}"
         )
