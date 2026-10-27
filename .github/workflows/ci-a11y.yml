@@ -20,7 +20,8 @@ permissions:
 jobs:
   a11y-public:
     name: Accessibility (axe-core) — public portal
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 does not support the ubuntu26.04 image behind latest.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: |
       github.event_name != 'pull_request' ||
@@ -85,7 +86,7 @@ jobs:
 
   a11y-operator:
     name: Accessibility (axe-core) — operator console
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: |
       github.event_name != 'pull_request' ||
