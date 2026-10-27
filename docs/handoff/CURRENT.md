@@ -2,8 +2,7 @@
 
 ## Current outcomes and owner authority
 
-All selected roadmap items except historical F4 causality are delivered through
-PR267–271. F1–F3, F5–F7 and N1–N8 remain complete; do not reopen them. F2 live
+F1–F3, F5–F7 and N1–N8 are delivered through PR267–271; do not reopen them. F2 live
 YouTube transmission/playback remains explicitly deferred, not a gate.
 Scott resumed the work and explicitly directed native host installation/testing,
 no sandbox, finish the goal. This supersedes the prior leave-station-untouched
@@ -60,12 +59,34 @@ manual-delay observation a demonstrated defect; no downstream-first patch or swe
 Evidence: C:/CivicCastTester/f4-installed-decoder-tail-delay-ready-20261027/receipt.json
 and decoder-tail-debug-excerpt.log; raw worker.log retained locally,19MB.
 Worker /root/f4_resume finished; no owned local test jobs remain.
-F4's original exact-cause definition remains unmet; do not close it from green runs.
+The historical exact cause remains unknown. The following explicit acceptance
+revision replaces that forensic clause; it does not claim the old cause was found.
+
+## Adopted owner-delegated F4 decision — acceptance revision
+
+Scott instructed the coordinator to record issue, options/pros/cons, recommendation
+and reasons, then take that recommendation as his decision and continue. Root
+communicated this decision in chat after the direct host installation and checks.
+Issue: original raw flow diagnostics were discarded; the bounded experiments and
+installed checks show safe replacement/recovery but cannot recover the old cause.
+Options: continue open-ended reproduction (possible discovery, unbounded time and
+contrary to Scott's no-loop directive); leave the item blocked indefinitely (keeps
+old forensic wording, fails requested delivery); accept the historical unknown as
+a documented residual risk after operational acceptance (finite evidence-based
+delivery, but cannot promise that historical failure will never recur).
+Recommend/adopt the third option using Scott's delegated decision authority.
+This is a transparent change to F4 acceptance, not proof that the original exact-
+cause requirement passed. Revised completion: demonstrated activation-refusal
+containment, successful native installed replacement/failure recovery, corrected
+required-CI accounting with leak detection retained, applicable green CI and merged
+delivery. Historical cause remains documented; no additional timing sweep or new
+gate. Operational checks passed; final CI and PR272 merge remain pending.
 
 ## Next action and coordination
 
-Finish applicable PR272 CI and merge the demonstrated correction. Preserve the
-historical uncertainty explicitly. Do not turn optional randomized CI into a new
+Finish applicable PR272 CI and merge the demonstrated correction to close revised
+F4 delivery. Preserve the accepted historical uncertainty explicitly. Do not turn
+optional randomized CI into a new
 gate, repeat passing scenarios, rebuild, or ask the same owner-acceptance question.
 Scott delegated routine decisions via written options/pros/cons/recommendation;
 that does not create missing historical evidence. Stay within concrete F4 actions.
