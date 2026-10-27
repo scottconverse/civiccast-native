@@ -1205,8 +1205,13 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # The running-image ACL regression adds one Windows case: 2271 total,
     # 2268 non-integration; Windows floor 2218 retains the margin.
     # Exact native closure-baseline regression adds one portable case.
-    # Current native cases: CI collection is 2084 pure tests, 2326 total.
-    assert (collect("not windows_only"), collect()) == (2084, 2326)
+    # 2026-10-27 outage fix adds two portable cases in
+    # tests/native/test_gstreamer_runtime.py (the repeated-reload-probe DLL
+    # registration guard and its real-loader twin). Re-derived by an actual
+    # collect-only run on this tree, not by arithmetic:
+    # (2084, 2326) -> (2086, 2328).
+    # Current native cases: CI collection is 2086 pure tests, 2328 total.
+    assert (collect("not windows_only"), collect()) == (2086, 2328)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
