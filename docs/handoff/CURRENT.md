@@ -1,42 +1,53 @@
-# CivicCast portable handoff — October 24, 2026
+# CivicCast portable handoff — October 26, 2026
 
-## Current consolidated N4-N8/F5 source delivery - October 26, 2026
+## Current outcome and next action
 
-- CURRENT frozenPR270head423393349f87148e7253f93691a9a70478cc120c pushed.
-  RequiredCI40317242166 terminal;93014/cell850 consumedexit1. Unit121552808870
-  SUCCESS34m8s incl Postgres/nativepure, Claims121567232117SUCCESS17s/integration
-  PASS. WholePRrollup22SUCCESS/3SKIP/1FAIL (only Windows121552808917 decoder
-  discovery;56othernative-mediaPASS). InformationalrandomizedalsoPASS. No other
-  defect toconsolidate; next push reviewed helper-onlycorrection and own one
-  requiredCIwaiter. Signed42339334kitbelow remainsvalid, no rebuild.
-- ExactWindows retainedartifact12648720319 (windows-native-junit,2.5MB) contains
- 2.9MB outputTS/worker/graph/decoder receipt. Defaultmoviefilter reproducibly
-  exit-22 unspecifiedH264size/emptyformat. Largerprobe/timealoneFAIL; source
-  comparison identifies ffprobe explicit scan_all_pmts=1 missing frommovie.
-  Samebytes with that option decode OUTGOING2.367-4.367/queued6.433-10.154,
-  incoming10.888-12.521; actualswitch10.155, delayedstaleabsent. Existinghelper
-  now sets demuxoption only; unchanged boundary assertionsPASS onretainedTS,
-  Ruff/format/diffPASS, only existingnative-testhash renewed. No productdelta,
-  no new recording/build; reviewed test-onlycorrection ready forpush.
-  Original CIartifact immutable; local output.caption-decode.json now records
-  correctedhelperresult. %TEMP%/civiccast-retained-caption-default.json preserves
-  reproducedfailure; %TEMP%/civiccast-pr270-windows-42339334 contains retainedbytes.
-- Signing candidate40317362877 terminalSUCCESS;11307/cell851 consumedexit0.
-  Station1215532329962m59s/manual1215532336332m47s/app12155450232719m38sPASS;
-  assembled121562733091. Kit C:/CivicCastTester/kit-staging/423393349f87148e7253f93691a9a70478cc120c.
-  Setup261349744bytes, SHA2569b01304429a07220dd5f35b061a779fdc07744fb6d0ae45defec232eccb0375a.
-  DirectAuthentiCodeValidCNScottConverse/Microsofttimestamp; build log verifies
-  patchedlauncher12:01:40 and generateduninstallernstF8C0.tmp12:01:45 signatures.
-  These are packaging proofs, not installed acceptance. Candidate receipt and
-  signedpacks remain C:/CivicCastTester/candidates/423393349f87148e7253f93691a9a70478cc120c/candidate.
-- AutomaticGateA40320430842 terminalCANCELLED, RAM8675MB<16384MB. Cancellation
-  was late: ownedSandboxRemoteSession26180 launched12:10:17UTC; stopped only
-  verified ownedsandbox-lab/CivicCastSandboxTest.wsb client, forcecancelledrun,
-  confirmed noSandboxclient remains. Unknownvmwp27068 preserved. No claim of
-  prelaunch prevention or completed acceptance. Do not relaunch until16GBfree.
-  Existinglistener86662/PID14068 owned; source/CI continuation only meanwhile.
-  No stationchange/tags/publication/LFS/spend. F5 installed launcher/uninstaller
-  signature checks and isolated install/uninstall acceptance remain pending.
+- F1-F3, F6-F7 and N1-N8 source delivery is merged through PR267-270.
+  PR270 merged as `2ebe16eb65c73b7e3610b36625d4bab4749c1e92` after
+  23 successful checks and 3 expected skips. Required CI run `40321638869`
+  passed. Later changes were test-only and did not invalidate the signed kit.
+- **F5 is complete.** The unchanged signed candidate installed, activated,
+  started its isolated service, and uninstalled successfully in a headless
+  Windows Sandbox with 12,288 MB allocated. Both installed executables had valid
+  expected Authenticode signatures and timestamps. The checked operator upload
+  and PostgreSQL `PG_VERSION` survived uninstall; service/runtime/packs were removed.
+  See [the report](../ops/f5-installed-acceptance-2026-10-26.md) and
+  [machine-readable receipt](../ops/evidence/f5-installed-acceptance-2026-10-26.json).
+- **Only F4 remains unresolved:** original run `40165319415`'s `filesrc11`
+  failure lacks a concrete cause. The later corrected abort-isolation defect
+  does not prove the cause of that earlier incident. Scott's decision on accepting
+  this documented limitation remains pending. Do not silently close it or start
+  an open-ended reproduction campaign.
+- F2 live YouTube transmission/playback remains explicitly deferred by Scott,
+  not a new gate. Setup was accepted.
+- Scott says the host station is down: **leave it down**. Do not start, restart,
+  upgrade, or modify it. The earlier pre-reboot soak report/evidence remains local
+  in `docs/ops/beta20-station-soak-2026-10-26.md` and its evidence JSON. It describes
+  degraded output on older installed source `2e196124`, not a clean soak pass or
+  acceptance of the new candidate. Reboot ended that old uptime interval.
+- No owned installer, runner, Sandbox, or worker jobs remain. Both owned Sandbox
+  instances were stopped and absence verified. Disposable installation trees and
+  exported executable copies were removed. Do not restart completed tests/builds.
+- Push/merge is authorized. Tags, publication, and release replacement still need
+  Scott's approval. No LFS transfers or spending through October; no host reboot.
+
+## Retained candidate and evidence
+
+- Signed run: `40317362877`; source: `423393349f87148e7253f93691a9a70478cc120c`.
+- Setup SHA-256: `9b01304429a07220dd5f35b061a779fdc07744fb6d0ae45defec232eccb0375a`.
+- Local kit: `C:/CivicCastTester/kit-staging/423393349f87148e7253f93691a9a70478cc120c`.
+- Raw F5 receipts/scripts: `C:/CivicCastTester/f5-installed-42339334/evidence`
+  and its parent directory. The successful installation used native guest disk
+  `C:\CivicCastF5`; the first mapped-folder attempt failed service ACL migration
+  after activation passed. No product rebuild or weakened checks were needed.
+- The old 16 GB pre-launch requirement was too rigid and is superseded by the
+  actual passing 12 GB result. Do not resume RAM polling or repeat F5 acceptance.
+
+## Archived execution history — not current instructions
+
+The entries below preserve earlier evidence. Their old candidate statuses, PIDs,
+resource blockers, and next-action instructions are superseded by the current
+outcome above.
 
 ### Historical prior candidate failure and correction receipts
 
