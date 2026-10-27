@@ -39,6 +39,13 @@ and every recovery retry re-entered the same poisoned probe.
   segment; mean frame RGB about (120,108,100) public, (75,66,56) education,
   (77,73,75) government; mean_volume -9.7 to -21.0 dB and max -1.4 to -5.7 dB,
   against the outage signature of a black picture at -91.0 dB.
+- Delivery: PR #273 (`fix/black-silent-20261027`) carries the source fix, tests, this
+  ledger section and the sanitized evidence record; the required security gate failed
+  on advisory drift published 2026-10-27T15:04Z (GHSA-j586-36cw-2gc2 / CVE-2026-114613,
+  msgpack < 1.2.3), corrected minimally by `uv lock --upgrade-package msgpack`
+  (1.2.1 -> 1.2.4, one lock block, no rebuild, no LFS). Local run of the CI gate over
+  the exported lock scanned 128 packages with no findings and
+  `scripts/check_pip_audit_allowlist.py` exited 0. No waiver, no allowlist entry.
 - Owned background jobs: none. No endurance claim is made: the ~95h soak result
   and the historical filesrc11 cause are unchanged and not requalified.
 
