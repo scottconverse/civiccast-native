@@ -31,6 +31,34 @@ _REQUIRED_DIRS = (
 )
 _REQUIRED_FILES = (Path("lib/girepository-1.0/Gst-1.0.typelib"), Path("bin/gst-discoverer-1.0.exe"))
 _DLL_HANDLES: list[object] = []
+#: The directories already registered with the Windows loader, so a repeat
+#: bootstrap for the SAME ``bin`` directory is a no-op. ``add_dll_directory``
+#: is NOT idempotent and NOT free: every call appends another entry to the
+#: process-wide loader search path, whose buffer is a fixed 32,767 characters.
+#: A long-running control plane re-bootstraps on every content-reload encoder
+#: probe (``encoder_probe.gst_factory_klass``), so registering the 70-character
+#: installed ``bin`` path again and again walked that buffer to exhaustion and
+#: from then on EVERY reload probe raised
+#: ``FileNotFoundError: [WinError 206] The filename or extension is too long``
+#: -- permanently, because each further call also fails. That is the
+#: 2026-10-26 station blackout: the reload dispatch died, the channel pinned
+#: TRANSITIONING with a still-running mux emitting black/silent filler and no
+#: source-chain input, and no retry could ever succeed. Mirrors
+#: ``civiccast.captions.runtime._CUDA_DLL_DIRECTORY_HANDLES``, which already
+#: keys its handles by directory for exactly this reason.
+#:
+#: Concurrency (reviewed 2026-10-27): no lock is taken because no real race
+#: exists. In a running station this bootstrap is reached from exactly one
+#: thread -- the single ``ChannelAutomationService.run_forever`` thread, which
+#: pops queued egress commands and runs every strategy start/reload probe
+#: (``daemon._process_queued_commands`` -> ``strategy.start``/``reload_content``);
+#: the daemon only ever hands media conformance to its preparation pool, never
+#: encoder probing. Other callers bootstrap once per process at import
+#: (``gst/engine.py``) or in the single-threaded DR drill. Even if a future
+#: caller added a second thread, the worst case is one duplicate registration
+#: per concurrent thread -- bounded, and nowhere near the unbounded growth that
+#: caused the outage.
+_REGISTERED_DLL_DIRECTORIES: set[str] = set()
 
 
 class GstreamerRuntimeError(RuntimeError):
@@ -134,5 +162,13 @@ def bootstrap_installed_gstreamer_runtime() -> bool:
     os.environ.setdefault("GI_TYPELIB_PATH", env["GI_TYPELIB_PATH"])
     os.environ.setdefault("GST_PLUGIN_PATH", env["GST_PLUGIN_PATH"])
     if os.name == "nt" and hasattr(os, "add_dll_directory"):
-        _DLL_HANDLES.append(os.add_dll_directory(bin_dir))
+        # Register each directory with the loader AT MOST ONCE per process --
+        # see _REGISTERED_DLL_DIRECTORIES. Recorded only after the call
+        # succeeds, so a transient failure is retried rather than cached as
+        # "registered", and the returned handle stays referenced by
+        # _DLL_HANDLES (dropping it would unregister the directory).
+        key = os.path.normcase(bin_dir)
+        if key not in _REGISTERED_DLL_DIRECTORIES:
+            _DLL_HANDLES.append(os.add_dll_directory(bin_dir))
+            _REGISTERED_DLL_DIRECTORIES.add(key)
     return True

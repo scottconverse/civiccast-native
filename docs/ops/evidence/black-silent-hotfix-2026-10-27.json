@@ -1,0 +1,217 @@
+{
+  "schema": "civiccast.black-silent-hotfix/1",
+  "recorded_local": "2026-10-27T11:41-06:00",
+  "scope": "October 26, 2026 station black/silent outage: cause, source correction, local test-host hotfix, installed A/V observation",
+  "source_identity": {
+    "repo_branch": "fix/black-silent-20261027",
+    "base_head": "677d800f16b1c67d5e849aefd6ccc9efc47e9d43",
+    "base_merge": "69c2bcaea51e573ab1fd707a42260ae14bdc6e9e",
+    "installed_source_before_hotfix": "423393349f87148e7253f93691a9a70478cc120c",
+    "earlier_failed_soak_source": "2e19612467fda894d63e499580e4d7b5f029f5f2",
+    "no_installer_rebuild": true
+  },
+  "causal_evidence": {
+    "log_file": "C:/ProgramData/CivicCast/logs/control_plane-app.log (then .6)",
+    "lines": "5832-5859",
+    "first_dispatch_failure": "2026-10-25 07:49:55,679",
+    "media_preparation_succeeded": "2026-10-25 07:49:55,675 Content-reload source preparation for public took 5.4s for 1 segment(s)",
+    "exception": "FileNotFoundError: [WinError 206] The filename or extension is too long: 'C:\\\\Program Files\\\\CivicCast (Native)\\\\runtime\\\\dependencies\\\\gstreamer\\\\bin'",
+    "raise_site": "civiccast/native/gstreamer_runtime.py:137 _DLL_HANDLES.append(os.add_dll_directory(bin_dir))",
+    "call_chain": [
+      "egress/daemon.py:6045 _reload_steps",
+      "egress/gst/strategy.py:1538 reload_content",
+      "egress/gst/strategy.py:1253 _resolve_encoder_override",
+      "egress/gst/encoder_probe.py:140 decide_encoder",
+      "egress/gst/encoder_probe.py:57 probe_hardware_encoder",
+      "egress/gst/encoder_probe.py:30 hardware_encoder_available",
+      "egress/gst/encoder_probe.py:43 gst_factory_klass",
+      "native/gstreamer_runtime.py:137 bootstrap_installed_gstreamer_runtime"
+    ],
+    "named_path_exists": true,
+    "named_path_characters": 70,
+    "mechanism": "os.add_dll_directory appends to a process-wide loader search path with a fixed 32,767-character buffer; bootstrap had no per-directory guard and is re-entered by every content-reload encoder probe, so registration count grew without bound until the buffer overflowed, after which every call failed permanently",
+    "measured_call_limit": {
+      "successful_registrations": 460,
+      "chars_at_failure": 32660,
+      "error": "WinError 206",
+      "later_calls_also_fail": true
+    },
+    "channel_collateral": {
+      "public_last_on_air": "2026-10-25 07:49:55,667",
+      "public_transitioning": "2026-10-25 07:49:55,724",
+      "education_last_on_air": "2026-10-25 07:50:16,928",
+      "dispatch_errors_total": 171,
+      "dispatch_errors_per_channel": 57,
+      "transition_stall_errors_total": 168,
+      "worker_pids_unchanged": true
+    },
+    "failed_recovery_reason": "the dispatch exception returns False and arms a pending-reload pin; every retry (reload-stall watchdog re-issue and the restart path's strategy.start()) re-enters the same permanently failing probe, so only a process restart can clear it",
+    "blackout_output_signature": "worker tails [mux-in 5.0s: video=+150 audio=+234] with [chain-in 5.0s: in video=+0 audio=+0]; sampled segments black full-file at -91.0 dB",
+    "not_this_cause": [
+      "historical filesrc11 CI failure",
+      "HLS relay log-cap warnings"
+    ]
+  },
+  "correction": {
+    "file": "civiccast/native/gstreamer_runtime.py",
+    "change": "register each directory with the Windows loader at most once per process via _REGISTERED_DLL_DIRECTORIES (normcase key), appending the handle only after a successful call",
+    "precedent": "civiccast/captions/runtime.py _CUDA_DLL_DIRECTORY_HANDLES",
+    "concurrency_review": "no lock added: the probe path runs on the single ChannelAutomationService.run_forever thread; the API only enqueues egress commands. A second future caller could duplicate one registration per thread, which is bounded.",
+    "tests_added": [
+      "tests/native/test_gstreamer_runtime.py::test_repeated_reload_probes_register_the_dll_directory_only_once",
+      "tests/native/test_gstreamer_runtime.py::test_real_loader_survives_repeated_reload_probes"
+    ]
+  },
+  "red_green": [
+    {
+      "phase": "red",
+      "what": "installed interpreter + installed uncorrected package, 600 probes",
+      "result": "probe #460 raised FileNotFoundError WinError 206, traceback identical to production",
+      "receipt": ".agent-runs/black-silent-20261027/red-installed-probe.log"
+    },
+    {
+      "phase": "green",
+      "what": "same interpreter/runtime, corrected source, 600 probes",
+      "result": "600 probes succeeded, 1 loader directory",
+      "receipt": ".agent-runs/black-silent-20261027/green-repo-probe.log"
+    },
+    {
+      "phase": "red",
+      "what": "pytest tests/native/test_gstreamer_runtime.py -k reload_probes with the fix removed",
+      "result": "2 failed with WinError 206",
+      "receipt": ".agent-runs/black-silent-20261027/red-unit.log"
+    },
+    {
+      "phase": "green",
+      "what": "pytest tests/native/test_gstreamer_runtime.py tests/egress/test_encoder_probe.py tests/egress/test_encoder_decision.py tests/egress/test_gst_engine_wsl.py::test_content_reload_continuity_av",
+      "result": "33 passed",
+      "receipt": ".agent-runs/black-silent-20261027/final-focused.log"
+    }
+  ],
+  "local_hotfix": {
+    "host": "TEST host",
+    "installed_module": "C:/Program Files/CivicCast (Native)/runtime/Lib/site-packages/civiccast/native/gstreamer_runtime.py",
+    "backup": "gstreamer_runtime.py.bak-20261027-113835-local-hotfix (same directory)",
+    "sha256_original": "ff8d8dc7adad05b9f0d433b4cea4432796083b97bee588869fd89bce1fb35e84",
+    "sha256_installed": "959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6",
+    "sha256_repo_source": "959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6",
+    "signed_artifacts_modified": false,
+    "installer_rebuilt": false,
+    "rollback": "copy the .bak-20261027-113835-local-hotfix file back over the module, then one bounded restart of CivicCastSupervisor",
+    "restart": {
+      "service": "CivicCastSupervisor",
+      "local_time": "2026-10-27 11:39",
+      "bounded": true,
+      "state_preserved": [
+        "schedules",
+        "database",
+        "media",
+        "credentials"
+      ]
+    },
+    "installed_probe_proof": {
+      "interpreter": "installed runtime python.exe",
+      "module_path_used": "site-packages civiccast/native/gstreamer_runtime.py",
+      "probes": 600,
+      "loader_directories": 1,
+      "result": "all succeeded"
+    }
+  },
+  "installed_av": {
+    "observed_local": "2026-10-27T11:41-06:00",
+    "tool": "installed FFmpeg/ffprobe",
+    "window": "three consecutive 2.5 s segments per channel from the live playlists",
+    "channels": {
+      "public": {
+        "media_sequence": 31,
+        "segments": [
+          "seg000000034.ts",
+          "seg000000035.ts",
+          "seg000000036.ts"
+        ],
+        "video": "1280x720 h264",
+        "audio": "aac",
+        "blackdetect_segments": 0,
+        "mean_rgb": [
+          [
+            119.3,
+            107.7,
+            99.6
+          ],
+          [
+            121.3,
+            108.6,
+            101.3
+          ]
+        ],
+        "mean_volume_dB": -21.0,
+        "max_volume_dB": -1.4
+      },
+      "education": {
+        "media_sequence": 31,
+        "segments": [
+          "seg000000034.ts",
+          "seg000000035.ts",
+          "seg000000036.ts"
+        ],
+        "video": "1280x720 h264",
+        "audio": "aac",
+        "blackdetect_segments": 0,
+        "mean_rgb": [
+          [
+            75.2,
+            66.1,
+            56.5
+          ],
+          [
+            75.2,
+            66.1,
+            56.4
+          ]
+        ],
+        "mean_volume_dB": -20.3,
+        "max_volume_dB": -2.2
+      },
+      "government": {
+        "media_sequence": 32,
+        "segments": [
+          "seg000000034.ts",
+          "seg000000035.ts",
+          "seg000000036.ts"
+        ],
+        "video": "1280x720 h264",
+        "audio": "aac",
+        "blackdetect_segments": 0,
+        "mean_rgb": [
+          [
+            76.9,
+            72.7,
+            74.5
+          ],
+          [
+            76.6,
+            72.6,
+            74.3
+          ]
+        ],
+        "mean_volume_dB": -9.7,
+        "max_volume_dB": -2.4
+      }
+    },
+    "comparison_to_outage": "outage samples were black full-file at -91.0 dB; these are picture content with program audio between -9.7 and -21.0 dB mean",
+    "operator_reload": {
+      "endpoint": "POST /api/staff/egress/channels/public/commands",
+      "action": "reload",
+      "accepted_at": "2026-10-27 11:40:23",
+      "reload_id": "b695e548-d12e-48cf-8334-4dd1102a97e7",
+      "dispatch_errors_after": 0,
+      "error_records_after": 0
+    }
+  },
+  "limits": [
+    "does not requalify the ~95 h soak or any endurance claim",
+    "does not diagnose the historical filesrc11 CI failure",
+    "local hotfix is not a signed package; delivery of the source fix is the durable remedy",
+    "no secrets, tokens, credentials or media bytes are included here; the private credentials store was not read for this record"
+  ]
+}
