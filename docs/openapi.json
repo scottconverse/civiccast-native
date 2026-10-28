@@ -34092,7 +34092,7 @@
             "anyOf": [
               {
                 "type": "integer",
-                "minimum": 1990.0
+                "minimum": 1.0
               },
               {
                 "type": "null"

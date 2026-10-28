@@ -220,6 +220,57 @@ class TestImportArchiveYearScope:
         assert resp.status_code == 422
         assert "only accepted when source is 'primegov'" in resp.text
 
+    def test_a_year_below_the_old_floor_is_accepted_not_refused(self) -> None:
+        # PR278 review counterexample 2: discovery can offer an archived year from
+        # any `since` date, so import must accept exactly the same years instead
+        # of an arbitrary floor discovery does not share.
+        stub = _StubSource(agenda=self._agenda())
+        app, store = _build(
+            source=stub,
+            settings=AgendaImportSettings(source="primegov", timeout_seconds=10.0),
+        )
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "primegov",
+                "client_code": "longmont",
+                "event_id": "1985",
+                "archive_year": 1985,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert stub.received_archive_year == 1985
+
+    def test_import_without_a_year_scope_finds_a_next_year_upcoming_meeting(self) -> None:
+        # PR278 review counterexample 1: a next-year UPCOMING meeting needs no
+        # archive year (the source reads the upcoming list first), so the screen
+        # sends none and the import is not refused.
+        stub = _StubSource(
+            agenda=ExternalAgenda(
+                external_id="4242",
+                title="Upcoming next-year meeting",
+                items=[ExternalAgendaItem(order=1, title="CALL TO ORDER", number="1.")],
+            )
+        )
+        app, store = _build(
+            source=stub,
+            settings=AgendaImportSettings(source="primegov", timeout_seconds=10.0),
+        )
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={"source": "primegov", "client_code": "longmont", "event_id": "4242"},
+        )
+
+        assert resp.status_code == 200
+        assert stub.received_archive_year is None
+
     def test_future_archive_year_is_rejected(self) -> None:
         app, store = _build(source=_StubSource(agenda=self._agenda()))
         _seed_agenda(store)

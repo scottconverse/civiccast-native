@@ -45,6 +45,7 @@ from civiccast.agenda_import.config import (
 from civiccast.agenda_import.js_portal import describe_js_portal_runtime
 from civiccast.agenda_import.mapper import import_external_agenda
 from civiccast.agenda_import.models import AgendaSourceName, ExternalMeetingSummary
+from civiccast.agenda_import.primegov import archive_year_supported
 from civiccast.agenda_import.provenance import AgendaImportProvenanceStore
 from civiccast.agenda_import.registry import build_source
 from civiccast.auth.roles import require_any_role
@@ -60,11 +61,6 @@ _DISABLED_DETAIL = (
 )
 
 _JS_PORTAL_SOURCE = "js_portal"
-
-#: Lower bound for an explicit ``archive_year`` on an import. A plain sanity
-#: floor (no vendor archive reaches back this far); the upper bound is the
-#: current UTC year, because PrimeGov archived lists exist only up to now.
-_MIN_ARCHIVE_YEAR = 1990
 
 
 def _validate_js_portal_fields(payload: AgendaImportExternalRequest) -> AgendaImportExternalRequest:
@@ -153,7 +149,7 @@ class AgendaImportExternalRequest(BaseModel):
     event_id: Annotated[str, Field(min_length=1, max_length=120)]
     portal_url: Annotated[str | None, Field(default=None, max_length=500)] = None
     portal_vendor_hint: Annotated[str | None, Field(default=None, max_length=40)] = None
-    archive_year: Annotated[int | None, Field(default=None, ge=_MIN_ARCHIVE_YEAR)] = None
+    archive_year: Annotated[int | None, Field(default=None, ge=1)] = None
 
     @model_validator(mode="after")
     def _check_js_portal_config(self) -> AgendaImportExternalRequest:
@@ -172,11 +168,15 @@ class AgendaImportExternalRequest(BaseModel):
                 "archive_year is only accepted when source is 'primegov' -- the other "
                 "vendors resolve a meeting by id without a year scope."
             )
-        current_year = datetime.now(UTC).year
-        if self.archive_year > current_year:
+        if not archive_year_supported(self.archive_year):
+            # The SAME finite year rule PrimeGov discovery uses (current UTC year
+            # or earlier), so nothing discovery offers can be refused here. A
+            # meeting dated in a future year only ever arrives through the
+            # upcoming list, which the import lookup always queries, so it needs
+            # no archive year.
             raise ValueError(
                 f"archive_year {self.archive_year} is in the future; discovery offers the "
-                f"current year ({current_year}) or an earlier archived year."
+                f"current year ({datetime.now(UTC).year}) or an earlier archived year."
             )
         return self
 

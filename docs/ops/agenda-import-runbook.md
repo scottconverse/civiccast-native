@@ -178,13 +178,19 @@ seen before) are added on a re-import.
   exactly one archive year per discovery call, never a multi-year scan. The
   import is scoped to the SAME finite year: the operator console sends the
   selected meeting's year as `archive_year` (PrimeGov-only request field,
-  rejected for the other vendors and for a future year), and the import lookup
-  reads the upcoming list, that year and the current year -- at most three
-  archive lists. Without an explicit year it keeps the older behaviour (current
-  year plus the two prior years). So every meeting discovery offered, including
-  one from an archived year older than current-2, is importable; provider ids
-  are preserved unchanged and deduped, and an operator still selects one meeting
-  explicitly.
+  rejected for the other vendors), and the import lookup reads the upcoming
+  list, that year and the current year -- at most three archive lists. Without
+  an explicit year it keeps the older behaviour (current year plus the two prior
+  years). So every meeting discovery offered, including one from an archived
+  year older than current-2, is importable; provider ids are preserved unchanged
+  and deduped, and an operator still selects one meeting explicitly.
+  Discovery and import share ONE finite year rule: an archived-list year is the
+  current UTC year or any earlier one, with no other arbitrary floor (a `since`
+  date far in the past is offered and importable, because discovery clamps the
+  requested year to that same rule). A meeting dated in a FUTURE year is never
+  in an archived list -- it arrives through the always-queried upcoming list,
+  which the importer reads first, so it needs no archive year at all and the
+  console sends none for it.
 - **CivicClerk's extraction is honestly bounded**: the shared PDF extractor
   recognizes flat, top-level digit-numbered lines only. A real agenda that
   nests numbered sub-items under lettered top-level sections (e.g.

@@ -685,6 +685,46 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
     )
   })
 
+  it('sends no archive year for a next-year upcoming meeting', async () => {
+    // PR278 review counterexample 1: the upcoming list is not year-filtered, so a
+    // meeting dated next year can be offered. It needs no archive year (the
+    // importer reads the upcoming list first) and asking for a future year would
+    // be refused -- so the screen must send none.
+    const nextYear = new Date().getUTCFullYear() + 1
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue({
+      meetings: [
+        externalMeeting({
+          external_id: 'ext-next',
+          title: 'Upcoming next-year City Council',
+          meeting_datetime: `${nextYear}-01-12T19:00:00`,
+        }),
+      ],
+      partialWarning: null,
+    })
+    vi.mocked(importExternalAgenda).mockResolvedValue([item({ item_id: 'item-ext-01' })])
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'primegov' },
+    })
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'longmont' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+    await findByLabelText('Meeting to import')
+    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+
+    await waitFor(() =>
+      expect(vi.mocked(importExternalAgenda)).toHaveBeenCalledWith('council-2026-01', {
+        source: 'primegov',
+        client_code: 'longmont',
+        event_id: 'ext-next',
+        portal_url: null,
+        portal_vendor_hint: null,
+        archive_year: null,
+      }),
+    )
+  })
+
   it('flags low-confidence imported items for review', async () => {
     vi.mocked(importExternalAgenda).mockResolvedValue([
       item({ item_id: 'item-ext-01', order: 0, confidence: 0.4 }),

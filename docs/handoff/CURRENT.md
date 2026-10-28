@@ -57,6 +57,28 @@ a UI payload test (`AgendasScreen.test.tsx`). Generated `docs/openapi.json`,
 `docs/ops/agenda-import-runbook.md` updated for the bounded/page-failed and finite-year
 behavior.
 
+REVIEW FINDINGS CORRECTED (bounded independent read-only DeepSeek review of candidate
+`87154b03`, coordinator outputs `deepseek-phase1-correction-review/result.json`; the reviewer
+confirmed corrections 1 and 2 by reading and filed two MATERIAL outcome-3 findings, both
+year-scope boundary mismatches):
+
+- Finding 1 (high) - the upcoming list is not year-filtered, so discovery can offer a meeting
+  dated in the NEXT calendar year; the console then sent that future year as `archive_year` and
+  the import was refused 422. Corrected: an offered upcoming meeting needs no archive year at
+  all (the import lookup always reads the upcoming list first), so the console sends the year
+  only when it is a valid archived-list year (current or earlier) and sends none otherwise.
+  Regression: `AgendasScreen.test.tsx` "next-year upcoming meeting sends no archive year", plus
+  `test_primegov.py` "next-year upcoming meeting is importable without a year scope".
+- Finding 2 (medium) - an arbitrary 1990 import floor was not shared with discovery (`since`),
+  so a `since` before 1990 offered meetings import refused 422. Corrected: the invented floor is
+  gone; one shared rule in `primegov.archive_year_supported()` (current UTC year or any earlier,
+  floor = year 1, i.e. every year a `since` date can express) is used by BOTH the import request
+  validation and (via `_archive_year`'s clamp) discovery, so the offered set and the importable
+  set are identical. Regressions: `test_primegov.py` "archived year before the old floor is
+  offered and importable" and `test_router.py` "a year below the old floor is accepted". No
+  unbounded scan: the import still reads at most three finite archive lists, and the future-year
+  rejection remains for genuinely invalid input.
+
 EVIDENCE REUSED (not re-fetched): the recorded real Longmont eight-item agenda import
 (meeting3443/template15544) and the 41,472,505-byte/258-page packet from
 coordinator `outputs/deepseek-primegov-phase1/result.json` and the retained TEMP receipt.
@@ -72,9 +94,9 @@ green -> normal merge (no admin/bypass/auto). Cancellation method if mis-owned o
 in the executor receipt rather than a second bookkeeping commit, so CI is not restarted for
 documentation.
 
-NEXT ACTION: review the final diff once, push, open the focused PR, wait for applicable
-required checks, then merge and verify the merge SHA. Optional agenda-integration and
-randomized jobs are NOT gates.
+NEXT ACTION: recheck only the two corrected review findings and the applicable automated PR
+comments on the final head, wait for applicable required checks, then merge and verify the merge
+SHA. Optional agenda-integration and randomized jobs are NOT gates.
 
 ---
 

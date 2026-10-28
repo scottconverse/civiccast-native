@@ -777,6 +777,29 @@ def _resolve_redirect_target(current_url: str, location: str | None) -> str | No
     return target
 
 
+#: Lowest calendar year Python can represent, so the lowest year a discovery
+#: ``since`` date can ever select. Import accepts any year from here up to the
+#: shared upper bound below -- there is deliberately no other arbitrary floor,
+#: because an import floor that discovery does not share would leave an offered
+#: meeting unimportable (the PR278 review findings).
+_ARCHIVE_YEAR_MIN = 1
+
+
+def archive_year_supported(year: int) -> bool:
+    """Whether ``year`` is a PrimeGov archived-list year this adapter lists AND
+    imports: the current UTC year or any earlier one (a vendor archived list
+    exists only up to now).
+
+    This is the ONE finite year rule shared by discovery and import.
+    :func:`_archive_year` clamps the operator's ``since`` year to exactly this
+    range, so nothing discovery can offer falls outside what import accepts.
+    A meeting dated in a FUTURE year is never offered by an archived list -- it
+    can only arrive through the upcoming list, which the import lookup queries
+    first for every import, so it needs no archive year at all.
+    """
+    return year <= _archive_year(None)
+
+
 def _archive_year(since: date | None) -> int:
     """The single finite archived year to query.
 

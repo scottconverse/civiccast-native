@@ -871,8 +871,16 @@ function ExternalImportSection({
   // without it an older archived meeting discovery offered could not be
   // found on import. The server rejects it for the other vendors.
   const selectedMeeting = meetings?.find((m) => m.external_id === selectedEventId)
+  const importYearCandidate = isoYear(selectedMeeting?.meeting_datetime) ?? isoYear(since)
+  // An UPCOMING meeting discovery offered can be dated in the next calendar year
+  // (the always-queried upcoming list is not year-filtered). Such a meeting needs
+  // no archive year: the importer reads that upcoming list first. Only a year
+  // that is a valid archived-list year (this year or earlier) is sent, so the
+  // screen can never ask for a scope the server refuses.
   const importArchiveYear =
-    isoYear(selectedMeeting?.meeting_datetime) ?? isoYear(since)
+    importYearCandidate !== null && importYearCandidate <= new Date().getUTCFullYear()
+      ? importYearCandidate
+      : null
 
   const importMut = useMutation({
     mutationFn: () => {
