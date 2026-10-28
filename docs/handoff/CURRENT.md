@@ -19,8 +19,10 @@ CHANGED FILES (smallest set):
   `document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`
   errors (partial REFUSED before any import persistence). The vendor redirect
   to its external public blob storage is followed MANUALLY, each hop validated
-  with the existing `validate_portal_url` public guard, so a redirect can never
-  reach a loopback/private/link-local/metadata target; P3 upcoming + one
+  with the existing `validate_portal_url` guard, which rejects a target whose
+  LITERAL host is loopback/private/link-local/metadata (or userinfo/non-http(s));
+  like that guard itself it does NOT resolve DNS, so DNS-rebinding is the same
+  pre-existing residual risk, not newly introduced or claimed closed. P3 upcoming + one
   finite current-year archive list, dedup by provider meeting id, PARTIAL
   warning when one list fails, bounded recent-year lookup so an archived
   meeting discovery offered is actually retrievable on import.

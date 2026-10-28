@@ -55,8 +55,15 @@ items or guessing at an unverified PDF URL.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
 import time
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -72,7 +79,6 @@ from civiccast.agenda_import.docparse import (
     DEFAULT_MAX_PDF_TEXT_CHARS,
     PdfExtraction,
     extract_items_from_html,
-    extract_items_from_pdf_bounded,
 )
 from civiccast.agenda_import.models import (
     ExternalAgenda,
@@ -103,6 +109,38 @@ _MAX_PDF_PAGES = DEFAULT_MAX_PDF_PAGES
 _MAX_PDF_TEXT_CHARS = DEFAULT_MAX_PDF_TEXT_CHARS
 _EXTRACTION_DEADLINE_SECONDS = 60.0
 _MAX_DOCUMENT_REDIRECTS = 5
+
+# Run the bounded PDF parse in a SEPARATE process so the hard wall-clock budget
+# is a real kill, not a between-pages clock check that one hung page or the
+# PdfReader constructor can defeat. The child prints one JSON object; the parent
+# kills it on timeout (subprocess.run) and refuses a partial result rather than
+# persisting it. Same process-isolation pattern the repo already uses for
+# external fixed-command children (subprocess.run + TimeoutExpired), no
+# framework.
+_EXTRACTOR_SCRIPT = r"""
+import json
+import sys
+
+from civiccast.agenda_import.docparse import extract_items_from_pdf_bounded
+
+path = sys.argv[1]
+max_pages = int(sys.argv[2])
+max_chars = int(sys.argv[3])
+with open(path, "rb") as handle:
+    data = handle.read()
+result = extract_items_from_pdf_bounded(
+    data, max_pages=max_pages, max_text_chars=max_chars
+)
+print(json.dumps({
+    "items": [
+        {"order": i.order, "title": i.title, "number": i.number} for i in result.items
+    ],
+    "pages_total": result.pages_total,
+    "pages_read": result.pages_read,
+    "partial": result.partial,
+    "reason": result.reason,
+}))
+"""
 
 
 class PrimeGovSource:
@@ -285,6 +323,7 @@ class PrimeGovSource:
                 "around."
             )
         return _build_agenda(meeting, source_doc_url=doc_url, items=extraction.items)
+
     # --- meeting list + transport -----------------------------------------
 
     def _find_meeting(self, client_code: str, event_id: str) -> dict[str, Any] | None:
@@ -386,12 +425,9 @@ class PrimeGovSource:
         data = self._get_json(client_code, url)
         if not isinstance(data, list):
             raise AgendaSourceUpstreamError(
-                f"PrimeGov response from {url} was not a list "
-                f"(got {type(data).__name__})."
+                f"PrimeGov response from {url} was not a list (got {type(data).__name__})."
             )
-        return [
-            row for row in data if isinstance(row, dict) and row.get("id") is not None
-        ]
+        return [row for row in data if isinstance(row, dict) and row.get("id") is not None]
 
     def _request(self, client_code: str, url: str) -> httpx.Response:
         try:
@@ -441,11 +477,14 @@ class PrimeGovSource:
             # The public CompiledDocument endpoint 302-redirects to the real PDF
             # object (an external public blob host). Follow redirects MANUALLY,
             # bounded in number, validating EVERY target with the existing public
-            # URL guard (:func:`validate_portal_url`) so a redirect can never steer
-            # this download to a loopback/private/link-local/metadata host. This is
-            # the same approve-the-target check the portal trust boundary uses, not
-            # a new policy. Disabling httpx's own follow_redirects is what makes the
-            # hop-by-hop validation possible.
+            # URL guard (:func:`validate_portal_url`). That guard rejects a target
+            # whose LITERAL host is loopback/private/link-local/metadata or carries
+            # userinfo / a non-http(s) scheme -- the same literal-host check the
+            # portal trust boundary already applies. It does NOT resolve DNS, so a
+            # DNS-rebinding host is the same pre-existing residual risk that guard
+            # already discloses; this change introduces no new bypass and claims no
+            # DNS-rebinding protection. Disabling httpx's own follow_redirects is
+            # what makes the hop-by-hop validation possible.
             with httpx.Client(
                 transport=self._transport,
                 timeout=self._timeout_seconds,
@@ -501,8 +540,7 @@ class PrimeGovSource:
                     )
         except httpx.TimeoutException as exc:
             raise AgendaSourceUpstreamError(
-                f"PrimeGov document request to {url} timed out after "
-                f"{self._timeout_seconds}s."
+                f"PrimeGov document request to {url} timed out after {self._timeout_seconds}s."
             ) from exc
         except httpx.HTTPError as exc:
             raise AgendaSourceUpstreamError(
@@ -511,17 +549,63 @@ class PrimeGovSource:
         return b"".join(chunks)
 
     def _extract_pdf_bounded(self, pdf_bytes: bytes) -> PdfExtraction:
-        # Genuinely bounded extraction: caps pages and accumulated characters
-        # before pypdf ever walks the whole document. A between-page time check
-        # alone cannot abort a single slow page, so the page/char caps are the
-        # real work bound here; a caller that needs a hard wall-clock kill can add
-        # a child-process guard around this, which the bounded input size makes
-        # safe to do without a new framework.
-        return extract_items_from_pdf_bounded(
-            pdf_bytes,
-            max_pages=self._max_pdf_pages,
-            max_text_chars=self._max_pdf_text_chars,
-        )
+        # Genuinely bounded AND killable extraction. Page/char caps (in
+        # docparse.extract_items_from_pdf_bounded, run in the child) bound the
+        # work; the CHILD PROCESS + subprocess.run(timeout=...) gives a hard
+        # wall-clock kill that a between-pages clock check cannot (the PdfReader
+        # constructor or one page can hang). On timeout the child is terminated
+        # and a partial result is returned so the caller REFUSES to persist a
+        # truncated agenda with an honest "time_limit" reason.
+        handle_fd, path = tempfile.mkstemp(suffix=".pdf")
+        try:
+            with os.fdopen(handle_fd, "wb") as handle:
+                handle.write(pdf_bytes)
+            kwargs: dict[str, Any] = {}
+            if os.name == "nt":
+                # Hidden child window (repo convention: background children must
+                # not flash a console).
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            try:
+                completed = subprocess.run(  # noqa: S603 - fixed argv, sys.executable, no shell
+                    [
+                        sys.executable,
+                        "-c",
+                        _EXTRACTOR_SCRIPT,
+                        path,
+                        str(self._max_pdf_pages),
+                        str(self._max_pdf_text_chars),
+                    ],
+                    capture_output=True,
+                    timeout=self._extraction_deadline_seconds,
+                    **kwargs,
+                )
+            except subprocess.TimeoutExpired:
+                return PdfExtraction(partial=True, reason="time_limit")
+            if completed.returncode != 0:
+                return PdfExtraction(reason="unreadable")
+            try:
+                payload = json.loads((completed.stdout or b"").decode("utf-8") or "{}")
+            except ValueError:
+                return PdfExtraction(reason="unreadable")
+            items = [
+                ExternalAgendaItem(
+                    order=int(entry["order"]),
+                    title=str(entry["title"]),
+                    number=(str(entry["number"]) if entry.get("number") is not None else None),
+                )
+                for entry in payload.get("items") or []
+            ]
+            return PdfExtraction(
+                items=items,
+                pages_total=int(payload.get("pages_total") or 0),
+                pages_read=int(payload.get("pages_read") or 0),
+                partial=bool(payload.get("partial")),
+                reason=payload.get("reason"),
+            )
+        finally:
+            with contextlib.suppress(OSError):
+                Path(path).unlink()
+
 
 def _base_url(client_code: str) -> str:
     return f"https://{client_code}.primegov.com"
@@ -646,10 +730,12 @@ def _resolve_redirect_target(current_url: str, location: str | None) -> str | No
     """Resolve a redirect ``Location`` and only accept a public http(s) target.
 
     Reuses :func:`civiccast.agenda_import.config.validate_portal_url` -- the same
-    public-URL guard the staff portal trust boundary applies -- so a redirect can
-    never turn this download into a loopback/private/link-local/metadata fetch.
-    Returns ``None`` (caller raises an honest blocked error) for a missing,
-    relative-broken, non-http(s), or non-public target.
+    public-URL guard the staff portal trust boundary applies -- so a redirect
+    whose LITERAL host is loopback/private/link-local/metadata (or that carries
+    userinfo / a non-http(s) scheme) is rejected. This does not resolve DNS; the
+    pre-existing DNS-rebinding residual risk that guard already discloses is
+    unchanged. Returns ``None`` (caller raises an honest blocked error) for a
+    missing, relative-broken, non-http(s), or non-public-literal target.
     """
     if not location:
         return None
@@ -674,6 +760,7 @@ def _archive_year(since: date | None) -> int:
     if since is None:
         return current
     return min(since.year, current)
+
 
 def _build_agenda(
     meeting: dict[str, Any], *, source_doc_url: str, items: list[ExternalAgendaItem]

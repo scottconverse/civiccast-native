@@ -627,7 +627,9 @@ class TestDiscoveryPartialWarning:
     def test_partial_listing_warning_is_surfaced_as_header(self) -> None:
         summary = ExternalMeetingSummary(external_id="1", title="City Council")
         source = _StubSource(meetings=[summary])
-        source.last_listing_warning = "PARTIAL PrimeGov discovery: archived(2026) meeting list failed."
+        source.last_listing_warning = (
+            "PARTIAL PrimeGov discovery: archived(2026) meeting list failed."
+        )
         app, _store = _build(source=source)
         client = TestClient(app)
 

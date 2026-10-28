@@ -13,6 +13,7 @@ negative control for "no HTML agenda available".
 from __future__ import annotations
 
 import json
+import time
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -337,7 +338,12 @@ def _agenda_pdf(lines: list[str]) -> bytes:
 
 def _single_meeting(documents: list[dict]) -> list[dict]:
     return [
-        {"id": 777, "title": "PDF-only meeting", "dateTime": "2026-07-08T09:00:00", "documentList": documents}
+        {
+            "id": 777,
+            "title": "PDF-only meeting",
+            "dateTime": "2026-07-08T09:00:00",
+            "documentList": documents,
+        }
     ]
 
 
@@ -349,7 +355,15 @@ class TestCompiledDocumentPdf:
         pdf_bytes = _agenda_pdf(["1. Call to order", "2. Roll call"])
         requested: list[tuple[str | None, str | None]] = []
         meetings = _single_meeting(
-            [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1, "link": None}]
+            [
+                {
+                    "id": 1,
+                    "templateId": 555,
+                    "templateName": "Agenda",
+                    "compileOutputType": 1,
+                    "link": None,
+                }
+            ]
         )
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -359,7 +373,10 @@ class TestCompiledDocumentPdf:
                 return httpx.Response(404, text="no archive")
             assert request.url.path == "/Public/CompiledDocument"
             requested.append(
-                (request.url.params.get("meetingTemplateId"), request.url.params.get("compileOutputType"))
+                (
+                    request.url.params.get("meetingTemplateId"),
+                    request.url.params.get("compileOutputType"),
+                )
             )
             return httpx.Response(200, content=pdf_bytes)
 
@@ -378,8 +395,20 @@ class TestCompiledDocumentPdf:
         requested: list[str | None] = []
         meetings = _single_meeting(
             [
-                {"id": 1, "templateId": 900, "templateName": "Packet", "compileOutputType": 1, "link": None},
-                {"id": 2, "templateId": 800, "templateName": "Agenda", "compileOutputType": 1, "link": None},
+                {
+                    "id": 1,
+                    "templateId": 900,
+                    "templateName": "Packet",
+                    "compileOutputType": 1,
+                    "link": None,
+                },
+                {
+                    "id": 2,
+                    "templateId": 800,
+                    "templateName": "Agenda",
+                    "compileOutputType": 1,
+                    "link": None,
+                },
             ]
         )
 
@@ -420,7 +449,15 @@ class TestBoundedPdfHandling:
 
     def _meeting(self) -> list[dict]:
         return _single_meeting(
-            [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1, "link": None}]
+            [
+                {
+                    "id": 1,
+                    "templateId": 555,
+                    "templateName": "Agenda",
+                    "compileOutputType": 1,
+                    "link": None,
+                }
+            ]
         )
 
     def test_oversized_document_is_refused(self) -> None:
@@ -460,9 +497,13 @@ class TestArchivedDiscovery:
     def _handler(self, *, upcoming=None, archive=None, upcoming_status=200, archive_status=200):
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/ListUpcomingMeetings"):
-                return httpx.Response(upcoming_status, json=upcoming if upcoming_status == 200 else None)
+                return httpx.Response(
+                    upcoming_status, json=upcoming if upcoming_status == 200 else None
+                )
             if request.url.path.endswith("/ListArchivedMeetings"):
-                return httpx.Response(archive_status, json=archive if archive_status == 200 else None)
+                return httpx.Response(
+                    archive_status, json=archive if archive_status == 200 else None
+                )
             return httpx.Response(404, text="x")
 
         return handler
@@ -473,7 +514,9 @@ class TestArchivedDiscovery:
             {"id": 1, "title": "Up1", "dateTime": "2026-07-08T09:00:00"},
             {"id": 2, "title": "Old", "dateTime": "2025-03-01T09:00:00"},
         ]
-        source = PrimeGovSource(transport=httpx.MockTransport(self._handler(upcoming=upcoming, archive=archive)))
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(upcoming=upcoming, archive=archive))
+        )
 
         meetings = source.fetch_meetings("longmont")
 
@@ -530,7 +573,13 @@ class TestArchivedDiscovery:
                 "title": "Old meeting",
                 "dateTime": "2029-03-01T09:00:00",
                 "documentList": [
-                    {"id": 1, "templateId": 321, "templateName": "Agenda", "compileOutputType": 1, "link": None}
+                    {
+                        "id": 1,
+                        "templateId": 321,
+                        "templateName": "Agenda",
+                        "compileOutputType": 1,
+                        "link": None,
+                    }
                 ],
             }
         ]
@@ -556,7 +605,15 @@ class TestDocumentRedirectSafety:
 
     def _meeting(self) -> list[dict]:
         return _single_meeting(
-            [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1, "link": None}]
+            [
+                {
+                    "id": 1,
+                    "templateId": 555,
+                    "templateName": "Agenda",
+                    "compileOutputType": 1,
+                    "link": None,
+                }
+            ]
         )
 
     def test_redirect_to_a_private_or_link_local_target_is_blocked(self) -> None:
@@ -569,7 +626,9 @@ class TestDocumentRedirectSafety:
                 return httpx.Response(404, text="x")
             hosts.append(request.url.host)
             if request.url.host == "longmont.primegov.com":
-                return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+                return httpx.Response(
+                    302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+                )
             pytest.fail(f"redirect to a non-public host must not be followed: {request.url}")
 
         source = PrimeGovSource(transport=httpx.MockTransport(handler))
@@ -596,3 +655,42 @@ class TestDocumentRedirectSafety:
         agenda = source.fetch_agenda("longmont", "777")
 
         assert [i.title for i in agenda.items] == ["Call to order"]
+
+
+class TestHardExtractionTimeout:
+    """P2: extraction runs in a killable child process; a hung parse is killed
+    at the hard wall-clock budget and a partial result is REFUSED, not persisted."""
+
+    def test_hung_extraction_is_killed_and_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from civiccast.agenda_import import primegov as primegov_module
+
+        # Replace the child script with one that hangs, so the PARENT's
+        # subprocess hard timeout (not a between-pages clock) is what stops it.
+        monkeypatch.setattr(primegov_module, "_EXTRACTOR_SCRIPT", "import time; time.sleep(30)")
+        meetings = _single_meeting(
+            [
+                {
+                    "id": 1,
+                    "templateId": 555,
+                    "templateName": "Agenda",
+                    "compileOutputType": 1,
+                    "link": None,
+                }
+            ]
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=meetings)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="x")
+            return httpx.Response(200, content=_agenda_pdf(["1. Call to order"]))
+
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(handler), extraction_deadline_seconds=0.5
+        )
+        started = time.monotonic()
+        with pytest.raises(AgendaSourceUpstreamError, match="pdf_partial"):
+            source.fetch_agenda("longmont", "777")
+        # Real hard kill, not a graceful 30 s sleep.
+        assert time.monotonic() - started < 15

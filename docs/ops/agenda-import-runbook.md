@@ -161,7 +161,8 @@ seen before) are added on a re-import.
   BEFORE anything is written -- a truncated document never silently replaces a
   complete agenda. The vendor's redirect to its external public blob storage is
   followed manually, each hop validated with the existing public-URL guard, so a
-  redirect to a loopback/private/link-local/metadata host is refused.
+  redirect to a LITERAL loopback/private/link-local/metadata host is refused
+  (DNS-rebinding remains that guard's pre-existing, disclosed residual risk).
 - **PrimeGov discovery is upcoming + one finite current-year archive list**
   (deduped by meeting id). If only one of the two list endpoints answers, the
   results are returned with an `X-Agenda-Discovery-Warning` PARTIAL banner; if
