@@ -50,13 +50,15 @@ class _StubSource:
         self._meetings = meetings or []
         self._agenda = agenda
         self._error = error
+        self.received_archive_year: int | None = None
 
     def fetch_meetings(self, client_code, *, since=None):
         if self._error:
             raise self._error
         return self._meetings
 
-    def fetch_agenda(self, client_code, event_id):
+    def fetch_agenda(self, client_code, event_id, *, archive_year=None):
+        self.received_archive_year = archive_year
         if self._error:
             raise self._error
         assert self._agenda is not None
@@ -147,6 +149,94 @@ class TestDisabledByDefault:
         resp = client.get("/api/staff/agenda-sources/legistar/seattle/meetings")
 
         assert resp.status_code == 404
+
+
+class TestImportArchiveYearScope:
+    """PR277 review: the explicit finite year scope discovery offered must reach
+    the import lookup, so an older archived meeting is importable end to end."""
+
+    def _agenda(self) -> ExternalAgenda:
+        return ExternalAgenda(
+            external_id="4242",
+            title="Archived 2023 meeting",
+            items=[ExternalAgendaItem(order=1, title="CALL TO ORDER", number="1.")],
+        )
+
+    def test_primegov_import_forwards_the_selected_archive_year(self) -> None:
+        stub = _StubSource(agenda=self._agenda())
+        app, store = _build(
+            source=stub,
+            settings=AgendaImportSettings(source="primegov", timeout_seconds=10.0),
+        )
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "primegov",
+                "client_code": "longmont",
+                "event_id": "4242",
+                "archive_year": 2023,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert stub.received_archive_year == 2023
+        assert len(store.list_items("ag-1")) == 1
+
+    def test_omitted_archive_year_preserves_the_default_lookup(self) -> None:
+        stub = _StubSource(agenda=self._agenda())
+        app, store = _build(
+            source=stub,
+            settings=AgendaImportSettings(source="primegov", timeout_seconds=10.0),
+        )
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={"source": "primegov", "client_code": "longmont", "event_id": "4242"},
+        )
+
+        assert resp.status_code == 200
+        assert stub.received_archive_year is None
+
+    def test_archive_year_is_rejected_for_another_source(self) -> None:
+        app, store = _build(source=_StubSource(agenda=self._agenda()))
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "legistar",
+                "client_code": "seattle",
+                "event_id": "4242",
+                "archive_year": 2023,
+            },
+        )
+
+        assert resp.status_code == 422
+        assert "only accepted when source is 'primegov'" in resp.text
+
+    def test_future_archive_year_is_rejected(self) -> None:
+        app, store = _build(source=_StubSource(agenda=self._agenda()))
+        _seed_agenda(store)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={
+                "source": "primegov",
+                "client_code": "longmont",
+                "event_id": "4242",
+                "archive_year": date.today().year + 5,
+            },
+        )
+
+        assert resp.status_code == 422
+        assert "in the future" in resp.text
 
 
 class TestRoleGating:

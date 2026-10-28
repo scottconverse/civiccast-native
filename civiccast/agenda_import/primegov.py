@@ -137,6 +137,7 @@ print(json.dumps({
     ],
     "pages_total": result.pages_total,
     "pages_read": result.pages_read,
+    "pages_failed": result.pages_failed,
     "partial": result.partial,
     "reason": result.reason,
 }))
@@ -196,20 +197,29 @@ class PrimeGovSource:
             )
         return summaries
 
-    def fetch_agenda(self, client_code: str, event_id: str) -> ExternalAgenda:
+    def fetch_agenda(
+        self, client_code: str, event_id: str, *, archive_year: int | None = None
+    ) -> ExternalAgenda:
         # P3: retrieve the SAME meeting discovery offered, including one from an
-        # explicitly-selected earlier archived year. Upcoming + the current
-        # archive year are checked first, then a BOUNDED window of the two prior
-        # years -- never an unbounded historic scan -- so "list an older archived
-        # meeting, then import it" works instead of silently looking only at the
-        # current year.
-        meeting = self._find_meeting(client_code, event_id)
+        # explicitly-selected earlier archived year. ``archive_year`` carries the
+        # finite year scope the operator's discovery used (the router validates
+        # and forwards it), so a meeting discovery offered from ANY supported
+        # archived year is retrievable. Without it, upcoming + the current archive
+        # year are checked first, then the two prior years -- never an unbounded
+        # historic scan either way: at most three archive lists per import.
+        meeting = self._find_meeting(client_code, event_id, archive_year=archive_year)
         if meeting is None:
+            if archive_year is None:
+                scope = (
+                    "its archived meetings in the bounded recent-year window "
+                    f"({_archive_year(None)}..{_archive_year(None) - 2})"
+                )
+            else:
+                scope = f"its archived meetings in year {archive_year} or {_archive_year(None)}"
             raise AgendaSourceUpstreamError(
                 f"PrimeGov meeting {event_id!r} was not found among tenant "
-                f"{client_code!r}'s upcoming meetings or its archived meetings in the "
-                f"bounded recent-year window ({_archive_year(None)}..{_archive_year(None) - 2}); "
-                "the meeting may be older than that window, or the event_id is wrong."
+                f"{client_code!r}'s upcoming meetings or {scope}; "
+                "the meeting may be outside that year scope, or the event_id is wrong."
             )
         documents = meeting.get("documentList")
         if not isinstance(documents, list):
@@ -304,13 +314,18 @@ class PrimeGovSource:
                 "(extraction_status=pdf_unreadable) -- refusing a silent empty import."
             )
         if extraction.partial:
+            failed = (
+                f"; {extraction.pages_failed} page(s) could not be read at all"
+                if extraction.pages_failed
+                else ""
+            )
             raise AgendaSourceUpstreamError(
                 f"PrimeGov PDF document at {doc_url} for meeting {meeting.get('id')!r} "
                 f"was only PARTIALLY extracted: stopped at {extraction.pages_read}/"
-                f"{extraction.pages_total} pages ({extraction.reason}) before the bounded "
-                "limit (extraction_status=pdf_partial). Refusing to import a truncated "
-                "agenda over an existing complete one; split the source document or raise "
-                "the operator limits deliberately."
+                f"{extraction.pages_total} pages ({extraction.reason}){failed} before the "
+                "bounded limit (extraction_status=pdf_partial). Refusing to import a "
+                "truncated or page-incomplete agenda over an existing complete one; split "
+                "the source document or raise the operator limits deliberately."
             )
         if not extraction.items:
             raise AgendaSourceUpstreamError(
@@ -326,16 +341,30 @@ class PrimeGovSource:
 
     # --- meeting list + transport -----------------------------------------
 
-    def _find_meeting(self, client_code: str, event_id: str) -> dict[str, Any] | None:
+    def _find_meeting(
+        self, client_code: str, event_id: str, *, archive_year: int | None = None
+    ) -> dict[str, Any] | None:
         current_year = _archive_year(None)
-        meetings = self._list_meetings(client_code, archive_year=current_year)
+        primary_year = current_year if archive_year is None else archive_year
+        meetings = self._list_meetings(client_code, archive_year=primary_year)
         found = next((m for m in meetings if str(m.get("id")) == event_id), None)
         if found is not None:
             return found
-        # Bounded recent-year fallback for a meeting an earlier-year discovery
-        # offered. Exactly two extra archive lists at most -- finite, not a loop
-        # over history.
-        for year in (current_year - 1, current_year - 2):
+        # Bounded year fallback. With an explicit scope only the current year is
+        # added (a meeting that old discovery offered can still be dated in the
+        # current year); without one, the two prior years. At most two extra
+        # archive lists either way -- finite, never a loop over history.
+        fallback_years = (
+            (current_year,)
+            if archive_year is not None
+            else (
+                current_year - 1,
+                current_year - 2,
+            )
+        )
+        for year in fallback_years:
+            if year == primary_year:
+                continue
             try:
                 rows = self._fetch_meeting_list(
                     client_code,
@@ -599,6 +628,7 @@ class PrimeGovSource:
                 items=items,
                 pages_total=int(payload.get("pages_total") or 0),
                 pages_read=int(payload.get("pages_read") or 0),
+                pages_failed=int(payload.get("pages_failed") or 0),
                 partial=bool(payload.get("partial")),
                 reason=payload.get("reason"),
             )

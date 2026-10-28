@@ -125,7 +125,12 @@ class CivicClerkSource:
             )
         return summaries
 
-    def fetch_agenda(self, client_code: str, event_id: str) -> ExternalAgenda:
+    def fetch_agenda(
+        self, client_code: str, event_id: str, *, archive_year: int | None = None
+    ) -> ExternalAgenda:
+        # ``archive_year`` is accepted for AgendaSource Protocol compatibility
+        # and ignored: this vendor resolves a meeting by id, not by year.
+        del archive_year
         events = self._list_events(client_code, odata_filter=f"id eq {event_id}")
         event = next((e for e in events if str(e.get("id")) == event_id), None)
         if event is None:

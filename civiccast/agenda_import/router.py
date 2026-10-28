@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -60,6 +60,11 @@ _DISABLED_DETAIL = (
 )
 
 _JS_PORTAL_SOURCE = "js_portal"
+
+#: Lower bound for an explicit ``archive_year`` on an import. A plain sanity
+#: floor (no vendor archive reaches back this far); the upper bound is the
+#: current UTC year, because PrimeGov archived lists exist only up to now.
+_MIN_ARCHIVE_YEAR = 1990
 
 
 def _validate_js_portal_fields(payload: AgendaImportExternalRequest) -> AgendaImportExternalRequest:
@@ -116,6 +121,15 @@ router = APIRouter(prefix="/api/staff", tags=["staff", "agenda-import"])
 class AgendaImportExternalRequest(BaseModel):
     """POST .../import-external body (plan §6).
 
+    ``archive_year`` (PrimeGov only) is the EXPLICIT finite year scope the
+    operator's discovery used: discovery can offer a meeting from any archived
+    year the operator asked for (``since``), while PrimeGov's import lookup has
+    to know which year list to read. Sending it back makes every offered meeting
+    importable, still with at most three finite archive lists per import -- it is
+    not a multi-year scan. It is rejected (422) for the other vendors, which
+    resolve a meeting by id without a year scope, and it may not be in the
+    future.
+
     ``portal_url``/``portal_vendor_hint`` are ``js_portal``-only additions
     (Phase 4): required exactly when ``source == "js_portal"``, forbidden
     (must be omitted/null) for every other source -- enforced below, not by
@@ -139,10 +153,32 @@ class AgendaImportExternalRequest(BaseModel):
     event_id: Annotated[str, Field(min_length=1, max_length=120)]
     portal_url: Annotated[str | None, Field(default=None, max_length=500)] = None
     portal_vendor_hint: Annotated[str | None, Field(default=None, max_length=40)] = None
+    archive_year: Annotated[int | None, Field(default=None, ge=_MIN_ARCHIVE_YEAR)] = None
 
     @model_validator(mode="after")
     def _check_js_portal_config(self) -> AgendaImportExternalRequest:
         return _validate_js_portal_fields(self)
+
+    @model_validator(mode="after")
+    def _check_year_scope(self) -> AgendaImportExternalRequest:
+        # Same "only for the vendor it means something" rule as
+        # portal_url/portal_vendor_hint: the other three vendors resolve a
+        # meeting by its id, so a year scope there would be silently ignored
+        # input, which is worse than a 422.
+        if self.archive_year is None:
+            return self
+        if self.source != "primegov":
+            raise ValueError(
+                "archive_year is only accepted when source is 'primegov' -- the other "
+                "vendors resolve a meeting by id without a year scope."
+            )
+        current_year = datetime.now(UTC).year
+        if self.archive_year > current_year:
+            raise ValueError(
+                f"archive_year {self.archive_year} is in the future; discovery offers the "
+                f"current year ({current_year}) or an earlier archived year."
+            )
+        return self
 
 
 @router.post(
@@ -182,7 +218,9 @@ def import_external(
             portal_url=payload.portal_url,
             portal_vendor_hint=payload.portal_vendor_hint,
         )
-        external = source.fetch_agenda(payload.client_code, payload.event_id)
+        external = source.fetch_agenda(
+            payload.client_code, payload.event_id, archive_year=payload.archive_year
+        )
         written = import_external_agenda(resolved_store, agenda_id, external)
         if provenance_store is not None:
             try:

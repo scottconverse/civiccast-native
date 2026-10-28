@@ -100,7 +100,12 @@ class LegistarSource:
             )
         return summaries
 
-    def fetch_agenda(self, client_code: str, event_id: str) -> ExternalAgenda:
+    def fetch_agenda(
+        self, client_code: str, event_id: str, *, archive_year: int | None = None
+    ) -> ExternalAgenda:
+        # ``archive_year`` is accepted for AgendaSource Protocol compatibility
+        # and ignored: this vendor resolves a meeting by id, not by year.
+        del archive_year
         event = self._get(client_code, f"{_BASE_URL}/{client_code}/Events/{event_id}")
         if not isinstance(event, dict) or event.get("EventId") is None:
             raise AgendaSourceUpstreamError(

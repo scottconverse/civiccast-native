@@ -178,17 +178,25 @@ DEFAULT_MAX_PDF_TEXT_CHARS = 2_000_000
 class PdfExtraction:
     """Outcome of a bounded PDF extraction.
 
-    ``partial`` is ``True`` when the extractor stopped before covering every
-    page (page cap hit with more pages remaining, or the running text budget
-    was exhausted). ``reason`` names the cause for an operator-facing message:
-    ``"unreadable"`` (malformed/encrypted PDF, no usable text layer path),
-    ``"page_limit"`` or ``"text_limit"`` (bounded stop), or ``None`` when the
-    whole document was read without hitting a bound.
+    ``partial`` is ``True`` whenever the extractor did NOT cover the whole
+    document: the page cap was hit with more pages remaining, the text budget
+    was exhausted, or at least one page raised during text extraction. ``reason``
+    names the cause for an operator-facing message: ``"unreadable"``
+    (malformed/encrypted PDF, no usable text layer path, or EVERY page failed to
+    yield text), ``"page_limit"`` / ``"text_limit"`` (bounded stop),
+    ``"page_failed"`` (some -- not all -- pages raised, so the recovered items are
+    incomplete and must not be persisted as a complete import), or ``None`` when
+    the whole document was read without hitting a bound or losing a page.
+
+    ``pages_failed`` counts pages whose text extraction raised. A non-zero count
+    means the result is incomplete even when numbered items were recovered from
+    the pages that did read; ``pages_read`` counts only pages that yielded text.
     """
 
     items: list[ExternalAgendaItem] = field(default_factory=list)
     pages_total: int = 0
     pages_read: int = 0
+    pages_failed: int = 0
     partial: bool = False
     reason: str | None = None
 
@@ -230,6 +238,7 @@ def extract_items_from_pdf_bounded(
     text_used = 0
     started = time.monotonic()
     pages_read = 0
+    pages_failed = 0
     reason: str | None = None
     for index, page in enumerate(pages):
         if index >= max_pages:
@@ -241,9 +250,23 @@ def extract_items_from_pdf_bounded(
         try:
             page_text = page.extract_text() or ""
         except Exception:
-            # A single malformed page must not abort a mostly-readable document;
-            # treat its text as empty rather than raising out of the loop.
-            page_text = ""
+            # A single malformed page must not abort a mostly-readable document,
+            # but it MUST be recorded: the items recovered from the other pages
+            # are then an incomplete agenda, not a complete one.
+            pages_failed += 1
+            continue
+        # The text budget is checked BEFORE this page's text is parsed or
+        # appended, and on EVERY page -- single-page, final-page and intermediate
+        # alike. There is deliberately no "another page remains" condition: a
+        # document that would exceed the budget is a bounded overrun
+        # (``partial=True`` / ``text_limit``) whether the excess is on the first,
+        # a middle, or the last page, so an over-limit document can never be
+        # reported complete or imported. Exactly-at-limit text is accepted: the
+        # cap is an inclusive maximum, so a document totalling exactly
+        # ``max_text_chars`` is complete when every page was covered.
+        if text_used + len(page_text) > max_text_chars:
+            reason = "text_limit"
+            break
         pages_read += 1
         text_used += len(page_text)
         for raw_line in page_text.splitlines():
@@ -259,14 +282,19 @@ def extract_items_from_pdf_bounded(
                     order=order, title=title[:_ITEM_TITLE_MAX], number=match.group("number")
                 )
             )
-        if text_used >= max_text_chars and index + 1 < pages_total:
-            reason = "text_limit"
-            break
+
+    if reason is None and pages_failed:
+        # Differentiate the two page-failure outcomes the result can express:
+        # EVERY page unreadable is the same operator-facing situation as an
+        # unreadable document (nothing usable to import), while SOME pages lost
+        # is a partial extraction that must be refused rather than persisted.
+        reason = "unreadable" if pages_read == 0 and pages_failed == pages_total else "page_failed"
 
     return PdfExtraction(
         items=items,
         pages_total=pages_total,
         pages_read=pages_read,
+        pages_failed=pages_failed,
         partial=reason is not None,
         reason=reason,
     )

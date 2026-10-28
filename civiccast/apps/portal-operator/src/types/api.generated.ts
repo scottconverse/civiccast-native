@@ -123,6 +123,7 @@ export interface AgendaImportExternalRequest {
   event_id: string
   portal_url?: string | null
   portal_vendor_hint?: string | null
+  archive_year?: number | null
 }
 
 export interface AgendaItem {

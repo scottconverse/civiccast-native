@@ -637,9 +637,52 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
         event_id: 'ext-1',
         portal_url: null,
         portal_vendor_hint: null,
+        archive_year: null,
       }),
     )
     expect(await findByText('Imported 1 item.')).toBeTruthy()
+  })
+
+  it('sends the selected meeting year as the PrimeGov import scope', async () => {
+    // An archived meeting older than current-2 can only be imported if the
+    // explicit finite year scope discovery used is sent back with the import.
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue({
+      meetings: [
+        externalMeeting({
+          external_id: 'ext-old',
+          title: 'Archived 2023 City Council',
+          meeting_datetime: '2023-03-01T09:00:00',
+        }),
+      ],
+      partialWarning: null,
+    })
+    vi.mocked(importExternalAgenda).mockResolvedValue([item({ item_id: 'item-ext-01' })])
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('External agenda source'), {
+      target: { value: 'primegov' },
+    })
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'longmont' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+    await findByLabelText('Meeting to import')
+
+    expect(
+      await findByText(/import is scoped to the selected meeting/i),
+    ).toBeTruthy()
+
+    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+
+    await waitFor(() =>
+      expect(vi.mocked(importExternalAgenda)).toHaveBeenCalledWith('council-2026-01', {
+        source: 'primegov',
+        client_code: 'longmont',
+        event_id: 'ext-old',
+        portal_url: null,
+        portal_vendor_hint: null,
+        archive_year: 2023,
+      }),
+    )
   })
 
   it('flags low-confidence imported items for review', async () => {

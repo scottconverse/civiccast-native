@@ -26,6 +26,8 @@ from civiccast.agenda_import.base import (
     AgendaSourceAuthRequiredError,
     AgendaSourceUpstreamError,
 )
+from civiccast.agenda_import.docparse import PdfExtraction
+from civiccast.agenda_import.models import ExternalAgendaItem
 from civiccast.agenda_import.primegov import PrimeGovSource
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -483,6 +485,50 @@ class TestBoundedPdfHandling:
         with pytest.raises(AgendaSourceUpstreamError, match="pdf_partial"):
             source.fetch_agenda("longmont", "777")
 
+    def test_single_page_text_overrun_is_refused_not_imported(self) -> None:
+        # PR277 review: the character budget must bite on a single-page document
+        # too. Real subprocess extraction path, real PDF, tiny budget.
+        pdf_bytes = _agenda_pdf(["1. Call to order", "2. Roll call"])
+
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(self._meeting(), pdf_bytes)),
+            max_pdf_text_chars=5,
+        )
+
+        with pytest.raises(AgendaSourceUpstreamError, match="pdf_partial"):
+            source.fetch_agenda("longmont", "777")
+
+    def test_failed_page_extraction_is_refused_before_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # PR277 review: a page that raises while other pages yield numbered items
+        # must still refuse persistence -- the recovered items are incomplete.
+        # Seam-level (the subprocess child is not reachable from a monkeypatch);
+        # the refusal path itself is the real `_fetch_pdf_agenda` branch, and is
+        # the only thing standing between a partial extraction and the mapper.
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(
+                self._handler(self._meeting(), _agenda_pdf(["1. Call to order"]))
+            )
+        )
+        monkeypatch.setattr(
+            PrimeGovSource,
+            "_extract_pdf_bounded",
+            lambda self, data: PdfExtraction(
+                items=[ExternalAgendaItem(order=1, title="Call to order", number="1")],
+                pages_total=3,
+                pages_read=2,
+                pages_failed=1,
+                partial=True,
+                reason="page_failed",
+            ),
+        )
+
+        with pytest.raises(AgendaSourceUpstreamError, match="pdf_partial") as excinfo:
+            source.fetch_agenda("longmont", "777")
+
+        assert "1 page(s) could not be read" in str(excinfo.value)
+
     def test_unreadable_pdf_is_distinguished_from_no_items(self) -> None:
         source = PrimeGovSource(
             transport=httpx.MockTransport(self._handler(self._meeting(), b"not a pdf at all"))
@@ -597,6 +643,57 @@ class TestArchivedDiscovery:
 
         assert agenda.external_id == "9"
         assert "meetingTemplateId=321" in agenda.source_doc_url
+
+    def test_discovery_offered_older_archived_year_is_importable(self) -> None:
+        # PR277 review: discovery can offer a meeting from ANY requested archived
+        # year (`since`), so the import lookup must be able to reach that same
+        # finite year -- not only the current year plus the two prior ones.
+        from civiccast.agenda_import import primegov as primegov_module
+
+        current_year = primegov_module._archive_year(None)
+        older_year = current_year - 3
+        pdf_bytes = _agenda_pdf(["1. Call to order"])
+        archived = [
+            {
+                "id": 4242,
+                "title": f"Archived {older_year} meeting",
+                "dateTime": f"{older_year}-03-01T09:00:00",
+                "documentList": [
+                    {
+                        "id": 1,
+                        "templateId": 999,
+                        "templateName": "Agenda",
+                        "compileOutputType": 1,
+                        "link": None,
+                    }
+                ],
+            }
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                year = request.url.params.get("year")
+                return httpx.Response(200, json=archived if year == str(older_year) else [])
+            return httpx.Response(200, content=pdf_bytes)
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+
+        discovered = source.fetch_meetings("longmont", since=date(older_year, 1, 1))
+        assert [m.external_id for m in discovered] == ["4242"]
+
+        # Before the correction the import lookup only read the current year and
+        # the two prior ones, so this discovery-offered meeting was not found.
+        with pytest.raises(AgendaSourceUpstreamError, match="was not found"):
+            source.fetch_agenda("longmont", "4242")
+
+        agenda = source.fetch_agenda("longmont", "4242", archive_year=older_year)
+
+        assert agenda.external_id == "4242"
+        assert agenda.meeting_datetime is not None
+        assert agenda.meeting_datetime.year == older_year
+        assert "meetingTemplateId=999" in agenda.source_doc_url
 
 
 class TestDocumentRedirectSafety:
