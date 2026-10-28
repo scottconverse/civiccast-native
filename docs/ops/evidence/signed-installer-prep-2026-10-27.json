@@ -1,0 +1,133 @@
+{
+  "outcome": "ready_for_owner_tag_publish_approval",
+  "candidate_source": "8fdce69e4fccfba80f2984a0d034d8851b4840e0",
+  "merge_source": "8fdce69e4fccfba80f2984a0d034d8851b4840e0",
+  "final_source_head": "1412c0060db6863f983dc381f1e51597a0930296",
+  "version": "1.0.0-beta.20",
+  "build_workflow": "native-beta-candidate-artifacts",
+  "build_run": 40616252842,
+  "build_url": "https://github.com/scottconverse/civiccast-native/actions/runs/40616252842",
+  "source_ci_run": 40583199781,
+  "source_ci_result": "success (Unit/Windows WS4/claims)",
+  "installer_path": "C:\\CivicCastTester\\candidates\\8fdce69e4fccfba80f2984a0d034d8851b4840e0\\candidate\\CivicCast (Native)_1.0.0-beta.20_x64-setup.exe",
+  "installer_sha256": "2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b",
+  "installer_authenticode": {
+    "status": "Valid",
+    "signer": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+    "thumbprint": "A987FBF8678961387F2CCB44A1DEDDB79E3DA879"
+  },
+  "kit_path": "C:\\CivicCastTester\\kit-staging\\8fdce69e4fccfba80f2984a0d034d8851b4840e0",
+  "fixed_module_sha256": "959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6",
+  "acceptance": {
+    "started_utc": "2026-10-28T03:04:02.7839558Z",
+    "stage": "passed",
+    "sandbox_memory_mb": 12288,
+    "expected_setup_sha256": "2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b",
+    "expected_fixed_module_sha256": "959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6",
+    "setup_path": "C:\\CivicCastPayload\\CivicCast (Native)_1.0.0-beta.20_x64-setup.exe",
+    "setup_sha256": "2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b",
+    "setup_signature": {
+      "file": "CivicCast (Native)_1.0.0-beta.20_x64-setup.exe",
+      "sha256": "2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b",
+      "status": "Valid",
+      "signer": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+      "timestamp": "CN=Microsoft Public RSA Time Stamping Authority, OU=nShield TSS ESN:7800-05E0-D947, OU=Microsoft America Operations, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    "initial_memory": {
+      "TotalVisibleMemorySize": 12581828,
+      "FreePhysicalMemory": 10343676
+    },
+    "installer_pid": 13236,
+    "installer_exit_code": 0,
+    "installed_launcher_signature": {
+      "file": "CivicCast Native.exe",
+      "sha256": "611cd261013157052f90bd347b51ec4a0024a8923e2122730153739550a5f744",
+      "status": "Valid",
+      "signer": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+      "timestamp": "CN=Microsoft Public RSA Time Stamping Authority, OU=nShield TSS ESN:7D00-05E0-D947, OU=Microsoft America Operations, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    "installed_uninstaller_signature": {
+      "file": "uninstall.exe",
+      "sha256": "049878696004b2bdef7dfed2f1e336b83766c9cca964217c7e3549b9e57acc4a",
+      "status": "Valid",
+      "signer": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+      "timestamp": "CN=Microsoft Public RSA Time Stamping Authority, OU=nShield TSS ESN:7A00-05E0-D947, OU=Microsoft America Operations, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    "installed_fixed_module_sha256": "959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6",
+    "service": {
+      "Name": "CivicCastSupervisor",
+      "State": "Running",
+      "PathName": "\"C:\\CivicCastInstall\\runtime\\pythonservice.exe\""
+    },
+    "activation": {
+      "ai_inference": {
+        "models": [
+          "gemma4:12b",
+          "gemma4:e4b",
+          "translategemma:4b"
+        ],
+        "offline_only": true,
+        "result": "passed",
+        "runtime": "Ollama 0.30.6"
+      },
+      "caption_inference": {
+        "audio": "self-test/jfk.wav",
+        "compute_type": "int8",
+        "ctranslate2": "4.8.1",
+        "device": "cpu",
+        "local_files_only": true,
+        "model": "Systran/faster-whisper-medium@08e178d48790749d25932bbc082711ddcfdfbc4f",
+        "model_bin_bytes": 1527906378,
+        "model_bin_sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+        "model_path": "packs/captions-floor/models/faster-whisper-medium",
+        "result": "passed",
+        "runtime": "faster-whisper 1.2.1"
+      },
+      "distribution_index_sha256": "751e18ab976abe7d1a81e301ee0edfe683a5ec50d35e8f1ca4edb45eff1f6272",
+      "product": "civiccast-native",
+      "product_version": "1.0.0-beta.20",
+      "schema_version": 1
+    },
+    "health": {
+      "status": "healthy",
+      "version": "1.0.0-beta.20",
+      "schema": "current",
+      "live_captions": "disabled",
+      "schema_db_revision": "0097_agenda_minutes",
+      "schema_expected_head": "0097_agenda_minutes",
+      "mode": "normal"
+    },
+    "upload_hash_before": "E70CC51F0E148B3C6A7BA263F77350C32928748A81E28B5D02F6B6D4ACF7DA2C",
+    "pg_hash_before": "54183F4323F377B737433A1E98229EAD0FDC686F93BAB057ECB612DAA94002B5",
+    "uninstaller_pid": 4980,
+    "uninstaller_exit_code": 0,
+    "upload_preserved": true,
+    "pg_preserved": true,
+    "runtime_removed": true,
+    "packs_removed": true,
+    "launcher_removed": true,
+    "service_removed": true,
+    "finished_utc": "2026-10-28T03:30:25.1677760Z"
+  },
+  "sandbox": {
+    "api_id": "85a5964d-332c-473a-be6e-e506893164d7",
+    "hcs_id": "75CBE899-AF6E-4B74-AAA3-AC9B4ACB1C75",
+    "memory_mb": 12288,
+    "started_utc": "2026-10-28T03:04:02.7839558Z",
+    "finished_utc": "2026-10-28T03:30:25.1677760Z",
+    "active_after_run": false
+  },
+  "informational_gate_a": {
+    "run": 40620078397,
+    "required": false,
+    "policy_reference": "docs/ops/gate-a.md Promotion rule",
+    "failure": "mapped-folder service-identity ACL migration; d4-service-registration=70; setup exit 118; installer recovery restored prior state",
+    "follow_on_lanes": "skipped, not requirements"
+  },
+  "limits": "Isolated native-guest-filesystem install/run/uninstall/signature preservation acceptance only. Not a broadcast soak, not host-station action, not tag/publication.",
+  "prepared_files": [
+    "docs/handoff/CURRENT.md",
+    "docs/ops/signed-installer-prep-2026-10-27.md",
+    "docs/ops/evidence/signed-installer-prep-2026-10-27.json"
+  ]
+}
