@@ -62,6 +62,10 @@ entries:
       source 2e19612467fda894d63e499580e4d7b5f029f5f2, build 39810481727, setup
       6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d) and the
       original October 21 publication retain their historical provenance.
+      Provenance tag archive/v1.0.0-beta.20-package-revision-20261027 is an annotated tag at this revision
+      source 8fdce69e4fccfba80f2984a0d034d8851b4840e0 for the revised package bytes; it
+      carries no release and no assets, and it does not move or rename the published
+      v1.0.0-beta.20 tag target a17449189a39af6474d914137eab020169f91023.
       Public release: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20.
       Exact current evidence: https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md.
   - tag: v1.0.0-beta.19

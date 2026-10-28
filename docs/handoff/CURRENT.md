@@ -42,6 +42,11 @@ DELIVERED (public):
   SHA-256 `2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b`
   (GitHub asset digest matches the prepared bytes), revision source `8fdce69e`,
   build 40616252842, installed payload carries merged PR #273.
+- Provenance tag `archive/v1.0.0-beta.20-package-revision-20261027` (annotated) points at the exact revision source
+  `8fdce69e4fccfba80f2984a0d034d8851b4840e0`. It is a provenance marker only: no
+  release, no assets, no version change; the published `v1.0.0-beta.20` tag stays at
+  `a17449189a39af6474d914137eab020169f91023`. No workflow in this repository filters
+  on `tags:`, so pushing it triggers no build.
 - Nine assets replaced with the prepared bytes (setup, sidecar, app-payload and
   server-binaries packs, four manual files, SHA256SUMS.txt); the other 17,
   including all 12 station-model parts, `station-models.json`, the
