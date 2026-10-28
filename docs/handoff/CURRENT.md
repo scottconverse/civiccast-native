@@ -63,6 +63,35 @@ DELIVERED (public):
 - Live station, tags/history and unrelated dirty work (soak/YouTube evidence,
   coordinator failure log, .tmp files) preserved.
 
+OPEN DEFECT found by repository CI after publication (not a download/link error):
+- Job: `native-app-reproducibility` / "Two independent Windows workspaces"
+  (run 40628662572), failing on PR #274's head and on main pushes.
+- Cause: its reuse step downloads `native-app-payload.ccpack` from release
+  `v1.0.0-beta.20` and asserts the embedded `av-18.0.0-cp311-abi3-win_amd64.whl`
+  equals the reviewed pin `EXPECTED_WHEEL_SHA256` 0f9427a4... / 4,347,090 bytes.
+  The replacement pack carries the self-hosted lane's advisory-built wheel
+  4,346,966 bytes / f4fb5079..., whose own provenance file records the same
+  pinned PyAV sdist and FFmpeg commit. `docs/process/pyav-wheel-reproducibility.md`
+  documents that lane as advisory-hash. The reviewed wheel existed only inside
+  the previously published beta.20 pack; that exact pack is still on local disk
+  at `outputs/beta20-documentation-revision/kit/packs/native-app-payload.ccpack`
+  (sha256 58d7623fe8ae3a4813f63602cf1a7422bf1966767016be474be05e17cb286dea).
+  Beta 19's published pack already carried the advisory wheel, so no other
+  release can serve as the reuse source.
+- Impact: that CI job stays red for every PR and main push until resolved. The
+  published installer, packs, checksums and download links are unaffected and
+  verified.
+- Options: (a) authorized rebuild of ONLY the app-payload pack reusing the
+  retained reviewed wheel (`--reviewed-pyav-wheel <path above>`), re-sign and
+  re-upload that pack plus `SHA256SUMS.txt` - the setup and other packs stay as
+  published; (b) repoint the reuse step at a release that retains the reviewed
+  wheel (none today) or republish the reviewed pack as a provenance asset;
+  (c) owner decision to re-pin to the shipped advisory wheel and update
+  docs/tests. Executor did not take (a) because rebuilding/re-signing was
+  explicitly out of scope, nor (c) because it is a provenance/review decision.
+- Recommendation: (a) under explicit owner authorization; it is the only option
+  that keeps the shipped fix and restores the reviewed-wheel identity.
+
 ## CURRENT - Signed installer READY FOR OWNER TAG/PUBLISH APPROVAL - October 27, 2026 21:32 MDT
 
 **Result: signed public-ready installer built and required isolated acceptance
