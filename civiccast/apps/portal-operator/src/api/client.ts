@@ -451,6 +451,8 @@ export interface StaffApiRequestOptions {
   responseType?: 'json' | 'blob'
   /** Use for public staff sign-in so it never forwards a stale bearer. */
   includeStaffToken?: boolean
+  /** Inspect the response headers (e.g. a PARTIAL-discovery warning header). */
+  onResponse?: (res: Response) => void
 }
 
 function responseRetryAfterSeconds(response: Response): number | undefined {
@@ -514,7 +516,7 @@ export interface EgressSchemaCurrency {
 }
 
 async function request<T>(path: string, opts: StaffApiRequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, timeoutMs } = opts
+  const { method = 'GET', body, timeoutMs, onResponse } = opts
   const staffToken = opts.includeStaffToken === false ? null : runtimeStaffToken()
 
   const controller = timeoutMs != null ? new AbortController() : undefined
@@ -583,6 +585,7 @@ async function request<T>(path: string, opts: StaffApiRequestOptions = {}): Prom
       retryAfterSeconds,
     )
   }
+  onResponse?.(res)
   if (res.status === 204) return undefined as T
   if (opts.responseType === 'blob') return (await res.blob()) as T
   return (await res.json()) as T
@@ -3714,19 +3717,30 @@ const AGENDA_SOURCES = '/api/staff/agenda-sources'
  * dropdown. `portalUrl`/`portalVendorHint` are js_portal-only (the router
  * 422s if they're supplied for any other source, or omitted for js_portal).
  */
+export interface ExternalMeetingsDiscovery {
+  meetings: ExternalMeetingSummary[]
+  partialWarning: string | null
+}
+
 export function listExternalAgendaMeetings(
   source: AgendaExternalSource,
   clientCode: string,
   params: { since?: string | null; portalUrl?: string | null; portalVendorHint?: string | null } = {},
-): Promise<ExternalMeetingSummary[]> {
+): Promise<ExternalMeetingsDiscovery> {
   const qs = new URLSearchParams()
   if (params.since) qs.set('since', params.since)
   if (params.portalUrl) qs.set('portal_url', params.portalUrl)
   if (params.portalVendorHint) qs.set('portal_vendor_hint', params.portalVendorHint)
   const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  let partialWarning: string | null = null
   return request<ExternalMeetingSummary[]>(
     `${AGENDA_SOURCES}/${encodeURIComponent(source)}/${encodeURIComponent(clientCode)}/meetings${suffix}`,
-  )
+    {
+      onResponse: (res) => {
+        partialWarning = res.headers.get('X-Agenda-Discovery-Warning')
+      },
+    },
+  ).then((meetings) => ({ meetings, partialWarning }))
 }
 
 /**

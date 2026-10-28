@@ -156,7 +156,7 @@ beforeEach(() => {
     installed: false,
     detail: 'crawl4ai is not installed. Install civiccast[agenda-js-import].',
   })
-  vi.mocked(listExternalAgendaMeetings).mockResolvedValue([externalMeeting()])
+  vi.mocked(listExternalAgendaMeetings).mockResolvedValue({ meetings: [externalMeeting()], partialWarning: null })
   vi.mocked(importExternalAgenda).mockResolvedValue([
     item({ item_id: 'item-ext-01', order: 0, confidence: 0.85 }),
   ])
@@ -506,10 +506,13 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
   })
 
   it('finds meetings and lets the operator pick one', async () => {
-    vi.mocked(listExternalAgendaMeetings).mockResolvedValue([
-      externalMeeting({ external_id: 'ext-1', title: 'City Council' }),
-      externalMeeting({ external_id: 'ext-2', title: 'Planning Commission' }),
-    ])
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue({
+      meetings: [
+        externalMeeting({ external_id: 'ext-1', title: 'City Council' }),
+        externalMeeting({ external_id: 'ext-2', title: 'Planning Commission' }),
+      ],
+      partialWarning: null,
+    })
     const { findByLabelText, findByRole } = renderScreen()
     fireEvent.change(await findByLabelText('Tenant / site code'), {
       target: { value: 'seattle' },
@@ -528,7 +531,7 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
   })
 
   it('shows the empty-results state when discovery finds nothing', async () => {
-    vi.mocked(listExternalAgendaMeetings).mockResolvedValue([])
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue({ meetings: [], partialWarning: null })
     const { findByLabelText, findByRole, findByText } = renderScreen()
     fireEvent.change(await findByLabelText('Tenant / site code'), {
       target: { value: 'seattle' },
@@ -536,6 +539,20 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
     fireEvent.click(await findByRole('button', { name: /find meetings/i }))
 
     expect(await findByText('No meetings found for those filters.')).toBeTruthy()
+  })
+
+  it('shows a PARTIAL banner when discovery only partially answered', async () => {
+    vi.mocked(listExternalAgendaMeetings).mockResolvedValue({
+      meetings: [externalMeeting({ external_id: 'ext-1', title: 'City Council' })],
+      partialWarning: 'PARTIAL PrimeGov discovery: archived(2026) meeting list failed.',
+    })
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText('Tenant / site code'), {
+      target: { value: 'longmont' },
+    })
+    fireEvent.click(await findByRole('button', { name: /find meetings/i }))
+
+    expect(await findByText(/only partial results were returned/i)).toBeTruthy()
   })
 
   it('surfaces a warn banner when discovery fails', async () => {

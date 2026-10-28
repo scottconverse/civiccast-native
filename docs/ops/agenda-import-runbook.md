@@ -74,7 +74,7 @@ civiccast/agenda_import/mapper.py  (the ONE writer -- validates every doc_url,
 civiccast/agenda_import/base.py  (AgendaSource Protocol)
    |
    +--- legistar.py    -- anonymous OData, 2-call fetch (Events, EventItems)
-   +--- primegov.py     -- anonymous JSON + docparse.py (compiled HTML agenda)
+   +--- primegov.py     -- anonymous JSON + docparse.py (compiled HTML/PDF agenda)
    +--- civicclerk.py   -- anonymous OData + docparse.py (reused unchanged)
 
 NOT touched: civiccast/civicclerk_bridge/  -- a separate, already-speced,
@@ -144,10 +144,32 @@ seen before) are added on a re-import.
 
 ### Known, disclosed limits (not silently assumed away)
 
-- **PrimeGov PDF-only meetings**: no verified anonymous PDF-fetch URL exists
-  for Longmont (the real download path is a client-side, login-gated
-  compile flow). A meeting with no HTML compiled agenda surfaces a distinct
-  502, not a fabricated import.
+- **PrimeGov PDF-only meetings** are supported: when a document's `link` is
+  null (the common case) the adapter builds PrimeGov's PUBLIC
+  `/Public/CompiledDocument?meetingTemplateId=...&compileOutputType=...` URL from
+  the document's `templateId` and downloads the PDF anonymously (the endpoint
+  redirects to the real PDF). A document is only imported when the PDF's text
+  layer parses into flat, top-level numbered items; a differently formatted
+  agenda is an honest 502 `pdf_no_items`, not a fabricated import. A meeting
+  whose only document is a cancellation notice yields an honest 502
+  `cancellation_notice_only`.
+- **PrimeGov bounded handling**: PDF downloads are capped at 100 MiB / 180 s
+  (streamed, checked per chunk) and extraction at 500 pages / 2,000,000
+  characters. A document over those bounds, an unreadable/encrypted PDF, or a
+  PARTIAL extraction is refused with a distinct error
+  (`document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`)
+  BEFORE anything is written -- a truncated document never silently replaces a
+  complete agenda. The vendor's redirect to its external public blob storage is
+  followed manually, each hop validated with the existing public-URL guard, so a
+  redirect to a LITERAL loopback/private/link-local/metadata host is refused
+  (DNS-rebinding remains that guard's pre-existing, disclosed residual risk).
+- **PrimeGov discovery is upcoming + one finite current-year archive list**
+  (deduped by meeting id). If only one of the two list endpoints answers, the
+  results are returned with an `X-Agenda-Discovery-Warning` PARTIAL banner; if
+  both fail it is an honest 502, never an empty calendar. Older-than-current
+  years are reachable via the existing `since` date filter (bounded to one
+  archive year per discovery call); importing an archived meeting uses a
+  bounded recent-year lookup (current year and the two prior years).
 - **CivicClerk's extraction is honestly bounded**: the shared PDF extractor
   recognizes flat, top-level digit-numbered lines only. A real agenda that
   nests numbered sub-items under lettered top-level sections (e.g.

@@ -69,10 +69,18 @@ headless browser is needed or used:
 * **Legistar** (`legistar.py`) — the OData Web API
   (`webapi.legistar.com/v1/{client}/Events`), token-gated for a minority of
   tenants (confirmed live: NYC), open for most (confirmed live: Seattle).
-* **PrimeGov** (`primegov.py`) — the anonymous Public Portal API
-  (`{client}.primegov.com/api/v2/PublicPortal/ListUpcomingMeetings`) +
-  compiled-HTML-agenda extraction (`docparse.py`). Live-verified against
-  `longmont.primegov.com`.
+* **PrimeGov** (`primegov.py`) - the anonymous Public Portal API
+  (`{client}.primegov.com/api/v2/PublicPortal/ListUpcomingMeetings` and
+  `.../ListArchivedMeetings?year=`) + compiled-HTML-agenda extraction
+  (`docparse.py`). A PDF-only document (vendor `link` null) is fetched
+  anonymously from the PUBLIC `.../Public/CompiledDocument` endpoint
+  (`meetingTemplateId`/`compileOutputType`) and parsed with a bounded
+  `docparse.extract_items_from_pdf_bounded` (page/char caps; a partial,
+  oversized, or unreadable PDF is refused before any import). Document
+  selection prefers a real agenda over a packet/minutes and never treats a
+  cancellation notice as an agenda. Upcoming + one finite current-year
+  archive list are deduped by meeting id; a single failing list surfaces a
+  PARTIAL warning. Live-verified against `longmont.primegov.com`.
 * **CivicClerk** (`civicclerk.py`) — the anonymous Events API
   (`{client}.api.civicclerk.com/v1/Events`) + a documented per-document PDF
   fetch. Live-verified against `portagemi.api.civicclerk.com`.

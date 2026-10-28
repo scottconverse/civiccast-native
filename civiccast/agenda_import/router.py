@@ -25,7 +25,7 @@ import logging
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from civiccast.agenda.models import AgendaItem
@@ -241,6 +241,7 @@ def import_external(
 def list_external_meetings(
     source: AgendaSourceName,
     client_code: Annotated[str, AfterValidator(validate_client_code)],
+    response: Response,
     since: Annotated[
         date | None, Query(description="Only meetings on/after this date (default: today)")
     ] = None,
@@ -274,7 +275,17 @@ def list_external_meetings(
             portal_url=resolved_portal_url,
             portal_vendor_hint=portal_vendor_hint,
         )
-        return adapter.fetch_meetings(client_code, since=since)
+        meetings = adapter.fetch_meetings(client_code, since=since)
+        # P3: a source that only partially answered (one of its list endpoints
+        # failed) reports it here so the operator console can show a PARTIAL
+        # banner instead of a silently-truncated calendar. The body stays a plain
+        # list (no response-shape change); this is additive metadata only.
+        warning = getattr(adapter, "last_listing_warning", None)
+        if isinstance(warning, str) and warning:
+            response.headers["X-Agenda-Discovery-Warning"] = warning.encode(
+                "ascii", "replace"
+            ).decode("ascii")
+        return meetings
     except AgendaSourceNotAvailableError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except AgendaSourceDependencyMissingError as exc:

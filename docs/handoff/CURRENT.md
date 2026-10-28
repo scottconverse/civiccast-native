@@ -2,6 +2,72 @@
 
 Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
 
+## CURRENT - DELIVERED (candidate): PrimeGov public-PDF + bounded handling + archives (Phase 1 P1-P3) - October 28, 2026
+
+Owner set PHASE1 (P1-P3 only) as the active goal with GO; DeepSeek LOW sole
+executor, root coordinates. Serial candidate `phase1/primegov-pdf-discovery`
+from main `796ad703`. Phase 1 only: no Phase 2 (L1/L2), no installer/
+signing/release/tag/publication, no LFS/spending, no station probe/restart/
+install, no physical hardware, no subagents.
+
+CHANGED FILES (smallest set):
+- `civiccast/agenda_import/primegov.py` - P1 public `CompiledDocument` URL when
+  a document link is null (built from `templateId` + `compileOutputType`),
+  agenda>packet>minutes>other document ranking (not minutes-first), honest
+  cancellation-notice-only + no-supported-document errors; P2 streaming
+  byte/time-capped download + page/char-capped extraction with distinct
+  `document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`
+  errors (partial REFUSED before any import persistence). The vendor redirect
+  to its external public blob storage is followed MANUALLY, each hop validated
+  with the existing `validate_portal_url` guard, which rejects a target whose
+  LITERAL host is loopback/private/link-local/metadata (or userinfo/non-http(s));
+  like that guard itself it does NOT resolve DNS, so DNS-rebinding is the same
+  pre-existing residual risk, not newly introduced or claimed closed. P3 upcoming + one
+  finite current-year archive list, dedup by provider meeting id, PARTIAL
+  warning when one list fails, bounded recent-year lookup so an archived
+  meeting discovery offered is actually retrievable on import.
+- `civiccast/agenda_import/docparse.py` - new `extract_items_from_pdf_bounded`
+  + `PdfExtraction` (page/char caps, `partial`/`reason`); original
+  `extract_items_from_pdf` left untouched for other providers.
+- `civiccast/agenda_import/router.py` - discovery sets
+  `X-Agenda-Discovery-Warning` header when a source only partially answered;
+  body stays a plain list (no response-shape/schema change).
+- portal-operator `client.ts` (header-aware `onResponse` + discovery result
+  object) and `AgendasScreen.tsx` (PARTIAL banner).
+- tests: `test_primegov.py`, `test_docparse.py`, `test_router.py`,
+  `AgendasScreen.test.tsx` (changed behaviours only).
+
+FINITE DEFAULTS (chosen for the recorded real 41,472,505-byte / 258-page
+council packet, box has 31.6 GiB RAM): download cap 100 MiB; 180 s total
+download budget checked per streamed chunk; 500 pages; 2,000,000 extracted
+characters; 60 s extraction budget. Page/char caps are the real work bound
+(a between-page clock cannot abort one slow page); the download deadline is a
+true wall-clock guard on streamed bytes.
+
+EVIDENCE / ACTUAL WORKFLOW (isolated dev app + temp SQLite, real network,
+existing router + real `PrimeGovSource`): discovery 282 meetings (5 upcoming
++ 277 archived 2026), no partial header; archived import of meeting 3443
+("Longmont Urban Renewal Authority") via
+`/Public/CompiledDocument?meetingTemplateId=15544&compileOutputType=1` (null
+link) stored 8 real agenda items ("Meeting Called to Order", ...), correct
+`source_doc_url`, ascending order, draft; cancellation-only meeting 3489 ->
+502 `cancellation_notice_only`, 0 items, nothing fabricated; recorded known
+public PDF `meetingTemplateId=15247` downloaded 41,472,505 bytes in ~2.5 s,
+258 pages, 0 partial, 210 flat-numbered lines extracted. IMPORTANT framing:
+that 210-line result is a BOUNDS PROOF that the finite defaults accommodate
+the recorded 41 MiB / 258-page packet (no partial, no cap hit) -- those raw
+packet lines are NOT validated agenda items. The semantic workflow proof is
+the 8-item archived agenda import above (real agenda, correct source order).
+The manual-redirect loop was re-checked against the real vendor path (211,304-
+byte archived agenda PDF, 8 items, not partial) and refuses a private/link-
+local target. Focused local in the clean worktree: test_primegov 29,
+test_docparse 20, test_router 34+1 skip (83 + 1 skip), AgendasScreen vitest 35,
+`tsc -b` clean. Unit/WS4/etc required CI runs on the pushed head.
+
+OWNED JOB: required `ci-test` on this branch's PR (triggered by the push).
+Expected terminal: required checks green -> normal PR merge. Cancel method if
+mis-owned: `gh run cancel <run id>` for that run only.
+
 ## CURRENT - IN FLIGHT: workflow-policy assertion fix for required CI Unit - October 27, 2026
 
 Owner authorized (DeepSeek LOW sole executor, root coordinates) fixing the required
