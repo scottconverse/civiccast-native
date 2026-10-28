@@ -300,11 +300,16 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert "artifacts/native-beta/packs/native-cuda-runtime.ccpack" in upload_paths
 
     # Artifact reuse may download, but the candidate producer must not publish.
+    # The reviewed PyAV wheel is downloaded from its own small provenance asset
+    # (release PR #275 added it so CI no longer reads the mutable app-payload
+    # pack for it), and that download must stay the ONLY `gh release` verb here.
     reviewed_download = (
         "gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY "
-        "--pattern native-app-payload.ccpack --dir $reuse"
+        "--pattern $env:REVIEWED_WHEEL_NAME --dir $reuse"
     )
     assert text.count(reviewed_download) == 1
+    reuse_env = steps["Reuse the exact pinned PyAV wheel from an existing release"]["env"]
+    assert reuse_env["REVIEWED_WHEEL_NAME"] == "av-18.0.0-cp311-abi3-win_amd64.whl"
     assert "gh release" not in text.replace(reviewed_download, "")
     assert "gh api" not in text
 

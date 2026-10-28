@@ -2,6 +2,47 @@
 
 Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
 
+## CURRENT - IN FLIGHT: workflow-policy assertion fix for required CI Unit - October 27, 2026
+
+Owner authorized (DeepSeek LOW sole executor, root coordinates) fixing the required
+CI failure introduced alongside merged PR #275 and getting required CI green, with
+no extra tests, no rebuild, no LFS, no spending and no station action.
+
+- DIAGNOSIS (from existing log, not re-run): main `346605a0` source CI run
+  `40629526280`, job `Unit tests`, `11806 passed, 106 skipped, 5 deselected`.
+  Single failure `tests/policy/test_native_beta_candidate_workflow.py:307`
+  `assert text.count(reviewed_download) == 1` -> `0 == 1` in
+  `test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishing`.
+  That assertion hardcoded the pre-#275 reuse command
+  `gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern native-app-payload.ccpack --dir $reuse`.
+  PR #275 deliberately moved the reviewed PyAV wheel to its own 4 MB release asset,
+  so the workflow step now reads
+  `--pattern $env:REVIEWED_WHEEL_NAME --dir $reuse`. Workflow behavior is correct
+  and strictly better (no mutable product pack in a CI build input, download-only);
+  the stale policy assertion was the only failure. Product code, signing,
+  installer bytes and published acceptance evidence are unaffected.
+  The downstream claims-verifier failure is missing JUnit evidence from the failed
+  producer (job never executed its JUnit-upload step), not a product/tests failure.
+  Optional randomized suite failure stays NON-GATE; not run, not fixed, not waited on.
+- CANDIDATE: branch `fix/policy-reuse-download-assertion` from exact main
+  `346605a0409988f1f86e4845e04e82b10d970deb`. CHANGED BEHAVIOR: one policy
+  assertion now expects the actual reviewed-wheel download line and additionally
+  pins the step's `REVIEWED_WHEEL_NAME` to `av-18.0.0-cp311-abi3-win_amd64.whl`.
+  Unchanged and still asserted: exactly one `gh release` occurrence in the
+  producer (that download), no `gh api`, no publish/upload/edit verb, no
+  `--allow-development-key`, signing/trust-root/artifact/checksum/reuse safeguards.
+  The wheel pin itself is NOT repinned or undone (`0f9427a4...`/4,347,090 bytes).
+- EVIDENCE REUSED: PR #275 merge `346605a0`; the same run's `11806` passing tests;
+  WS4 and "Two independent Windows workspaces" already passed on that head;
+  published installer `8fdce69e`/`2c6d2614...` correct and untouched.
+- OWNED JOB: required `ci-test` on this branch's PR (Unit + applicable claims/
+  security jobs), triggered by the branch push only - no manual dispatch, no
+  signing build, no rebuild. Expected terminal: PR required checks green.
+  Cancel method if mis-owned/wedged: `gh run cancel <run id>` for that run only.
+  Exact run/PR identities are recorded at receipt below rather than in a second
+  bookkeeping commit, so CI is not restarted for documentation.
+- NEXT STEP: normal reviewable PR, bounded watch of the auto-triggered required
+  checks, then normal merge; no admin/bypass, no tag/release/rebuild/station work.
 
 ## CURRENT — DELIVERED: Beta20 recovery-fix package published — October 27, 2026
 
