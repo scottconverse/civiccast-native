@@ -269,6 +269,10 @@ class TestFetchAgenda:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/ListUpcomingMeetings"):
                 return httpx.Response(200, json=meetings)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                # P3 adds an archived-list call; fail it so only the upcoming
+                # list answers, then assert the hostile link is never fetched.
+                return httpx.Response(404, text="no archive")
             pytest.fail("adapter must not attempt a network fetch of a hostile-scheme link")
 
         source = PrimeGovSource(transport=httpx.MockTransport(handler))
@@ -307,6 +311,8 @@ class TestFetchAgenda:
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path.endswith("/ListUpcomingMeetings"):
                 return httpx.Response(200, json=meetings)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="no archive")
             assert str(request.url) == "https://example-tenant.primegov.com/agenda.pdf"
             return httpx.Response(200, content=pdf_bytes)
 
@@ -316,3 +322,277 @@ class TestFetchAgenda:
 
         assert [i.title for i in agenda.items] == ["Call to order", "Roll call"]
         assert agenda.source_doc_url == "https://example-tenant.primegov.com/agenda.pdf"
+
+
+def _agenda_pdf(lines: list[str]) -> bytes:
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer)
+    y = 750
+    for line in lines:
+        pdf.drawString(72, y, line)
+        y -= 20
+    pdf.save()
+    return buffer.getvalue()
+
+
+def _single_meeting(documents: list[dict]) -> list[dict]:
+    return [
+        {"id": 777, "title": "PDF-only meeting", "dateTime": "2026-07-08T09:00:00", "documentList": documents}
+    ]
+
+
+class TestCompiledDocumentPdf:
+    """P1: a PDF document with a null vendor link is fetched from PrimeGov's
+    PUBLIC pre-compiled-document endpoint built from templateId + compileOutputType."""
+
+    def test_pdf_agenda_with_null_link_builds_public_compiled_document_url(self) -> None:
+        pdf_bytes = _agenda_pdf(["1. Call to order", "2. Roll call"])
+        requested: list[tuple[str | None, str | None]] = []
+        meetings = _single_meeting(
+            [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1, "link": None}]
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=meetings)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="no archive")
+            assert request.url.path == "/Public/CompiledDocument"
+            requested.append(
+                (request.url.params.get("meetingTemplateId"), request.url.params.get("compileOutputType"))
+            )
+            return httpx.Response(200, content=pdf_bytes)
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+        agenda = source.fetch_agenda("longmont", "777")
+
+        assert agenda.source_doc_url == (
+            "https://longmont.primegov.com/Public/CompiledDocument"
+            "?meetingTemplateId=555&compileOutputType=1"
+        )
+        assert [i.title for i in agenda.items] == ["Call to order", "Roll call"]
+        assert requested == [("555", "1")]
+
+    def test_agenda_document_preferred_over_packet_for_pdfs(self) -> None:
+        pdf_bytes = _agenda_pdf(["1. Call to order"])
+        requested: list[str | None] = []
+        meetings = _single_meeting(
+            [
+                {"id": 1, "templateId": 900, "templateName": "Packet", "compileOutputType": 1, "link": None},
+                {"id": 2, "templateId": 800, "templateName": "Agenda", "compileOutputType": 1, "link": None},
+            ]
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=meetings)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="x")
+            requested.append(request.url.params.get("meetingTemplateId"))
+            return httpx.Response(200, content=pdf_bytes)
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+        agenda = source.fetch_agenda("longmont", "777")
+
+        assert requested == ["800"]
+        assert "meetingTemplateId=800" in agenda.source_doc_url
+
+    def test_cancellation_notice_only_is_honest_error(self) -> None:
+        # Real fixture meeting 3695 has only a Notice of Cancellation document.
+        source = PrimeGovSource(transport=httpx.MockTransport(_handler_for(meetings=_MEETINGS)))
+        with pytest.raises(AgendaSourceUpstreamError, match="cancellation_notice_only"):
+            source.fetch_agenda("longmont", "3695")
+
+
+class TestBoundedPdfHandling:
+    """P2: streaming byte/time caps + bounded extraction, distinguished and
+    refused before any import persistence."""
+
+    def _handler(self, meetings: list[dict], body: bytes):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=meetings)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="x")
+            return httpx.Response(200, content=body)
+
+        return handler
+
+    def _meeting(self) -> list[dict]:
+        return _single_meeting(
+            [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1, "link": None}]
+        )
+
+    def test_oversized_document_is_refused(self) -> None:
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(self._meeting(), b"%PDF-1.7" + b"0" * 500)),
+            max_document_bytes=100,
+        )
+        with pytest.raises(AgendaSourceUpstreamError, match="document_too_large"):
+            source.fetch_agenda("longmont", "777")
+
+    def test_partial_extraction_is_refused_before_import(self) -> None:
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer)
+        for index in range(5):
+            pdf.drawString(72, 750, f"{index + 1}. Item {index + 1}")
+            pdf.showPage()
+        pdf.save()
+
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(self._meeting(), buffer.getvalue())),
+            max_pdf_pages=2,
+        )
+        with pytest.raises(AgendaSourceUpstreamError, match="pdf_partial"):
+            source.fetch_agenda("longmont", "777")
+
+    def test_unreadable_pdf_is_distinguished_from_no_items(self) -> None:
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(self._meeting(), b"not a pdf at all"))
+        )
+        with pytest.raises(AgendaSourceUpstreamError, match="pdf_unreadable"):
+            source.fetch_agenda("longmont", "777")
+
+
+class TestArchivedDiscovery:
+    """P3: upcoming + finite current-year archives, dedup, partial-failure."""
+
+    def _handler(self, *, upcoming=None, archive=None, upcoming_status=200, archive_status=200):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(upcoming_status, json=upcoming if upcoming_status == 200 else None)
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(archive_status, json=archive if archive_status == 200 else None)
+            return httpx.Response(404, text="x")
+
+        return handler
+
+    def test_archived_meetings_merged_and_deduped_by_id(self) -> None:
+        upcoming = [{"id": 1, "title": "Up1", "dateTime": "2026-07-08T09:00:00"}]
+        archive = [
+            {"id": 1, "title": "Up1", "dateTime": "2026-07-08T09:00:00"},
+            {"id": 2, "title": "Old", "dateTime": "2025-03-01T09:00:00"},
+        ]
+        source = PrimeGovSource(transport=httpx.MockTransport(self._handler(upcoming=upcoming, archive=archive)))
+
+        meetings = source.fetch_meetings("longmont")
+
+        assert [m.external_id for m in meetings] == ["1", "2"]
+        assert source.last_listing_warning is None
+
+    def test_one_endpoint_failure_is_partial_and_preserves_the_other(self) -> None:
+        upcoming = [{"id": 1, "title": "Up1", "dateTime": "2026-07-08T09:00:00"}]
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(upcoming=upcoming, archive_status=500))
+        )
+
+        meetings = source.fetch_meetings("longmont")
+
+        assert [m.external_id for m in meetings] == ["1"]
+        assert source.last_listing_warning is not None
+        assert "PARTIAL" in source.last_listing_warning
+
+    def test_both_endpoints_fail_is_honest_error_not_empty(self) -> None:
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(self._handler(upcoming_status=500, archive_status=500))
+        )
+        with pytest.raises(AgendaSourceUpstreamError, match="honest upstream error"):
+            source.fetch_meetings("longmont")
+
+    def test_since_year_drives_bounded_archive_query(self) -> None:
+        requested: list[str | None] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                requested.append(request.url.params.get("year"))
+                return httpx.Response(200, json=[])
+            return httpx.Response(404, text="x")
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+        source.fetch_meetings("longmont", since=date(2025, 1, 1))
+
+        assert requested == ["2025"]
+
+    def test_earlier_year_archived_meeting_is_importable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # fetch_agenda must retrieve a meeting that an earlier archived year
+        # offered, not look only at the current year.
+        from civiccast.agenda_import import primegov as primegov_module
+
+        monkeypatch.setattr(primegov_module, "_archive_year", lambda since: 2030)
+        pdf_bytes = _agenda_pdf(["1. Call to order"])
+        archived = [
+            {
+                "id": 9,
+                "title": "Old meeting",
+                "dateTime": "2029-03-01T09:00:00",
+                "documentList": [
+                    {"id": 1, "templateId": 321, "templateName": "Agenda", "compileOutputType": 1, "link": None}
+                ],
+            }
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=[])
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                year = request.url.params.get("year")
+                return httpx.Response(200, json=archived if year == "2029" else [])
+            return httpx.Response(200, content=pdf_bytes)
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+        agenda = source.fetch_agenda("longmont", "9")
+
+        assert agenda.external_id == "9"
+        assert "meetingTemplateId=321" in agenda.source_doc_url
+
+
+class TestDocumentRedirectSafety:
+    """P1/P2: the CompiledDocument download follows vendor redirects to external
+    public storage, but a redirect to a non-public target is refused."""
+
+    def _meeting(self) -> list[dict]:
+        return _single_meeting(
+            [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1, "link": None}]
+        )
+
+    def test_redirect_to_a_private_or_link_local_target_is_blocked(self) -> None:
+        hosts: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=self._meeting())
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="x")
+            hosts.append(request.url.host)
+            if request.url.host == "longmont.primegov.com":
+                return httpx.Response(302, headers={"location": "http://169.254.169.254/latest/meta-data/"})
+            pytest.fail(f"redirect to a non-public host must not be followed: {request.url}")
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+        with pytest.raises(AgendaSourceUpstreamError, match="document_redirect_blocked"):
+            source.fetch_agenda("longmont", "777")
+        assert hosts == ["longmont.primegov.com"]  # the metadata host was never requested
+
+    def test_redirect_to_public_external_storage_is_followed(self) -> None:
+        pdf_bytes = _agenda_pdf(["1. Call to order"])
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/ListUpcomingMeetings"):
+                return httpx.Response(200, json=self._meeting())
+            if request.url.path.endswith("/ListArchivedMeetings"):
+                return httpx.Response(404, text="x")
+            if request.url.host == "longmont.primegov.com":
+                return httpx.Response(
+                    302, headers={"location": "https://pgwest.blob.core.windows.net/longmont/x.pdf"}
+                )
+            assert request.url.host == "pgwest.blob.core.windows.net"
+            return httpx.Response(200, content=pdf_bytes)
+
+        source = PrimeGovSource(transport=httpx.MockTransport(handler))
+        agenda = source.fetch_agenda("longmont", "777")
+
+        assert [i.title for i in agenda.items] == ["Call to order"]

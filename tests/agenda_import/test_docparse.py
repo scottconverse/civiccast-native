@@ -153,3 +153,53 @@ class TestExtractItemsFromPdf:
         items = extract_items_from_pdf(b"irrelevant bytes")
 
         assert items == []
+
+
+class TestExtractItemsFromPdfBounded:
+    """P2: the bounded extractor reports partial/unreadable honestly so a caller
+    can refuse a truncated import instead of persisting part of a document."""
+
+    def test_whole_document_read_is_not_partial(self) -> None:
+        pdf_bytes = _write_pdf(["1. Call to order", "2. Roll call"])
+
+        result = docparse.extract_items_from_pdf_bounded(pdf_bytes)
+
+        assert [i.title for i in result.items] == ["Call to order", "Roll call"]
+        assert result.partial is False
+        assert result.reason is None
+        assert result.pages_read == result.pages_total == 1
+
+    def test_page_cap_marks_partial_page_limit(self) -> None:
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer)
+        for index in range(5):
+            pdf.drawString(72, 750, f"{index + 1}. Item")
+            pdf.showPage()
+        pdf.save()
+
+        result = docparse.extract_items_from_pdf_bounded(buffer.getvalue(), max_pages=2)
+
+        assert result.partial is True
+        assert result.reason == "page_limit"
+        assert result.pages_total == 5
+        assert result.pages_read == 2
+
+    def test_text_cap_marks_partial_text_limit(self) -> None:
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer)
+        pdf.drawString(72, 750, "1. " + "word " * 1000)
+        pdf.showPage()
+        pdf.drawString(72, 750, "2. " + "word " * 1000)
+        pdf.save()
+
+        result = docparse.extract_items_from_pdf_bounded(buffer.getvalue(), max_text_chars=100)
+
+        assert result.partial is True
+        assert result.reason == "text_limit"
+
+    def test_malformed_bytes_reports_unreadable_not_partial(self) -> None:
+        result = docparse.extract_items_from_pdf_bounded(b"not a pdf at all")
+
+        assert result.items == []
+        assert result.partial is False
+        assert result.reason == "unreadable"

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import html
 import re
+from dataclasses import dataclass, field
 from io import BytesIO
 
 from pypdf import PdfReader
@@ -150,4 +151,132 @@ def extract_items_from_pdf(pdf_bytes: bytes) -> list[ExternalAgendaItem]:
     return items
 
 
-__all__ = ["extract_items_from_html", "extract_items_from_pdf"]
+# --- Bounded PDF extraction (Agenda Bridge P2) ------------------------------
+#
+# ``extract_items_from_pdf`` above reads every page with no ceiling, which is
+# fine for a small operator-uploaded agenda but unsafe for a vendor ``Packet``
+# that can run to hundreds of pages / tens of MB. ``extract_items_from_pdf_bounded``
+# is the finite-work variant the PrimeGov ``CompiledDocument`` path uses: it
+# caps how many pages it will touch and how much text it will accumulate, and
+# reports honestly whether it finished the WHOLE document or only part of it,
+# so a caller can refuse a truncated import rather than silently persist a
+# partial agenda (Agenda Bridge P2 "no silent partial replacement"). The
+# original ``extract_items_from_pdf`` is left untouched for the providers that
+# already relied on its exact behaviour.
+
+#: Defaults chosen to comfortably accommodate the recorded real Longmont
+#: 41,472,505-byte / 258-page council packet (a real, published PrimeGov
+#: document) with headroom, while staying finite: 500 pages > 258, 2,000,000
+#: extracted characters is >4x the recorded packet's selectable text. Overridable
+#: per-call so tests (and a future differently-sized tenant) can exercise the
+#: bounds cheaply without editing this constant.
+DEFAULT_MAX_PDF_PAGES = 500
+DEFAULT_MAX_PDF_TEXT_CHARS = 2_000_000
+
+
+@dataclass(frozen=True)
+class PdfExtraction:
+    """Outcome of a bounded PDF extraction.
+
+    ``partial`` is ``True`` when the extractor stopped before covering every
+    page (page cap hit with more pages remaining, or the running text budget
+    was exhausted). ``reason`` names the cause for an operator-facing message:
+    ``"unreadable"`` (malformed/encrypted PDF, no usable text layer path),
+    ``"page_limit"`` or ``"text_limit"`` (bounded stop), or ``None`` when the
+    whole document was read without hitting a bound.
+    """
+
+    items: list[ExternalAgendaItem] = field(default_factory=list)
+    pages_total: int = 0
+    pages_read: int = 0
+    partial: bool = False
+    reason: str | None = None
+
+
+def extract_items_from_pdf_bounded(
+    pdf_bytes: bytes,
+    *,
+    max_pages: int = DEFAULT_MAX_PDF_PAGES,
+    max_text_chars: int = DEFAULT_MAX_PDF_TEXT_CHARS,
+    deadline_seconds: float | None = None,
+) -> PdfExtraction:
+    """Bounded variant of :func:`extract_items_from_pdf`.
+
+    Never raises for a malformed/unreadable PDF -- returns a ``PdfExtraction``
+    with ``reason="unreadable"`` instead, so the caller can distinguish
+    "unreadable" from "read fine but no numbered items". Stops after at most
+    ``max_pages`` pages or ``max_text_chars`` accumulated characters and marks
+    ``partial=True`` when it did not cover the whole document. ``deadline_seconds``,
+    when set, additionally stops (``partial=True``, ``reason="time_limit"``) once
+    the wall-clock budget is spent *between* page extractions, bounding a
+    pathologically slow -- but not infinite -- page.
+    """
+    import time
+
+    try:
+        reader = PdfReader(BytesIO(pdf_bytes))
+        # An empty-password attempt covers the common "owner-password only"
+        # vendor PDF; anything still encrypted afterwards has no anonymous text
+        # path and is reported as unreadable, not a silent empty result.
+        if reader.is_encrypted and reader.decrypt("") == 0:
+            return PdfExtraction(reason="unreadable")
+        pages = reader.pages
+        pages_total = len(pages)
+    except Exception:
+        return PdfExtraction(reason="unreadable")
+
+    items: list[ExternalAgendaItem] = []
+    order = 0
+    text_used = 0
+    started = time.monotonic()
+    pages_read = 0
+    reason: str | None = None
+    for index, page in enumerate(pages):
+        if index >= max_pages:
+            reason = "page_limit"
+            break
+        if deadline_seconds is not None and time.monotonic() - started > deadline_seconds:
+            reason = "time_limit"
+            break
+        try:
+            page_text = page.extract_text() or ""
+        except Exception:
+            # A single malformed page must not abort a mostly-readable document;
+            # treat its text as empty rather than raising out of the loop.
+            page_text = ""
+        pages_read += 1
+        text_used += len(page_text)
+        for raw_line in page_text.splitlines():
+            match = _PDF_NUMBERED_LINE_RE.match(raw_line)
+            if match is None:
+                continue
+            order += 1
+            title = match.group("title").strip()
+            if not title:
+                continue
+            items.append(
+                ExternalAgendaItem(
+                    order=order, title=title[:_ITEM_TITLE_MAX], number=match.group("number")
+                )
+            )
+        if text_used >= max_text_chars and index + 1 < pages_total:
+            reason = "text_limit"
+            break
+
+    return PdfExtraction(
+        items=items,
+        pages_total=pages_total,
+        pages_read=pages_read,
+        partial=reason is not None,
+        reason=reason,
+    )
+
+
+__all__ = [
+    "DEFAULT_MAX_PDF_PAGES",
+    "DEFAULT_MAX_PDF_TEXT_CHARS",
+    "PdfExtraction",
+    "extract_items_from_html",
+    "extract_items_from_pdf",
+    "extract_items_from_pdf_bounded",
+]

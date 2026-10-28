@@ -618,3 +618,34 @@ class TestJsPortalPosture:
 
         resp = client.get("/api/staff/agenda-sources/js-portal/posture")
         assert resp.status_code == 403
+
+
+class TestDiscoveryPartialWarning:
+    """P3: a source that only partially answered discovery surfaces a PARTIAL
+    warning in a response header while still returning the surviving meetings."""
+
+    def test_partial_listing_warning_is_surfaced_as_header(self) -> None:
+        summary = ExternalMeetingSummary(external_id="1", title="City Council")
+        source = _StubSource(meetings=[summary])
+        source.last_listing_warning = "PARTIAL PrimeGov discovery: archived(2026) meeting list failed."
+        app, _store = _build(source=source)
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/primegov/longmont/meetings")
+
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {"external_id": "1", "title": "City Council", "meeting_datetime": None}
+        ]
+        assert "PARTIAL" in resp.headers.get("x-agenda-discovery-warning", "")
+
+    def test_no_warning_header_when_result_is_complete(self) -> None:
+        summary = ExternalMeetingSummary(external_id="1", title="City Council")
+        source = _StubSource(meetings=[summary])
+        app, _store = _build(source=source)
+        client = TestClient(app)
+
+        resp = client.get("/api/staff/agenda-sources/primegov/longmont/meetings")
+
+        assert resp.status_code == 200
+        assert resp.headers.get("x-agenda-discovery-warning") is None

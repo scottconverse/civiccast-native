@@ -829,6 +829,7 @@ function ExternalImportSection({
   const [since, setSince] = useState('')
   const [meetings, setMeetings] = useState<ExternalMeetingSummary[] | null>(null)
   const [selectedEventId, setSelectedEventId] = useState('')
+  const [discoveryWarning, setDiscoveryWarning] = useState<string | null>(null)
 
   const isJsPortal = source === 'js_portal'
 
@@ -848,8 +849,9 @@ function ExternalImportSection({
         portalVendorHint: isJsPortal ? vendorHint : null,
       }),
     onSuccess: (found) => {
-      setMeetings(found)
-      setSelectedEventId(found[0]?.external_id ?? '')
+      setMeetings(found.meetings)
+      setDiscoveryWarning(found.partialWarning)
+      setSelectedEventId(found.meetings[0]?.external_id ?? '')
     },
   })
 
@@ -900,6 +902,7 @@ function ExternalImportSection({
               setSource(e.target.value as AgendaExternalSource)
               setMeetings(null)
               setSelectedEventId('')
+              setDiscoveryWarning(null)
             }}
             className="rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
@@ -1014,6 +1017,12 @@ function ExternalImportSection({
                 "This source's optional runtime is not installed on this station.",
               )
             : apiMessage(discoverMut.error, 'Could not list meetings from that source.')}
+        </Banner>
+      )}
+
+      {discoveryWarning && (
+        <Banner tone="warn">
+          Only partial results were returned. {discoveryWarning}
         </Banner>
       )}
 
