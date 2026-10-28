@@ -101,15 +101,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REVIEWED_RELEASE: v1.0.0-beta.20
+          REVIEWED_WHEEL_NAME: av-18.0.0-cp311-abi3-win_amd64.whl
         run: |
           $ErrorActionPreference = 'Stop'
           $reuse = Join-Path $env:RUNNER_TEMP 'reviewed-pyav-reuse'
           New-Item -ItemType Directory -Path $reuse | Out-Null
-          gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern native-app-payload.ccpack --dir $reuse
-          if ($LASTEXITCODE -ne 0) { throw 'Pinned PyAV source pack download failed.' }
-          python -c "import ast,hashlib,pathlib,sys,zipfile;_MATCH=lambda n,name:(isinstance(n,ast.AnnAssign) and isinstance(n.target,ast.Name) and n.target.id==name) or (isinstance(n,ast.Assign) and len(n.targets)==1 and isinstance(n.targets[0],ast.Name) and n.targets[0].id==name);_CONST=lambda t,name:next(ast.literal_eval(n.value) for n in t.body if _MATCH(n,name));app=ast.parse(pathlib.Path('scripts/build_native_app_payload.py').read_text(encoding='utf-8'));pyav=ast.parse(pathlib.Path('scripts/build_native_pyav_wheel.py').read_text(encoding='utf-8'));wheel_name=_CONST(app,'REVIEWED_PYAV_WHEEL_NAME');wheel_bytes=_CONST(pyav,'EXPECTED_WHEEL_BYTES');wheel_sha=_CONST(pyav,'EXPECTED_WHEEL_SHA256');p=pathlib.Path(sys.argv[1]);z=zipfile.ZipFile(p/'native-app-payload.ccpack');names=[n for n in z.namelist() if n.endswith('/WHEELS/'+wheel_name) or n=='WHEELS/'+wheel_name];assert len(names)==1,names;data=z.read(names[0]);assert len(data)==wheel_bytes and hashlib.sha256(data).hexdigest()==wheel_sha,'Reviewed wheel identity mismatch';(p/wheel_name).write_bytes(data)" $reuse
-          if ($LASTEXITCODE -ne 0) { throw 'Existing wheel does not match the unchanged reviewed pin.' }
-          [IO.File]::Delete((Join-Path $reuse 'native-app-payload.ccpack'))
+          # The exact reviewed wheel is published as its own small provenance asset on
+          # that release (see docs/handoff/BUILD-ASSETS.md). It is not part of the
+          # installable kit, so this reuse path never depends on a mutable product pack.
+          gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern $env:REVIEWED_WHEEL_NAME --dir $reuse
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed PyAV wheel asset download failed.' }
+          python -c "import ast,hashlib,pathlib,sys;_MATCH=lambda n,name:(isinstance(n,ast.AnnAssign) and isinstance(n.target,ast.Name) and n.target.id==name) or (isinstance(n,ast.Assign) and len(n.targets)==1 and isinstance(n.targets[0],ast.Name) and n.targets[0].id==name);_CONST=lambda t,name:next(ast.literal_eval(n.value) for n in t.body if _MATCH(n,name));app=ast.parse(pathlib.Path('scripts/build_native_app_payload.py').read_text(encoding='utf-8'));pyav=ast.parse(pathlib.Path('scripts/build_native_pyav_wheel.py').read_text(encoding='utf-8'));wheel_name=_CONST(app,'REVIEWED_PYAV_WHEEL_NAME');wheel_bytes=_CONST(pyav,'EXPECTED_WHEEL_BYTES');wheel_sha=_CONST(pyav,'EXPECTED_WHEEL_SHA256');p=pathlib.Path(sys.argv[1])/wheel_name;assert p.is_file(),p;data=p.read_bytes();assert len(data)==wheel_bytes and hashlib.sha256(data).hexdigest()==wheel_sha,'Reviewed wheel identity mismatch'" $reuse
+          if ($LASTEXITCODE -ne 0) { throw 'Published wheel asset does not match the unchanged reviewed pin.' }
           "CIVICCAST_REVIEWED_PYAV_WHEEL=$reuse\av-18.0.0-cp311-abi3-win_amd64.whl" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build twice and require byte equality
