@@ -63,34 +63,31 @@ DELIVERED (public):
 - Live station, tags/history and unrelated dirty work (soak/YouTube evidence,
   coordinator failure log, .tmp files) preserved.
 
-OPEN DEFECT found by repository CI after publication (not a download/link error):
-- Job: `native-app-reproducibility` / "Two independent Windows workspaces"
-  (run 40628662572), failing on PR #274's head and on main pushes.
-- Cause: its reuse step downloads `native-app-payload.ccpack` from release
-  `v1.0.0-beta.20` and asserts the embedded `av-18.0.0-cp311-abi3-win_amd64.whl`
-  equals the reviewed pin `EXPECTED_WHEEL_SHA256` 0f9427a4... / 4,347,090 bytes.
-  The replacement pack carries the self-hosted lane's advisory-built wheel
-  4,346,966 bytes / f4fb5079..., whose own provenance file records the same
-  pinned PyAV sdist and FFmpeg commit. `docs/process/pyav-wheel-reproducibility.md`
-  documents that lane as advisory-hash. The reviewed wheel existed only inside
-  the previously published beta.20 pack; that exact pack is still on local disk
-  at `outputs/beta20-documentation-revision/kit/packs/native-app-payload.ccpack`
-  (sha256 58d7623fe8ae3a4813f63602cf1a7422bf1966767016be474be05e17cb286dea).
-  Beta 19's published pack already carried the advisory wheel, so no other
-  release can serve as the reuse source.
-- Impact: that CI job stays red for every PR and main push until resolved. The
-  published installer, packs, checksums and download links are unaffected and
-  verified.
-- Options: (a) authorized rebuild of ONLY the app-payload pack reusing the
-  retained reviewed wheel (`--reviewed-pyav-wheel <path above>`), re-sign and
-  re-upload that pack plus `SHA256SUMS.txt` - the setup and other packs stay as
-  published; (b) repoint the reuse step at a release that retains the reviewed
-  wheel (none today) or republish the reviewed pack as a provenance asset;
-  (c) owner decision to re-pin to the shipped advisory wheel and update
-  docs/tests. Executor did not take (a) because rebuilding/re-signing was
-  explicitly out of scope, nor (c) because it is a provenance/review decision.
-- Recommendation: (a) under explicit owner authorization; it is the only option
-  that keeps the shipped fix and restores the reviewed-wheel identity.
+PUBLICATION-INDUCED CI COUPLING - CORRECTED (no rebuild, no re-pin, no re-sign):
+- Symptom: `native-app-reproducibility` / "Two independent Windows workspaces"
+  (run 40628662572) failed on PR #274's head and on main pushes after publication.
+- Cause: its reuse step downloaded `native-app-payload.ccpack` from release
+  `v1.0.0-beta.20` and required the embedded `av-18.0.0-cp311-abi3-win_amd64.whl`
+  to equal the reviewed pin 0f9427a4.../4,347,090 bytes. The revised pack carries
+  the self-hosted lane's advisory-built wheel (4,346,966 bytes / f4fb5079...; same
+  pinned PyAV sdist and FFmpeg commit in its own provenance file, advisory hash by
+  documented policy). So a CI build input depended on a mutable product pack.
+- Correction taken (root-recommended option under the delegated rule): the exact
+  reviewed wheel bytes were retrieved - not rebuilt - from the retained pack
+  `outputs/beta20-documentation-revision/kit/packs/native-app-payload.ccpack`,
+  validated against the existing pin (4,347,090 bytes / 0f9427a4...) and published
+  as their own small release asset `av-18.0.0-cp311-abi3-win_amd64.whl` on
+  `v1.0.0-beta.20` (GitHub asset digest matches the pin; 4.3 MB, no pack re-upload).
+  Both reuse steps now download that asset directly and keep every existing
+  reviewed size/hash assertion (`EXPECTED_WHEEL_BYTES`/`EXPECTED_WHEEL_SHA256` read
+  from `scripts/build_native_pyav_wheel.py`, plus the reviewed wheel name).
+- The asset is CI provenance/reuse only: not part of the installable kit, never
+  installer-required, and deliberately not listed in `SHA256SUMS.txt`, which stays
+  the checksum authority for the 26-asset kit. Release notes, verification record,
+  release truth and `docs/handoff/BUILD-ASSETS.md` now separate the two sets.
+- Superseded: the earlier rebuild recommendation is withdrawn. No product rebuild,
+  no wheel re-pin, no re-sign, no installer change, no new tag/release, no station
+  action. Preserve this asset across future revisions instead of replacing it.
 
 ## CURRENT - Signed installer READY FOR OWNER TAG/PUBLISH APPROVAL - October 27, 2026 21:32 MDT
 

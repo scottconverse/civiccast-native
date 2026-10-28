@@ -54,7 +54,11 @@ entries:
       matches source; embedded signed station index
       751e18ab976abe7d1a81e301ee0edfe683a5ec50d35e8f1ca4edb45eff1f6272.
       Nine assets replaced, 17 unchanged; the model archive retains its original
-      valid signed index. Source CI 40583199781 passed Unit/Windows WS4/claims;
+      valid signed index. A separate CI provenance asset publishes the exact reviewed
+      PyAV wheel (av-18.0.0-cp311-abi3-win_amd64.whl, 4,347,090 bytes, SHA-256
+      0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce) so wheel
+      reuse never depends on a mutable product pack; it is not part of the installable
+      kit, is never installer-required, and is not listed in SHA256SUMS.txt. Source CI 40583199781 passed Unit/Windows WS4/claims;
       informational Gate A 40620078397 and the optional randomized suite are not
       gates; no long-soak requalification and no host-station action. Original tag
       target a17449189a39af6474d914137eab020169f91023 is unchanged; use revision

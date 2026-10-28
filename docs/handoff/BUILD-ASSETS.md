@@ -29,7 +29,7 @@ checkout. This handoff does not launch that workflow.
 | Embedded Python | `scripts/build_native_app_payload.py`, Python.org 3.12.10 embeddable ZIP | Distinct from build Python; 11,133,606 bytes, SHA-256 `4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3` |
 | Runtime archives | `native-windows-runtime-dependencies.lock.json`; `scripts/provision_native_runtime_dependencies.py` | Upstream URLs and exact sizes/hashes pinned; use local mirror first if available |
 | GStreamer closure | `scripts/build_native_runtime_closure.py` and `civiccast/native/runtime_closure.py`; pinned upstream wheels | Recreated from the build recipe, not an undocumented local tree |
-| Reviewed PyAV wheel | Existing release `native-app-payload.ccpack`; extraction below | Prefer exact reviewed wheel reuse over cross-machine recompilation |
+| Reviewed PyAV wheel | Release asset `av-18.0.0-cp311-abi3-win_amd64.whl` on `v1.0.0-beta.20`; details below | Published as its own small CI provenance asset; prefer exact reviewed wheel reuse over cross-machine recompilation |
 | Whistle engine/model | `scripts/provision_native_whistle_assets.py`; `civiccast/native/app_payload.py` and existing station bundle | Pinned upstream assets; optional old `build/native-whistle-cache` is a cache |
 | Whisper caption models | `civiccast/native/app_payload.py`, `civiccast/native/caption_tiers.py`; existing caption/station packs or pinned model repository | Large model bytes are not Git source; preserve revisions and hashes |
 | Ollama product models | `native-windows-ollama-models.lock.json` and `native-windows-ollama-manifests/`; existing signed station bundle or registry through provisioners | Includes Gemma and TranslateGemma; unrelated to the coding agent's model |
@@ -73,20 +73,26 @@ The current pins are:
 - Bytes: `4347090`
 - SHA-256: `0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce`
 
-Use the existing workflow input `reviewed_pyav_release_tag: v1.0.0-beta.20` when
-a later authorized candidate build needs it. Its extraction step downloads only
-`native-app-payload.ccpack`, locates the wheel inside `WHEELS/`, checks the exact
-size/hash against the source constants, and supplies `CIVICCAST_REVIEWED_PYAV_WHEEL`.
-For local packaging, follow that same extraction and pass `--reviewed-pyav-wheel`
-to the app-pack builder. Never relax the pin just because local compilation differs.
+The wheel is published as its own asset, `av-18.0.0-cp311-abi3-win_amd64.whl`,
+on the Beta20 release. It is a CI provenance/reuse asset, not part of the
+installable kit, and no installation path requires it. The repository workflows'
+reuse step downloads exactly that asset, checks its size and SHA-256 against the
+source constants in `scripts/build_native_pyav_wheel.py`, and supplies
+`CIVICCAST_REVIEWED_PYAV_WHEEL`. Use the existing workflow input
+`reviewed_pyav_release_tag: v1.0.0-beta.20` when a later authorized candidate
+build needs it. For local packaging, download the same asset and pass
+`--reviewed-pyav-wheel` to the app-pack builder. Never relax the pin just because
+local compilation differs, and preserve this asset across future revisions of the
+release rather than replacing it with a rebuilt wheel.
 See [PyAV reproducibility](../process/pyav-wheel-reproducibility.md).
-This handoff inspected the recipe and release metadata; it did not redownload the
-578.5 MB pack or re-extract its wheel.
 
 ## Existing release assets (not Git LFS)
 
 [Beta20 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20)
-contains 26 assets. These are release downloads, not LFS objects. Download only
+contains 27 assets: the 26-asset installable kit plus the small CI provenance
+asset `av-18.0.0-cp311-abi3-win_amd64.whl` (4,347,090 bytes), which is not part of
+the kit and is never installer-required. These are release downloads, not LFS
+objects. Download only
 what a later task actually requires; no asset download is needed to read/edit code.
 
 | Asset | Published bytes |
