@@ -1,6 +1,191 @@
 # CivicCast current handoff — October 27, 2026
 
+Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
+
+
+## CURRENT — DELIVERED: Beta20 recovery-fix package published — October 27, 2026
+
+Scott authorized publishing the prepared signed Beta20 (source `8fdce69e`, build
+`40616252842`, setup SHA-256 `2c6d2614...388e4b`) and updating public download
+links, with no rebuild, re-sign, extra test, LFS transfer, spending or
+host-station action. Sole executor: DeepSeek LOW
+`work/deepseek-beta20-publish.py` (activity/state in
+`outputs/deepseek-beta20-publish/`); root coordinates only.
+
+Routine decision under the delegated rule — revision convention. The
+`v1.0.0-beta.20` tag and release already exist (tag target
+`a17449189a39af6474d914137eab020169f91023`, PR #259 publication, revised
+October 22 for documentation).
+- Option A — new revision tag `v1.0.0-beta.20.1` plus a new release. Pro:
+  distinct tag identity for the new bytes. Con: no existing convention for a
+  patch tag on this line, a second 26-asset release (or an incomplete
+  complete-kit set), a release-truth `current` switch and extra history.
+- Option B — in-place asset revision of the existing published release, keeping
+  the tag and its history, exactly as the October 22 documentation revision did
+  (its truth note already reads "use revision source for this package" with the
+  original tag target unchanged). Pro: existing convention, tags/history
+  preserved, public links stay valid, complete kit stays available, no new
+  release infrastructure. Con: published bytes change under one tag, mitigated
+  by explicit revision-source notes in the release body, truth manifest and
+  verification record. **Recommended and taken.**
+- Option C — move/force the existing tag. Forbidden by policy; not considered.
+No tag was created, moved or deleted, so no tag/release workflow hook could fire
+a duplicate build; this repo's workflow triggers are workflow_dispatch,
+PR/branch-push and workflow_run, none tag-based.
+
+DELIVERED (public):
+- Release `https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20`
+  remains published (not draft), prerelease, tag target
+  `a17449189a39af6474d914137eab020169f91023`, 26 assets.
+- Installer
+  `https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/setup.exe`
+  SHA-256 `2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b`
+  (GitHub asset digest matches the prepared bytes), revision source `8fdce69e`,
+  build 40616252842, installed payload carries merged PR #273.
+- Nine assets replaced with the prepared bytes (setup, sidecar, app-payload and
+  server-binaries packs, four manual files, SHA256SUMS.txt); the other 17,
+  including all 12 station-model parts, `station-models.json`, the
+  CUDA/FFmpeg/Ollama packs and the downloader, are unchanged and keep their
+  original published digests. 26 assets, 26,921,298,251 bytes.
+- Public download surfaces updated: release notes (revision section),
+  `docs/releases/release-truth.yaml`,
+  `docs/releases/v1.0.0-beta.20-verification.md`, `README.md`. Existing landing
+  page/install-guide download URLs were already correct and unchanged.
+- Accepted evidence reused, not repeated: isolated Sandbox lifecycle acceptance,
+  signatures, source CI 40583199781, PR #273 merge. Informational Gate A
+  40620078397 and the optional randomized suite remain non-gates. No long-soak
+  requalification and no host-station action.
+- Live station, tags/history and unrelated dirty work (soak/YouTube evidence,
+  coordinator failure log, .tmp files) preserved.
+
+## CURRENT - Signed installer READY FOR OWNER TAG/PUBLISH APPROVAL - October 27, 2026 21:32 MDT
+
+**Result: signed public-ready installer built and required isolated acceptance
+passed. Nothing has been tagged, published or installed over the running host
+station.**
+
+- Exact source: `8fdce69e4fccfba80f2984a0d034d8851b4840e0` (normal PR273 merge;
+  final PR head `1412c0060db6863f983dc381f1e51597a0930296`).
+- Version: `1.0.0-beta.20`; established source version, no version-source edit.
+- Build: `native-beta-candidate-artifacts` run `40616252842`, success.
+  Required source CI `40583199781` passed Unit/Windows WS4/claims; final PR
+  22 passed/3 expected skips. Optional randomized failure not a gate.
+- Signed setup:
+  `C:\CivicCastTester\candidates\8fdce69e4fccfba80f2984a0d034d8851b4840e0\candidate\CivicCast (Native)_1.0.0-beta.20_x64-setup.exe`
+  SHA-256 `2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b`.
+  Authenticode Valid, Scott Converse, thumbprint
+  `A987FBF8678961387F2CCB44A1DEDDB79E3DA879`, Microsoft timestamp.
+- Kit: `C:\CivicCastTester\kit-staging\8fdce69e4fccfba80f2984a0d034d8851b4840e0`.
+  Embedded signed station-index SHA-256
+  `751e18ab976abe7d1a81e301ee0edfe683a5ec50d35e8f1ca4edb45eff1f6272`.
+- Merged outage fix is present in the packaged app payload:
+  `payload/Lib/site-packages/civiccast/native/gstreamer_runtime.py` SHA-256
+  `959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6`,
+  byte-identical to source.
+- Required F5-route isolated acceptance PASSED on one 12,288 MB Windows Sandbox
+  native-guest-filesystem install: sandbox `85a5964d-332c-473a-be6e-e506893164d7`,
+  started `2026-10-28T03:04:02Z`, finished `2026-10-28T03:30:25Z`. Installer
+  exit `0`; service Running; `/health` healthy Beta20, current schema
+  `0097_agenda_minutes`; offline AI/caption activation passed.
+- Installed launcher SHA-256
+  `611cd261013157052f90bd347b51ec4a0024a8923e2122730153739550a5f744` and
+  uninstaller SHA-256
+  `049878696004b2bdef7dfed2f1e336b83766c9cca964217c7e3549b9e57acc4a`
+  both Authenticode Valid (Scott Converse, Microsoft timestamp).
+- Real uninstaller exit `0`; upload sentinel and PostgreSQL `PG_VERSION`
+  preserved; runtime/packs/launcher/service removed.
+- Informational Gate A run `40620078397` failed its mapped-folder clean lane at
+  service-identity ACL migration (`d4-service-registration=70`, setup exit `118`)
+  and restored prior state. Policy confirms Gate A is informational only; its
+  dirty/download/soak follow-ons were skipped. Exact orphan cleared; no active
+  sandbox remains. The successful required acceptance above used the native
+  guest filesystem, not mapped install.
+- Evidence/report: `docs/ops/signed-installer-prep-2026-10-27.md` and
+  `docs/ops/evidence/signed-installer-prep-2026-10-27.json`; raw guest receipt
+  remains at `C:\CivicCastTester\civiccast-8fdce69e-20261027\receipt.json`.
+- Stop boundary: READY FOR OWNER TAG/PUBLISH APPROVAL. No tag, release,
+  publication, LFS transfer, spending, reboot, or host-station action occurred.
+
 ## Current task — October 27, 2026: black/silent outage cause, fix, local hotfix
+
+## DELIVERED — October27, 2026 15:56 MDT
+
+PR273 MERGED normally (no bypass) at2026-10-27T21:56:58Z.
+Final PR head1412c0060db6863f983dc381f1e51597a0930296.
+Main merge8fdce69e4fccfba80f2984a0d034d8851b4840e0.
+Root independently verified live GitHub MERGED state and merge SHA.
+Required source CI40583199781 passed Unit tests, Windows WS4 real probes and
+claims verifier. Final PR check snapshot:22passed,3expected skips; optional
+randomized suite failed and was not an acceptance gate. Accessibility retry
+passed. Security/lint/docs/operator checks passed. No waiver of required checks.
+DeepSeek LOW performed corrections and normal merge. Local affected checks158passed.
+Station hotfix remains installed; earlier600-probe/reload/all3-channel A/V
+acceptance preserved. No station action, installer rebuild or extra test in this
+delivery continuation. No tag/publication or95hour soak requalification.
+Worker began an unnecessary additional post-merge wait to strengthen evidence;
+coordinator ended that owned wait after verified authorized delivery. Main's
+automatic security/pages jobs had started; their results are NOT claimed here.
+Existing report: docs/ops/black-silent-hotfix-2026-10-27.md and evidence JSON.
+Reason for outage/fix: repeated DLL-directory registrations exhausted Windows
+loader search list, preventing reload/recovery; locked per-directory registration
+cache prevents repeated registrations. Local backed-up module hotfix is active,
+not a newly published signed installer. This work is delivered; historical
+checkpoints below are not instructions to restart it.
+
+## Application-upgrade checkpoint — October 27, 2026
+
+PAUSED by Scott. Preparing for application upgrade does not authorize resumption.
+No native DeepSeek runner is running (verified by process command line).
+The watch civiccast-black-silent-fix-delivery is PAUSED. Latest branch CI runs
+are terminal; PR273 has NOT merged. No work may resume until Scott says so.
+
+Repository: C:/Dev/civiccast-f4-f6-f7
+Branch: fix/black-silent-20261027
+HEAD: 8ee3c4f16660fb076479289e00edb0a5c2375a4e
+PR: https://github.com/scottconverse/civiccast-native/pull/273
+Required CI run40574997367 failed Unit tests, WS4 Windows guard, and downstream
+claims verifier. Optional randomized failure is not an added gate.
+Unit failure: new deterministic test patched global os.name, breaking POSIX path
+validation; second new real-loader test skipped where no installed runtime exists,
+which the existing pure-suite gate rejects. Worker left an UNCOMMITTED correction
+in tests/native/test_gstreamer_runtime.py: module-local os shim and removal of
+the CI-inapplicable real-loader test; 12 focused checks passed on this Windows host.
+This does not prove Linux CI or explain the separate WS4 missing-JUnit failure.
+Worker stopped during native collection counts; no completed result is available.
+On explicit resumption, inspect preserved diff and actual WS4 failure logs; finish
+only concrete required corrections, update affected exact counts/blob bindings
+together if needed, required CI, then normal merge. No unrelated checks/rebuilds.
+Existing real installed600-probe/reload/A/V proof remains valid; do not repeat.
+Station hotfix remains installed with backup; no station action needed for upgrade.
+
+Execution route on resumption: ONLY DeepSeek v4.1 Flash1017-cloud via Ollama LOW.
+Root coordinates. Existing runner:
+C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/work/deepseek-black-silent-native.py
+Conversation/state/activity:
+C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/deepseek-black-silent-native/
+result.json is stale phase1; do not use it as final delivery evidence.
+Resume SAME conversation via DEEPSEEK_FOLLOWUP_FILE only after explicit owner
+resumption. Last conversation ends with interrupted shell tool call: append an
+honest tool response that count collection was interrupted/no result before asking
+DeepSeek to continue. Never fabricate the missing result. Old PID10764 is dead;
+never reuse that PID without ownership verification.
+
+Preserve untracked soak/YouTube evidence and temporary work; no cleanup/reset/stash
+or broad git add. Only CURRENT.md and the test file are currently modified tracked
+files. No LFS, spending, installer rebuild, sandbox, reboot, physical hardware,
+tags or publication. Hidden ConPTY/children; gh telemetry stays disabled.
+No tests or code changes were made during application-upgrade preparation.
+
+
+Delivery continuation: installed hotfix and all-channel A/V proof passed.
+PR273 current head8ee3c4f1 (20:05UTC) renews six workflow-blob references
+required by existing claims-policy CI after the collection-floor correction.
+141 affected claims-policy checks and21 collection-policy checks passed locally.
+Prior294050b9 CI exposed that binding drift; it did not complete green.
+Sole DeepSeek LOW worker PID10764 owns final-head CI wait and normal merge.
+No repeated outage proof, station samples, rebuilds or duplicate waiters.
+This local state update needs no bookkeeping commit or CI restart.
+
 
 The worker/session/route lines that used to open this file recorded the first,
 now-superseded investigation pass; the outcome below replaces them. Historical

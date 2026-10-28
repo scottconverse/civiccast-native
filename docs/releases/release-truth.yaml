@@ -40,16 +40,28 @@ entries:
   - tag: v1.0.0-beta.20
     status: current
     notes: >-
-      Originally published October 21, 2026 Mountain Time; documentation package
-      revised October 22 with signed source 2e19612467fda894d63e499580e4d7b5f029f5f2, build 39810481727.
-      Corrected Help and manuals are included. Setup SHA-256 6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d.
-      Installed exit 0, healthy current schema, full Help source/HTML/663-entry
-      contents comparison passed, no reboot. Two full documentation checks and
-      two full release-manual checks passed. Nine assets replaced, 17 unchanged;
-      model archive retains its original valid signed index. Original tag target
-      a17449189a39af6474d914137eab020169f91023 is unchanged; use revision source
-      for this package. Prior product evidence retains original provenance;
-      broad product tests were not rerun for this documentation revision.
+      Current package revised October 27, 2026 with merged-PR-273 signed revision
+      source 8fdce69e4fccfba80f2984a0d034d8851b4840e0 (black/silent reload-outage
+      fix), build 40616252842, setup SHA-256
+      2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b,
+      Authenticode Valid (Scott Converse, Microsoft timestamp). Version string is
+      unchanged at 1.0.0-beta.20. One isolated Windows Sandbox native-guest
+      lifecycle acceptance passed: installer and uninstaller exit 0, service
+      running, healthy Beta20 current schema 0097_agenda_minutes, offline
+      activation passed, upload sentinel and PostgreSQL PG_VERSION preserved;
+      installed launcher/uninstaller signatures valid; installed
+      gstreamer_runtime.py 959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6
+      matches source; embedded signed station index
+      751e18ab976abe7d1a81e301ee0edfe683a5ec50d35e8f1ca4edb45eff1f6272.
+      Nine assets replaced, 17 unchanged; the model archive retains its original
+      valid signed index. Source CI 40583199781 passed Unit/Windows WS4/claims;
+      informational Gate A 40620078397 and the optional randomized suite are not
+      gates; no long-soak requalification and no host-station action. Original tag
+      target a17449189a39af6474d914137eab020169f91023 is unchanged; use revision
+      source for this package. The October 22 documentation revision (signed
+      source 2e19612467fda894d63e499580e4d7b5f029f5f2, build 39810481727, setup
+      6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d) and the
+      original October 21 publication retain their historical provenance.
       Public release: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20.
       Exact current evidence: https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md.
   - tag: v1.0.0-beta.19
