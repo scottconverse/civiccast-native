@@ -155,21 +155,42 @@ seen before) are added on a re-import.
   `cancellation_notice_only`.
 - **PrimeGov bounded handling**: PDF downloads are capped at 100 MiB / 180 s
   (streamed, checked per chunk) and extraction at 500 pages / 2,000,000
-  characters. A document over those bounds, an unreadable/encrypted PDF, or a
-  PARTIAL extraction is refused with a distinct error
+  characters, with a hard 60 s subprocess kill for a stuck parser. A document
+  over those bounds, an unreadable/encrypted PDF, a page that fails to extract,
+  or a PARTIAL extraction is refused with a distinct error
   (`document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`)
-  BEFORE anything is written -- a truncated document never silently replaces a
-  complete agenda. The vendor's redirect to its external public blob storage is
+  BEFORE anything is written -- a truncated or page-incomplete document never
+  silently replaces a complete agenda. The character budget is checked against
+  each page's text BEFORE that page is parsed, so an overrun is refused whether
+  the excess sits on the first, a middle, or the final page; text that totals
+  exactly the limit is complete when every page was covered. A page whose text
+  extraction raises is recorded (`pages_failed`) and makes the whole extraction
+  partial even when numbered items were recovered from the surviving pages;
+  every page failing reports `pdf_unreadable` rather than an empty agenda. The vendor's redirect to its external public blob storage is
   followed manually, each hop validated with the existing public-URL guard, so a
   redirect to a LITERAL loopback/private/link-local/metadata host is refused
   (DNS-rebinding remains that guard's pre-existing, disclosed residual risk).
-- **PrimeGov discovery is upcoming + one finite current-year archive list**
-  (deduped by meeting id). If only one of the two list endpoints answers, the
-  results are returned with an `X-Agenda-Discovery-Warning` PARTIAL banner; if
-  both fail it is an honest 502, never an empty calendar. Older-than-current
-  years are reachable via the existing `since` date filter (bounded to one
-  archive year per discovery call); importing an archived meeting uses a
-  bounded recent-year lookup (current year and the two prior years).
+- **PrimeGov discovery is upcoming + one finite archive list** (deduped by
+  meeting id). If only one of the two list endpoints answers, the results are
+  returned with an `X-Agenda-Discovery-Warning` PARTIAL banner; if both fail it
+  is an honest 502, never an empty calendar. The archived year is the year of
+  the existing `since` date filter, or the current year when it is blank --
+  exactly one archive year per discovery call, never a multi-year scan. The
+  import is scoped to the SAME finite year: the operator console sends the
+  selected meeting's year as `archive_year` (PrimeGov-only request field,
+  rejected for the other vendors), and the import lookup reads the upcoming
+  list, that year and the current year -- at most three archive lists. Without
+  an explicit year it keeps the older behaviour (current year plus the two prior
+  years). So every meeting discovery offered, including one from an archived
+  year older than current-2, is importable; provider ids are preserved unchanged
+  and deduped, and an operator still selects one meeting explicitly.
+  Discovery and import share ONE finite year rule: an archived-list year is the
+  current UTC year or any earlier one, with no other arbitrary floor (a `since`
+  date far in the past is offered and importable, because discovery clamps the
+  requested year to that same rule). A meeting dated in a FUTURE year is never
+  in an archived list -- it arrives through the always-queried upcoming list,
+  which the importer reads first, so it needs no archive year at all and the
+  console sends none for it.
 - **CivicClerk's extraction is honestly bounded**: the shared PDF extractor
   recognizes flat, top-level digit-numbered lines only. A real agenda that
   nests numbered sub-items under lettered top-level sections (e.g.

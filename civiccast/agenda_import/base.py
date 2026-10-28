@@ -82,8 +82,17 @@ class AgendaSource(Protocol):
         """Meetings for ``client_code`` on/after ``since`` (default: today)."""
         ...
 
-    def fetch_agenda(self, client_code: str, event_id: str) -> ExternalAgenda:
-        """The full normalized agenda for one meeting."""
+    def fetch_agenda(
+        self, client_code: str, event_id: str, *, archive_year: int | None = None
+    ) -> ExternalAgenda:
+        """The full normalized agenda for one meeting.
+
+        ``archive_year`` is optional explicit finite year scope: the vendor
+        archive year discovery used to offer the meeting. Only an adapter whose
+        import lookup is year-scoped (PrimeGov) acts on it; every other adapter
+        resolves a meeting by id without a year and must accept-and-ignore it,
+        so the router can forward one uniform call.
+        """
         ...
 
 

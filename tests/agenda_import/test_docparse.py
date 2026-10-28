@@ -155,6 +155,32 @@ class TestExtractItemsFromPdf:
         assert items == []
 
 
+class _StubPage:
+    """One page whose text extraction either yields fixed text or raises."""
+
+    def __init__(self, *, text: str = "", raises: bool = False) -> None:
+        self._text = text
+        self._raises = raises
+
+    def extract_text(self) -> str:
+        if self._raises:
+            raise RuntimeError("corrupt page stream")
+        return self._text
+
+
+class _StubReader:
+    def __init__(self, pages: list[_StubPage]) -> None:
+        self.pages = pages
+        self.is_encrypted = False
+
+
+def _use_stub_pages(monkeypatch: pytest.MonkeyPatch, pages: list[_StubPage]) -> None:
+    """Swap ``docparse.PdfReader`` for deterministic per-page text, so page
+    failures and exact character counts are exercised precisely (the real
+    pypdf path is covered by the reportlab-generated PDF tests above/below)."""
+    monkeypatch.setattr(docparse, "PdfReader", lambda *_args, **_kwargs: _StubReader(pages))
+
+
 class TestExtractItemsFromPdfBounded:
     """P2: the bounded extractor reports partial/unreadable honestly so a caller
     can refuse a truncated import instead of persisting part of a document."""
@@ -203,3 +229,97 @@ class TestExtractItemsFromPdfBounded:
         assert result.items == []
         assert result.partial is False
         assert result.reason == "unreadable"
+
+    # --- PR277 review corrections: a failed page, and text-budget overruns on
+    # --- a single page or the final page, must never read as a complete import.
+
+    def test_failed_middle_page_is_partial_page_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _use_stub_pages(
+            monkeypatch,
+            [
+                _StubPage(text="1. Call to order"),
+                _StubPage(raises=True),
+                _StubPage(text="3. Adjournment"),
+            ],
+        )
+
+        result = docparse.extract_items_from_pdf_bounded(b"stub")
+
+        # Surviving numbered items exist, but the document was NOT fully read.
+        assert [i.title for i in result.items] == ["Call to order", "Adjournment"]
+        assert result.partial is True
+        assert result.reason == "page_failed"
+        assert result.pages_failed == 1
+        assert result.pages_read == 2
+        assert result.pages_total == 3
+
+    def test_failed_first_page_is_partial_page_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _use_stub_pages(monkeypatch, [_StubPage(raises=True), _StubPage(text="2. Roll call")])
+
+        result = docparse.extract_items_from_pdf_bounded(b"stub")
+
+        assert [i.title for i in result.items] == ["Roll call"]
+        assert result.partial is True
+        assert result.reason == "page_failed"
+        assert result.pages_failed == 1
+
+    def test_every_page_failing_is_unreadable_not_a_silent_empty_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _use_stub_pages(monkeypatch, [_StubPage(raises=True), _StubPage(raises=True)])
+
+        result = docparse.extract_items_from_pdf_bounded(b"stub")
+
+        assert result.items == []
+        assert result.partial is True
+        assert result.reason == "unreadable"
+        assert result.pages_failed == result.pages_total == 2
+
+    def test_single_page_text_overrun_is_partial_text_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _use_stub_pages(monkeypatch, [_StubPage(text="1. " + "x" * 100)])
+
+        result = docparse.extract_items_from_pdf_bounded(b"stub", max_text_chars=10)
+
+        # The over-budget page is not parsed at all, so no partial item list is
+        # handed to a caller that could mistake it for a complete import.
+        assert result.items == []
+        assert result.partial is True
+        assert result.reason == "text_limit"
+        assert result.pages_read == 0
+
+    def test_final_page_text_overrun_is_partial_text_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _use_stub_pages(
+            monkeypatch,
+            [_StubPage(text="1. Call to order"), _StubPage(text="2. " + "x" * 100)],
+        )
+
+        result = docparse.extract_items_from_pdf_bounded(b"stub", max_text_chars=40)
+
+        assert [i.title for i in result.items] == ["Call to order"]
+        assert result.partial is True
+        assert result.reason == "text_limit"
+        assert result.pages_read == 1
+
+    def test_text_exactly_at_the_limit_on_the_final_page_is_complete(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = "1. Call to order"  # 16 characters
+        second = "2. Roll call" + " " * 12  # 12 + 12 = 24 characters
+        _use_stub_pages(monkeypatch, [_StubPage(text=first), _StubPage(text=second)])
+
+        result = docparse.extract_items_from_pdf_bounded(
+            b"stub", max_text_chars=len(first) + len(second)
+        )
+
+        assert [i.title for i in result.items] == ["Call to order", "Roll call"]
+        assert result.partial is False
+        assert result.reason is None
+        assert result.pages_read == 2

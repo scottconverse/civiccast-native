@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import functools
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -45,6 +45,7 @@ from civiccast.agenda_import.config import (
 from civiccast.agenda_import.js_portal import describe_js_portal_runtime
 from civiccast.agenda_import.mapper import import_external_agenda
 from civiccast.agenda_import.models import AgendaSourceName, ExternalMeetingSummary
+from civiccast.agenda_import.primegov import archive_year_supported
 from civiccast.agenda_import.provenance import AgendaImportProvenanceStore
 from civiccast.agenda_import.registry import build_source
 from civiccast.auth.roles import require_any_role
@@ -116,6 +117,15 @@ router = APIRouter(prefix="/api/staff", tags=["staff", "agenda-import"])
 class AgendaImportExternalRequest(BaseModel):
     """POST .../import-external body (plan §6).
 
+    ``archive_year`` (PrimeGov only) is the EXPLICIT finite year scope the
+    operator's discovery used: discovery can offer a meeting from any archived
+    year the operator asked for (``since``), while PrimeGov's import lookup has
+    to know which year list to read. Sending it back makes every offered meeting
+    importable, still with at most three finite archive lists per import -- it is
+    not a multi-year scan. It is rejected (422) for the other vendors, which
+    resolve a meeting by id without a year scope, and it may not be in the
+    future.
+
     ``portal_url``/``portal_vendor_hint`` are ``js_portal``-only additions
     (Phase 4): required exactly when ``source == "js_portal"``, forbidden
     (must be omitted/null) for every other source -- enforced below, not by
@@ -139,10 +149,36 @@ class AgendaImportExternalRequest(BaseModel):
     event_id: Annotated[str, Field(min_length=1, max_length=120)]
     portal_url: Annotated[str | None, Field(default=None, max_length=500)] = None
     portal_vendor_hint: Annotated[str | None, Field(default=None, max_length=40)] = None
+    archive_year: Annotated[int | None, Field(default=None, ge=1)] = None
 
     @model_validator(mode="after")
     def _check_js_portal_config(self) -> AgendaImportExternalRequest:
         return _validate_js_portal_fields(self)
+
+    @model_validator(mode="after")
+    def _check_year_scope(self) -> AgendaImportExternalRequest:
+        # Same "only for the vendor it means something" rule as
+        # portal_url/portal_vendor_hint: the other three vendors resolve a
+        # meeting by its id, so a year scope there would be silently ignored
+        # input, which is worse than a 422.
+        if self.archive_year is None:
+            return self
+        if self.source != "primegov":
+            raise ValueError(
+                "archive_year is only accepted when source is 'primegov' -- the other "
+                "vendors resolve a meeting by id without a year scope."
+            )
+        if not archive_year_supported(self.archive_year):
+            # The SAME finite year rule PrimeGov discovery uses (current UTC year
+            # or earlier), so nothing discovery offers can be refused here. A
+            # meeting dated in a future year only ever arrives through the
+            # upcoming list, which the import lookup always queries, so it needs
+            # no archive year.
+            raise ValueError(
+                f"archive_year {self.archive_year} is in the future; discovery offers the "
+                f"current year ({datetime.now(UTC).year}) or an earlier archived year."
+            )
+        return self
 
 
 @router.post(
@@ -182,7 +218,9 @@ def import_external(
             portal_url=payload.portal_url,
             portal_vendor_hint=payload.portal_vendor_hint,
         )
-        external = source.fetch_agenda(payload.client_code, payload.event_id)
+        external = source.fetch_agenda(
+            payload.client_code, payload.event_id, archive_year=payload.archive_year
+        )
         written = import_external_agenda(resolved_store, agenda_id, external)
         if provenance_store is not None:
             try:

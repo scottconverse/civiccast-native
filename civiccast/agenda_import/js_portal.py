@@ -353,7 +353,12 @@ class JsPortalSource:
             )
         return summaries
 
-    def fetch_agenda(self, client_code: str, event_id: str) -> ExternalAgenda:
+    def fetch_agenda(
+        self, client_code: str, event_id: str, *, archive_year: int | None = None
+    ) -> ExternalAgenda:
+        # ``archive_year`` is accepted for AgendaSource Protocol compatibility
+        # and ignored: this vendor resolves a meeting by id, not by year.
+        del archive_year
         _require_robots_allowed(
             self._portal_url, timeout_seconds=self._timeout_seconds, transport=self._transport
         )

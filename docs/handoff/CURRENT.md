@@ -2,73 +2,127 @@
 
 Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
 
-## CURRENT - DELIVERED (candidate): PrimeGov public-PDF + bounded handling + archives (Phase 1 P1-P3) - October 28, 2026
+## CURRENT — PHASE 1 REVIEW CORRECTIONS (PR277 follow-up) — October 29, 2026
 
-Owner set PHASE1 (P1-P3 only) as the active goal with GO; DeepSeek LOW sole
-executor, root coordinates. Serial candidate `phase1/primegov-pdf-discovery`
-from main `796ad703`. Phase 1 only: no Phase 2 (L1/L2), no installer/
-signing/release/tag/publication, no LFS/spending, no station probe/restart/
-install, no physical hardware, no subagents.
+Owner ordered ONE focused correction PR for three automated-review findings reproduced
+against final PR277 head `3de427a5`. DeepSeek Flash1017-cloud LOW is sole serial executor;
+root coordinates. Branch `fix/pr277-review-corrections` from actual current main
+`6d43e9a7` (PR277 merge). Scope is only these three defects plus their regressions and the
+affected docs/types; no Phase 2, no installer/release/tag/publication, no LFS/spending, no
+station API/probe/DB/restart/install action, no frozen-candidate edits.
 
-CHANGED FILES (smallest set):
-- `civiccast/agenda_import/primegov.py` - P1 public `CompiledDocument` URL when
-  a document link is null (built from `templateId` + `compileOutputType`),
-  agenda>packet>minutes>other document ranking (not minutes-first), honest
-  cancellation-notice-only + no-supported-document errors; P2 streaming
-  byte/time-capped download + page/char-capped extraction with distinct
-  `document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`
-  errors (partial REFUSED before any import persistence). The vendor redirect
-  to its external public blob storage is followed MANUALLY, each hop validated
-  with the existing `validate_portal_url` guard, which rejects a target whose
-  LITERAL host is loopback/private/link-local/metadata (or userinfo/non-http(s));
-  like that guard itself it does NOT resolve DNS, so DNS-rebinding is the same
-  pre-existing residual risk, not newly introduced or claimed closed. P3 upcoming + one
-  finite current-year archive list, dedup by provider meeting id, PARTIAL
-  warning when one list fails, bounded recent-year lookup so an archived
-  meeting discovery offered is actually retrievable on import.
-- `civiccast/agenda_import/docparse.py` - new `extract_items_from_pdf_bounded`
-  + `PdfExtraction` (page/char caps, `partial`/`reason`); original
-  `extract_items_from_pdf` left untouched for other providers.
-- `civiccast/agenda_import/router.py` - discovery sets
-  `X-Agenda-Discovery-Warning` header when a source only partially answered;
-  body stays a plain list (no response-shape/schema change).
-- portal-operator `client.ts` (header-aware `onResponse` + discovery result
-  object) and `AgendasScreen.tsx` (PARTIAL banner).
-- tests: `test_primegov.py`, `test_docparse.py`, `test_router.py`,
-  `AgendasScreen.test.tsx` (changed behaviours only).
+CORRECTION 1 — failed page could still be imported as complete
+(`civiccast/agenda_import/docparse.py`). Diagnosis: a page whose `extract_text()` raised was
+replaced by empty text, so a document with a lost middle page reported `partial=False`/
+`reason=None` whenever any other page yielded numbered items, and the caller persisted an
+incomplete agenda. Fix: `PdfExtraction.pages_failed` records every failed page; a
+non-zero count always ends as `partial=True` — `reason="page_failed"` when items were
+recovered from other pages, `reason="unreadable"` when EVERY page failed (the existing
+"nothing usable" outcome). `PrimeGovSource` refuses either before persistence
+(`pdf_partial`, now naming the unreadable page count; `pages_read` counts only pages that
+yielded text). Regressions: middle-page failure, first-page failure, all-pages failure
+(`tests/agenda_import/test_docparse.py`), plus a PrimeGov refusal test asserting the
+partial result never reaches the mapper (`test_primegov.py`).
 
-FINITE DEFAULTS (chosen for the recorded real 41,472,505-byte / 258-page
-council packet, box has 31.6 GiB RAM): download cap 100 MiB; 180 s total
-download budget checked per streamed chunk; 500 pages; 2,000,000 extracted
-characters; 60 s extraction budget. Page/char caps are the real work bound
-(a between-page clock cannot abort one slow page); the download deadline is a
-true wall-clock guard on streamed bytes.
+CORRECTION 2 — text budget skipped single/final pages
+(`civiccast/agenda_import/docparse.py`). Diagnosis: the overrun check ran after the page
+was parsed and appended and only when another page remained, so a single-page or
+oversized FINAL page bypassed the 2,000,000-character cap and imported as complete. Fix:
+the remaining budget is checked BEFORE each page's text is parsed or appended, on every
+page; an overrun sets `partial=True`/`text_limit` and the page is never parsed, so no
+partial item list is produced. Text totalling exactly the limit is complete when every page
+was covered (no off-by-one in either direction). Hard subprocess timeout, page cap and
+other providers' legacy `extract_items_from_pdf` are unchanged. Regressions: single-page
+overrun, final-page overrun, exactly-at-limit completion (`test_docparse.py`) and a real
+subprocess single-page overrun refused before import (`test_primegov.py`, tiny budget).
 
-EVIDENCE / ACTUAL WORKFLOW (isolated dev app + temp SQLite, real network,
-existing router + real `PrimeGovSource`): discovery 282 meetings (5 upcoming
-+ 277 archived 2026), no partial header; archived import of meeting 3443
-("Longmont Urban Renewal Authority") via
-`/Public/CompiledDocument?meetingTemplateId=15544&compileOutputType=1` (null
-link) stored 8 real agenda items ("Meeting Called to Order", ...), correct
-`source_doc_url`, ascending order, draft; cancellation-only meeting 3489 ->
-502 `cancellation_notice_only`, 0 items, nothing fabricated; recorded known
-public PDF `meetingTemplateId=15247` downloaded 41,472,505 bytes in ~2.5 s,
-258 pages, 0 partial, 210 flat-numbered lines extracted. IMPORTANT framing:
-that 210-line result is a BOUNDS PROOF that the finite defaults accommodate
-the recorded 41 MiB / 258-page packet (no partial, no cap hit) -- those raw
-packet lines are NOT validated agenda items. The semantic workflow proof is
-the 8-item archived agenda import above (real agenda, correct source order).
-The manual-redirect loop was re-checked against the real vendor path (211,304-
-byte archived agenda PDF, 8 items, not partial) and refuses a private/link-
-local target. Focused local in the clean worktree: test_primegov 29,
-test_docparse 20, test_router 34+1 skip (83 + 1 skip), AgendasScreen vitest 35,
-`tsc -b` clean. Unit/WS4/etc required CI runs on the pushed head.
+CORRECTION 3 — discovered archived year could not be imported
+(`primegov.py`, `router.py`, operator `AgendasScreen.tsx`). Diagnosis: `since` selects any
+archived year for discovery, but the import lookup searched only the current year and the
+two prior ones, so a meeting discovered with e.g. `since=2023-01-01` in 2026 returned
+not-found. Fix: smallest compatible explicit year context — optional PrimeGov-only
+`archive_year` field on the existing import-external body (rejected 422 for the other
+vendors, rejected when in the future or before 1990), forwarded through the
+`AgendaSource.fetch_agenda` Protocol keyword (other adapters accept and ignore it), and used
+by `_find_meeting` as the primary archive year (upcoming + that year + current year = at
+most three finite lists). The operator console sends the selected meeting's year (else the
+`since` year) for PrimeGov only, and shows a one-line hint naming the finite scope. Provider
+ids, dedup, explicit operator selection and partial-failure warnings are unchanged; blank
+`since` keeps the previous current-year discovery and current/current-1/current-2 import
+behavior. Regression: discovery of an archived meeting three years older than the current
+year is offered, is NOT findable by the pre-correction lookup, and imports with the explicit
+year (`test_primegov.py`), plus router tests for forwarding/rejection (`test_router.py`) and
+a UI payload test (`AgendasScreen.test.tsx`). Generated `docs/openapi.json`,
+`docs/API-REFERENCE.md` and `api.generated.ts` regenerated with the repo script;
+`docs/ops/agenda-import-runbook.md` updated for the bounded/page-failed and finite-year
+behavior.
 
-OWNED JOB: required `ci-test` on this branch's PR (triggered by the push).
-Expected terminal: required checks green -> normal PR merge. Cancel method if
-mis-owned: `gh run cancel <run id>` for that run only.
+REVIEW FINDINGS CORRECTED (bounded independent read-only DeepSeek review of candidate
+`87154b03`, coordinator outputs `deepseek-phase1-correction-review/result.json`; the reviewer
+confirmed corrections 1 and 2 by reading and filed two MATERIAL outcome-3 findings, both
+year-scope boundary mismatches):
 
-## CURRENT - IN FLIGHT: workflow-policy assertion fix for required CI Unit - October 27, 2026
+- Finding 1 (high) - the upcoming list is not year-filtered, so discovery can offer a meeting
+  dated in the NEXT calendar year; the console then sent that future year as `archive_year` and
+  the import was refused 422. Corrected: an offered upcoming meeting needs no archive year at
+  all (the import lookup always reads the upcoming list first), so the console sends the year
+  only when it is a valid archived-list year (current or earlier) and sends none otherwise.
+  Regression: `AgendasScreen.test.tsx` "next-year upcoming meeting sends no archive year", plus
+  `test_primegov.py` "next-year upcoming meeting is importable without a year scope".
+- Finding 2 (medium) - an arbitrary 1990 import floor was not shared with discovery (`since`),
+  so a `since` before 1990 offered meetings import refused 422. Corrected: the invented floor is
+  gone; one shared rule in `primegov.archive_year_supported()` (current UTC year or any earlier,
+  floor = year 1, i.e. every year a `since` date can express) is used by BOTH the import request
+  validation and (via `_archive_year`'s clamp) discovery, so the offered set and the importable
+  set are identical. Regressions: `test_primegov.py` "archived year before the old floor is
+  offered and importable" and `test_router.py` "a year below the old floor is accepted". No
+  unbounded scan: the import still reads at most three finite archive lists, and the future-year
+  rejection remains for genuinely invalid input.
+
+EVIDENCE REUSED (not re-fetched): the recorded real Longmont eight-item agenda import
+(meeting3443/template15544) and the 41,472,505-byte/258-page packet from
+coordinator `outputs/deepseek-primegov-phase1/result.json` and the retained TEMP receipt.
+This correction does not invalidate them: the defaults (500 pages / 2,000,000 characters),
+the 258-page packet's "not partial" outcome, and the eight-item extraction are unchanged by
+the budget-check reordering, and no document was downloaded again.
+
+OWNED JOB: required `ci-test` (+ lint/security/operator/docs/policy as applicable) on this
+branch's PR, triggered by the ordinary branch push only. One CI waiter; bounded 5-10 minute
+polls that inspect early failed required jobs first. Expected terminal: required checks
+green -> normal merge (no admin/bypass/auto). Cancellation method if mis-owned or wedged:
+`gh run cancel <run id>` for that specific run only. Exact PR number/SHA/run ids are recorded
+in the executor receipt rather than a second bookkeeping commit, so CI is not restarted for
+documentation.
+
+NEXT ACTION: recheck only the two corrected review findings and the applicable automated PR
+comments on the final head, wait for applicable required checks, then merge and verify the merge
+SHA. Optional agenda-integration and randomized jobs are NOT gates.
+
+---
+
+## HISTORICAL — PHASE 1 DELIVERED — October 28, 2026
+
+P1 public PrimeGov PDF retrieval, P2 bounded download/extraction, and P3 archived/upcoming discovery are implemented and merged. Phase 2 is not started.
+
+- PR277: https://github.com/scottconverse/civiccast-native/pull/277
+- Final source head: 3de427a5628c924d2a89290a61f101bbb48382be.
+- Verified merge: 6d43e9a70e253586191d6ecbc9eadf22778b37f5, October 28 at 16:43:02 UTC.
+- Required CI40716937602: Unit tests, Windows native guard and claims-evidence passed. All applicable lint, security, operator, accessibility, docs, policy and reproducibility checks passed. Three packaging-only checks skipped as expected. Optional agenda integration and randomized checks also passed; neither was promoted to a gate.
+- Windows first attempt rejected a hosted-runner WSL AppxManifest.xml sampled handle during closure provisioning. Its one failed-job-only retry passed; successful Unit/claims evidence was reused. No product workaround or checker weakening.
+
+Delivered behavior: null document links use templateId/compileOutputType to construct the public PDF URL; explicit links and HTML remain supported; agendas rank ahead of packets/minutes. PDFs download with a 100 MiB cap and 180-second streamed budget. Extraction has 500-page/2-million-character caps and a hard 60-second subprocess timeout that terminates a stuck parser. Unreadable/oversize/partial results return honest errors and cannot silently replace a complete agenda. Discovery merges upcoming meetings and one requested/current archive year, deduplicates IDs, shows partial-result warnings and errors when both lists fail. Redirects use the existing literal-host guard on every hop; DNS-rebinding protection is not claimed.
+
+Actual workflow: isolated development FastAPI router and temporary SQLite database, real Longmont provider. Discovery returned 282 meetings (5 upcoming, 277 archived). Archived meeting3443/template15544 imported eight ordered agenda items with the correct source URL. Cancellation-only meeting3489 returned an explanation and stored zero items. The recorded 41,472,505-byte/258-page packet was read without truncation; its 210 extracted numbered lines prove resource-bound compatibility, not semantic validation of 210 agenda items. The changed subprocess path also returned the eight-item agenda successfully. Focused Python/UI/static checks passed; see the executor receipt for exact command-level results.
+
+Limitations: extraction recognizes flat digit-numbered lines, not arbitrary layout/OCR or ITEM-prefixed/split-number headings. Such PDFs return pdf_no_items honestly. Import lookup automatically searches the current and previous two archive years. The real walkthrough used an isolated API/database, not an installed browser session. No installer, release, tag, LFS transfer or running-station action occurred.
+
+Evidence: coordinator outputs/deepseek-primegov-phase1/result.json and activity.jsonl; retained temporary workflow receipt under %TEMP%/phase1-primegov/receipt.json. The owned temporary database was removed. DeepSeek Flash1017-cloud LOW performed engineering/checks; coordinator independently confirmed GitHub merge and final check conclusions. No independent review was claimed.
+
+No owned job remains. Next action: await owner direction; do not start Phase 2 or packaging automatically. This local handoff completion update is bookkeeping only and does not justify another build or CI run.
+
+---
+Historical task records below are retained for provenance and are not the current task state.
+## HISTORICAL - IN FLIGHT: workflow-policy assertion fix for required CI Unit - October 27, 2026
 
 Owner authorized (DeepSeek LOW sole executor, root coordinates) fixing the required
 CI failure introduced alongside merged PR #275 and getting required CI green, with
@@ -110,7 +164,7 @@ no extra tests, no rebuild, no LFS, no spending and no station action.
 - NEXT STEP: normal reviewable PR, bounded watch of the auto-triggered required
   checks, then normal merge; no admin/bypass, no tag/release/rebuild/station work.
 
-## CURRENT — DELIVERED: Beta20 recovery-fix package published — October 27, 2026
+## HISTORICAL — DELIVERED: Beta20 recovery-fix package published — October 27, 2026
 
 Scott authorized publishing the prepared signed Beta20 (source `8fdce69e`, build
 `40616252842`, setup SHA-256 `2c6d2614...388e4b`) and updating public download
@@ -196,7 +250,7 @@ PUBLICATION-INDUCED CI COUPLING - CORRECTED (no rebuild, no re-pin, no re-sign):
   no wheel re-pin, no re-sign, no installer change, no new tag/release, no station
   action. Preserve this asset across future revisions instead of replacing it.
 
-## CURRENT - Signed installer READY FOR OWNER TAG/PUBLISH APPROVAL - October 27, 2026 21:32 MDT
+## HISTORICAL - Signed installer READY FOR OWNER TAG/PUBLISH APPROVAL - October 27, 2026 21:32 MDT
 
 **Result: signed public-ready installer built and required isolated acceptance
 passed. Nothing has been tagged, published or installed over the running host
@@ -1475,3 +1529,4 @@ prove that a ~95h soak now stays clean, and no new installer was built, so the
 installed station still carries the unguarded call. Remaining executable action: root
 review of the bounded diff, then commit/PR and a delivered build if the station is to
 carry the fix.
+

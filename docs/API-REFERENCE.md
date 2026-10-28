@@ -4998,6 +4998,7 @@ Read CivicCast local federation metadata.
 
 ### `AgendaImportExternalRequest`
 
+- `archive_year` (optional): `number | null`
 - `client_code` (required): `string`
 - `event_id` (required): `string`
 - `portal_url` (optional): `string | null`

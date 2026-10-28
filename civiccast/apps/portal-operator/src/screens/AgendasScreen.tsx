@@ -806,6 +806,16 @@ function CivicSuiteBridgeCard() {
 // posture check runs as soon as js_portal is selected so the operator finds
 // out before clicking Import, not after a wasted round trip.
 
+/**
+ * The calendar year an ISO date/datetime string falls in, read from its
+ * leading `YYYY-` so a timezone offset can never move it across a year
+ * boundary. Returns null for an absent/unparseable value.
+ */
+function isoYear(raw: string | null | undefined): number | null {
+  const match = /^(\d{4})-/.exec((raw ?? '').trim())
+  return match === null ? null : Number(match[1])
+}
+
 function ExternalImportSection({
   agendaId,
   agendaStatus,
@@ -855,6 +865,23 @@ function ExternalImportSection({
     },
   })
 
+  // The explicit finite year scope sent back on import (PrimeGov only): the
+  // year of the meeting the operator selected, else the year of the "on/after"
+  // filter used for discovery. PrimeGov's archived lists are per-year, so
+  // without it an older archived meeting discovery offered could not be
+  // found on import. The server rejects it for the other vendors.
+  const selectedMeeting = meetings?.find((m) => m.external_id === selectedEventId)
+  const importYearCandidate = isoYear(selectedMeeting?.meeting_datetime) ?? isoYear(since)
+  // An UPCOMING meeting discovery offered can be dated in the next calendar year
+  // (the always-queried upcoming list is not year-filtered). Such a meeting needs
+  // no archive year: the importer reads that upcoming list first. Only a year
+  // that is a valid archived-list year (this year or earlier) is sent, so the
+  // screen can never ask for a scope the server refuses.
+  const importArchiveYear =
+    importYearCandidate !== null && importYearCandidate <= new Date().getUTCFullYear()
+      ? importYearCandidate
+      : null
+
   const importMut = useMutation({
     mutationFn: () => {
       const payload: AgendaImportExternalRequest = {
@@ -863,6 +890,7 @@ function ExternalImportSection({
         event_id: selectedEventId,
         portal_url: isJsPortal ? portalUrl.trim() : null,
         portal_vendor_hint: isJsPortal ? vendorHint : null,
+        archive_year: source === 'primegov' ? importArchiveYear : null,
       }
       return importExternalAgenda(agendaId, payload)
     },
@@ -995,6 +1023,14 @@ function ExternalImportSection({
           style={INPUT_STYLE}
         />
       </label>
+
+      {source === 'primegov' && (
+        <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          PrimeGov discovery reads the upcoming list plus the archived list for the year of
+          that date (the current year if left blank), and the import is scoped to the
+          selected meeting&apos;s year.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <button

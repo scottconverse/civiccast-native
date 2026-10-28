@@ -34087,6 +34087,18 @@
               }
             ],
             "title": "Portal Vendor Hint"
+          },
+          "archive_year": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Year"
           }
         },
         "additionalProperties": false,
@@ -34097,7 +34109,7 @@
           "event_id"
         ],
         "title": "AgendaImportExternalRequest",
-        "description": "POST .../import-external body (plan \u00a76).\n\n``portal_url``/``portal_vendor_hint`` are ``js_portal``-only additions\n(Phase 4): required exactly when ``source == \"js_portal\"``, forbidden\n(must be omitted/null) for every other source -- enforced below, not by\nthe field types alone, so a legacy client that only ever sends\n``source``/``client_code``/``event_id`` (the first three vendors) is\nunaffected. ``client_code`` stays required for every source, including\n``js_portal`` -- there it is purely an operator-assigned display label\nfor provenance/logging (see ``js_portal.py``'s class docstring), never\nspliced into a request URL, so it does not need the SSRF-conscious\ntenant-token shape :func:`validate_client_code` enforces for the other\nthree vendors... except it still gets that same validation, because a\nshort safe label is a reasonable thing to require regardless of vendor."
+        "description": "POST .../import-external body (plan \u00a76).\n\n``archive_year`` (PrimeGov only) is the EXPLICIT finite year scope the\noperator's discovery used: discovery can offer a meeting from any archived\nyear the operator asked for (``since``), while PrimeGov's import lookup has\nto know which year list to read. Sending it back makes every offered meeting\nimportable, still with at most three finite archive lists per import -- it is\nnot a multi-year scan. It is rejected (422) for the other vendors, which\nresolve a meeting by id without a year scope, and it may not be in the\nfuture.\n\n``portal_url``/``portal_vendor_hint`` are ``js_portal``-only additions\n(Phase 4): required exactly when ``source == \"js_portal\"``, forbidden\n(must be omitted/null) for every other source -- enforced below, not by\nthe field types alone, so a legacy client that only ever sends\n``source``/``client_code``/``event_id`` (the first three vendors) is\nunaffected. ``client_code`` stays required for every source, including\n``js_portal`` -- there it is purely an operator-assigned display label\nfor provenance/logging (see ``js_portal.py``'s class docstring), never\nspliced into a request URL, so it does not need the SSRF-conscious\ntenant-token shape :func:`validate_client_code` enforces for the other\nthree vendors... except it still gets that same validation, because a\nshort safe label is a reasonable thing to require regardless of vendor."
       },
       "AgendaItem": {
         "properties": {
