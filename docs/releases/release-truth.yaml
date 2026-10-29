@@ -40,36 +40,21 @@ entries:
   - tag: v1.0.0-beta.20
     status: current
     notes: >-
-      Current package revised October 27, 2026 with merged-PR-273 signed revision
-      source 8fdce69e4fccfba80f2984a0d034d8851b4840e0 (black/silent reload-outage
-      fix), build 40616252842, setup SHA-256
-      2c6d261445567c168ad9f7fa7bdbd085b5dc8f8d5bcda59e41cde86ac6388e4b,
-      Authenticode Valid (Scott Converse, Microsoft timestamp). Version string is
-      unchanged at 1.0.0-beta.20. One isolated Windows Sandbox native-guest
-      lifecycle acceptance passed: installer and uninstaller exit 0, service
-      running, healthy Beta20 current schema 0097_agenda_minutes, offline
-      activation passed, upload sentinel and PostgreSQL PG_VERSION preserved;
-      installed launcher/uninstaller signatures valid; installed
-      gstreamer_runtime.py 959540cd0c5ea8db85427666d1d6f2b898d5fa5448013ef655aaf0007fd363f6
-      matches source; embedded signed station index
-      751e18ab976abe7d1a81e301ee0edfe683a5ec50d35e8f1ca4edb45eff1f6272.
-      Nine assets replaced, 17 unchanged; the model archive retains its original
-      valid signed index. A separate CI provenance asset publishes the exact reviewed
-      PyAV wheel (av-18.0.0-cp311-abi3-win_amd64.whl, 4,347,090 bytes, SHA-256
-      0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce) so wheel
-      reuse never depends on a mutable product pack; it is not part of the installable
-      kit, is never installer-required, and is not listed in SHA256SUMS.txt. Source CI 40583199781 passed Unit/Windows WS4/claims;
-      informational Gate A 40620078397 and the optional randomized suite are not
-      gates; no long-soak requalification and no host-station action. Original tag
-      target a17449189a39af6474d914137eab020169f91023 is unchanged; use revision
-      source for this package. The October 22 documentation revision (signed
-      source 2e19612467fda894d63e499580e4d7b5f029f5f2, build 39810481727, setup
-      6c0aa52d773a4c5c0a0643e00d860a83560551d497c5f1efb05cba5beadc3e5d) and the
-      original October 21 publication retain their historical provenance.
-      Provenance tag archive/v1.0.0-beta.20-package-revision-20261027 is an annotated tag at this revision
-      source 8fdce69e4fccfba80f2984a0d034d8851b4840e0 for the revised package bytes; it
-      carries no release and no assets, and it does not move or rename the published
-      v1.0.0-beta.20 tag target a17449189a39af6474d914137eab020169f91023.
+      Current package revised October 29, 2026 with merged PR279/280, signed source
+      ead567a33614a65554a69ef186342d691c43b7dc, build40835548156, setup SHA-256
+      8a37e2bc48d1f0d63fde088c682730f9b2b49e812e674168ddf462b5b01b9f34.
+      Version1.0.0-beta.20 unchanged; Authenticode Valid Scott Converse with Microsoft
+      timestamp. Required source CI40828194825 passed. Isolated install/packaged
+      agenda/uninstall exit0; signatures, offline activation, guest service/schema,
+      four-page PDF extraction, PDFium rendering,30ordered agenda entries and
+      no writes before confirmation passed. Uninstall preserves upload/PG markers.
+      Retained258-page checkpoint reused; no fullpacket/OCRrepeat or hoststation action.
+      Tesseract and English data remain external prerequisites, deferred bundling.
+      Nine assets replaced;18unchanged including model parts and reviewed PyAV wheel.
+      Original v1.0.0-beta.20 tag remains a17449189a39af6474d914137eab020169f91023.
+      Provenance tag archive/v1.0.0-beta.20-package-revision-20261029 identifies
+      the exact package source; no release/assets attached to the provenance tag.
+      Earlier package evidence remains historical in the verification record.
       Public release: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20.
       Exact current evidence: https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md.
   - tag: v1.0.0-beta.19
