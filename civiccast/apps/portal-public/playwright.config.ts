@@ -20,6 +20,10 @@ export default defineConfig({
     },
     {
       name: 'webkit',
+      // Hosted Linux WebKit native-HLS startup stalled in alternating media
+      // tests when two workers decoded concurrently (CI40817664341 attempts1/2).
+      // Keep every playback assertion, with one native-media worker in CI.
+      workers: process.env.CI ? 1 : undefined,
       use: { ...devices['Desktop Safari'] },
     },
   ],
