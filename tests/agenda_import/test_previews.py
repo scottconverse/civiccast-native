@@ -2,7 +2,9 @@
 # Copyright (c) The CivicCast Authors
 """Operator confirmation is the only writer; resume pins the reviewed revision."""
 
+import json
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -99,6 +101,43 @@ def test_confirmation_refuses_operator_changes_and_partial_results(stores):
     previews._save(record)
     with pytest.raises(ValueError, match="Only a complete"):
         previews.confirm("a", preview.preview_id, agendas)
+
+
+def test_parent_only_reimport_refuses_shifted_orders_without_writing(stores):
+    agendas, previews = stores
+    expected = json.loads(
+        (Path(__file__).parent / "fixtures/longmont-3382/expected-agenda.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    parents = [(number, title) for number, title, _ in expected["items"] if number.isdecimal()]
+    for order, (number, title) in enumerate(parents, 1):
+        agendas.upsert_item(
+            AgendaItem(
+                item_id=f"old-{order}", agenda_id="a", order=order, number=number + ".", title=title
+            )
+        )
+    before = agendas.list_items("a", order_by="order")
+    preview = ready(stores)
+    record = previews._load(preview.preview_id)
+    record["_external"]["items"] = [
+        ExternalAgendaItem(order=order, number=number, title=title).model_dump(mode="json")
+        for order, (number, title, _) in enumerate(expected["items"], 1)
+    ]
+    previews._save(record)
+    with pytest.raises(ValueError, match="numbering/order"):
+        previews.confirm("a", preview.preview_id, agendas)
+    assert agendas.list_items("a", order_by="order") == before
+
+
+def test_matching_numbered_reimport_preserves_operator_title(stores):
+    agendas, previews = stores
+    agendas.upsert_item(
+        AgendaItem(item_id="edited", agenda_id="a", order=1, number="1.", title="Operator wording")
+    )
+    preview = ready(stores)
+    assert previews.confirm("a", preview.preview_id, agendas)[0] == []
+    assert agendas.list_items("a")[0].title == "Operator wording"
 
 
 def test_cancelled_queued_read_can_resume_without_writing(stores):

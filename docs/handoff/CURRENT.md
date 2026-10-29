@@ -44,8 +44,29 @@ source modules; Ruff lint/format clean. API schema/reference/types regenerated.
 UI43 tests, TypeScript and affected ESLint passed in the identical draft source;
 TypeScript was also checked with the integrated generated API types.
 
-Remaining: freeze B, normal PR review/applicable required CI and merge. No extra
-broad local suites or audit ladder. Agents idle; no station processes started.
+PR280 open; follow-up candidate includes the two reproduced corrections below.
+Remaining: applicable required CI and normal merge. No extra broad suites/audit
+ladder. No station processes started.
+
+PR280 initial head13860373: normal GitHub review identified old parent-only import
+order collisions. Red reproduction confirmed the17-to30-item mismerge; confirmation
+now refuses numbering/order conflicts before writing and preserves matching edited
+items. Actual browser acceptance also reproduced Windows AccessDenied during JSON
+replacement while polling; bounded310ms sharing-error retry preserves atomic records.
+Affected preview/document regressions15pass; affected strict mypy clean. Final
+browser proof passed after correcting the isolated SQLite fixture to attach a real
+file-backed schema (the first fixture used an in-memory attached schema). The old
+failed preview stayed unchanged; no baseline rebinding. A fresh normal-UI preview
+reused the same original/258-page checkpoint with zero parser workers. Before confirm:
+zero items,30 exactpreview titles/pages; authenticated UI Blob41472505bytes/exactSHA,
+30page links. Actual UI confirm stored30items; serverrestart preservedall30. Native
+headless PDF popup reached commit/networkidle, but viewer DOMContentLoaded did not
+fire; do not claim a PDF-viewer DOM assertion. Receipt/screenshots under coding-chat
+work/packet-acceptance/browser-workflow-proof.json. No station changes.
+Optional live-network CI received Longmont HTTP403 for both list endpoints from
+GitHub runner (7others passed); no optional gate or retry added. Current Coder is
+watcher/nudger only. Agent document_processor owns the bounded browser proof and
+must stop its hidden development helpers after it; root owns follow-up commit/CI.
 
 ---
 Historical handoff and PR278 receipt follow; preserved from prior candidate.

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -175,7 +176,17 @@ def _write_json(path: Path, metadata: dict[str, Any]) -> None:
         json.dump(metadata, stream)
         stream.flush()
         os.fsync(stream.fileno())
-    temporary.replace(path)
+    # Windows readers (including preview polling) can briefly deny replacement.
+    # Keep the old complete JSON visible and retry only those sharing/access
+    # errors, for at most 310 ms. Permanent failures still surface to the caller.
+    for attempt in range(6):
+        try:
+            temporary.replace(path)
+            break
+        except OSError as error:
+            if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == 5:
+                raise
+            time.sleep(0.01 * 2**attempt)
 
 
 def _sha256(path: Path) -> str:

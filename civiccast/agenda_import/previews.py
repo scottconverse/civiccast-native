@@ -295,6 +295,18 @@ class PreviewStore:
             if record.get("document_id"):
                 self.original_path(agenda_id, preview_id)  # verifies original hash before writes
             external = ExternalAgenda.model_validate(record["_external"])
+            incoming = {item.order: item for item in external.items}
+            for existing in agendas.list_items(agenda_id, order_by="order"):
+                proposed = incoming.get(existing.order)
+                if proposed is None or (
+                    (existing.number or "").strip().rstrip(".)").upper()
+                    != (proposed.number or "").strip().rstrip(".)").upper()
+                ):
+                    raise ValueError(
+                        "Existing agenda numbering/order differs from this preview. "
+                        "Create a new empty agenda or reconcile existing items manually; "
+                        "no items were imported and operator edits were preserved."
+                    )
             written = import_external_agenda(agendas, agenda_id, external)
             record["status"] = "confirmed"
             self._save(record)

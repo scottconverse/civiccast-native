@@ -140,6 +140,9 @@ PrimeGov preview API (all routes require `records_clerk` or `meeting_operator`):
 - `POST .../{preview_id}/confirm`: only a ready preview may persist. Returns written
   items; repeated confirmation returns an empty list without duplicates. If the
   agenda changed during review, 409 requires a fresh preview to preserve edits.
+  If existing numbering/order differs (for example an older parent-only import),
+  confirmation also returns 409 before any writes. Create a new empty agenda or
+  reconcile existing items manually; matching numbered items retain operator edits.
 
 Processing errors are visible in preview status/warnings, not reported as a successful
 empty import. Queued/reading progresses to ready, partial, failed or cancelled;
@@ -276,6 +279,8 @@ must be backed up with them. They retain the request, exact original hash, page
 provenance and confirmation state. One processing lock bounds aggregate work to one
 reader; a concurrent request reports busy and offers resume. Process exit releases
 the lock; the next read exposes interrupted state instead of displaying progress
-forever. There is no new queue service or framework. Retention is additive and does
+forever. There is no new queue service or framework. On Windows, atomic JSON
+replacement retries transient reader sharing/access errors for at most 310 ms, then
+reports a persistent storage failure while preserving the old record. Retention does
 not automatically delete historical originals; include this directory in existing
 storage capacity/backup management. No station installer is produced by these PRs.
