@@ -172,7 +172,7 @@ class TestImportArchiveYearScope:
         client = TestClient(app)
 
         resp = client.post(
-            "/api/staff/agenda/ag-1/import-external",
+            "/api/staff/agenda/ag-1/import-previews",
             json={
                 "source": "primegov",
                 "client_code": "longmont",
@@ -181,8 +181,12 @@ class TestImportArchiveYearScope:
             },
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         assert stub.received_archive_year == 2023
+        assert store.list_items("ag-1") == []
+        preview_id = resp.json()["preview_id"]
+        confirmed = client.post(f"/api/staff/agenda/ag-1/import-previews/{preview_id}/confirm")
+        assert confirmed.status_code == 200
         assert len(store.list_items("ag-1")) == 1
 
     def test_omitted_archive_year_preserves_the_default_lookup(self) -> None:
@@ -195,11 +199,11 @@ class TestImportArchiveYearScope:
         client = TestClient(app)
 
         resp = client.post(
-            "/api/staff/agenda/ag-1/import-external",
+            "/api/staff/agenda/ag-1/import-previews",
             json={"source": "primegov", "client_code": "longmont", "event_id": "4242"},
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         assert stub.received_archive_year is None
 
     def test_archive_year_is_rejected_for_another_source(self) -> None:
@@ -208,7 +212,7 @@ class TestImportArchiveYearScope:
         client = TestClient(app)
 
         resp = client.post(
-            "/api/staff/agenda/ag-1/import-external",
+            "/api/staff/agenda/ag-1/import-previews",
             json={
                 "source": "legistar",
                 "client_code": "seattle",
@@ -233,7 +237,7 @@ class TestImportArchiveYearScope:
         client = TestClient(app)
 
         resp = client.post(
-            "/api/staff/agenda/ag-1/import-external",
+            "/api/staff/agenda/ag-1/import-previews",
             json={
                 "source": "primegov",
                 "client_code": "longmont",
@@ -242,7 +246,7 @@ class TestImportArchiveYearScope:
             },
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         assert stub.received_archive_year == 1985
 
     def test_import_without_a_year_scope_finds_a_next_year_upcoming_meeting(self) -> None:
@@ -264,11 +268,11 @@ class TestImportArchiveYearScope:
         client = TestClient(app)
 
         resp = client.post(
-            "/api/staff/agenda/ag-1/import-external",
+            "/api/staff/agenda/ag-1/import-previews",
             json={"source": "primegov", "client_code": "longmont", "event_id": "4242"},
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         assert stub.received_archive_year is None
 
     def test_future_archive_year_is_rejected(self) -> None:
@@ -277,7 +281,7 @@ class TestImportArchiveYearScope:
         client = TestClient(app)
 
         resp = client.post(
-            "/api/staff/agenda/ag-1/import-external",
+            "/api/staff/agenda/ag-1/import-previews",
             json={
                 "source": "primegov",
                 "client_code": "longmont",
@@ -354,7 +358,7 @@ class TestImportExternal:
 
         resp = client.post(
             "/api/staff/agenda/ag-1/import-external",
-            json={"source": "primegov", "client_code": "longmont", "event_id": "1"},
+            json={"source": "legistar", "client_code": "seattle", "event_id": "1"},
         )
         assert resp.status_code == 422
 
@@ -792,3 +796,69 @@ class TestDiscoveryPartialWarning:
 
         assert resp.status_code == 200
         assert resp.headers.get("x-agenda-discovery-warning") is None
+
+
+@pytest.fixture(autouse=True)
+def _isolated_previews(tmp_path, monkeypatch):
+    monkeypatch.setenv("CIVICCAST_AGENDA_DOCUMENT_DIR", str(tmp_path / "documents"))
+
+
+class TestImportPreview:
+    def test_legacy_primegov_import_cannot_bypass_confirmation(self):
+        app, store = _build(
+            source=_StubSource(agenda=ExternalAgenda(external_id="42", title="Council"))
+        )
+        _seed_agenda(store)
+        response = TestClient(app).post(
+            "/api/staff/agenda/ag-1/import-external",
+            json={"source": "primegov", "client_code": "example", "event_id": "42"},
+        )
+        assert response.status_code == 409
+        assert store.list_items("ag-1") == []
+
+    @pytest.mark.parametrize("scopes,expected", [(None, 401), (("support_admin",), 403)])
+    def test_preview_and_original_require_author_role(self, scopes, expected):
+        app, _ = _build(scopes=scopes)
+        client = TestClient(app)
+        prefix = "/api/staff/agenda/ag-1/import-previews"
+        assert (
+            client.post(
+                prefix, json={"source": "primegov", "client_code": "example", "event_id": "42"}
+            ).status_code
+            == expected
+        )
+        assert client.get(prefix + "/" + "0" * 32 + "/document").status_code == expected
+
+    def test_preview_failure_cannot_be_confirmed(self):
+        app, store = _build(
+            source=_StubSource(error=AgendaSourceUpstreamError("PDF page 2 unreadable"))
+        )
+        _seed_agenda(store)
+        client = TestClient(app)
+        prefix = "/api/staff/agenda/ag-1/import-previews"
+        response = client.post(
+            prefix, json={"source": "primegov", "client_code": "example", "event_id": "42"}
+        )
+        assert response.status_code == 202
+        url = prefix + "/" + response.json()["preview_id"]
+        preview = client.get(url).json()
+        assert preview["status"] == "failed"
+        assert "page 2 unreadable" in preview["warnings"][0]
+        assert client.post(url + "/confirm").status_code == 409
+        assert store.list_items("ag-1") == []
+
+    def test_preview_does_not_expose_unsafe_source_link(self):
+        agenda = ExternalAgenda(
+            external_id="42", title="Council", source_doc_url="javascript:alert(1)"
+        )
+        app, store = _build(source=_StubSource(agenda=agenda))
+        _seed_agenda(store)
+        client = TestClient(app)
+        prefix = "/api/staff/agenda/ag-1/import-previews"
+        response = client.post(
+            prefix, json={"source": "primegov", "client_code": "example", "event_id": "42"}
+        )
+        preview = client.get(prefix + "/" + response.json()["preview_id"]).json()
+        assert preview["status"] == "failed"
+        assert preview["source_doc_url"] is None
+        assert store.list_items("ag-1") == []

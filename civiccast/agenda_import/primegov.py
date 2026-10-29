@@ -1,56 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""``PrimeGovSource`` -- anonymous PrimeGov Public Portal adapter (plan §3, §8
-Phase 2). LPM's own dogfood tenant (``longmont``).
+"""Anonymous PrimeGov discovery and published HTML/PDF agenda ingestion.
 
-Live-verification ledger (2026-07-08, this implementation pass -- re-verified
-independently of the plan's 2026-07-05 planning-pass findings, against the
-real ``longmont.primegov.com`` tenant):
+Upcoming meetings plus a bounded archive year preserve provider IDs and expose
+partial-list warnings. Default document selection is agenda-first; an explicit
+packet request selects only a published PDF packet from that meeting. Existing
+vendor links remain preferred; absent links use Public/CompiledDocument with
+its templateId and compileOutputType. HTML uses Portal/Meeting.
 
-* ``GET https://{tenant}.primegov.com/api/v2/PublicPortal/ListUpcomingMeetings``
-  -- **public, anonymous, real data.** Returned 7 real upcoming Longmont
-  meetings with a ``documentList[]`` per meeting (fields used here: ``id``,
-  ``title``, ``dateTime``, and each document's ``id``, ``templateId``,
-  ``templateName``, ``compileOutputType``, ``link``).
-* ``GET https://{tenant}.primegov.com/Portal/Meeting?meetingTemplateId={id}``
-  -- **public, anonymous, real data**, for a document whose
-  ``compileOutputType == 3`` ("HTML Agenda"/"HTML Packet"). Confirmed against
-  two real Longmont meetings (3726 single-item orientation meeting; 3727,
-  7-item Housing and Human Service Advisory Board agenda) -- server-rendered
-  ``<tr class='section-row'>`` blocks, parsed by
-  :func:`civiccast.agenda_import.docparse.extract_items_from_html`.
-* ``GET https://{tenant}.primegov.com/Portal/MeetingPreview?
-  compiledMeetingDocumentFileId={id}`` -- **requires a staff login**
-  (redirects to ``/Login``). NOT used.
-* A ``compileOutputType == 1`` (PDF) document can be fetched anonymously via
-  the PUBLIC pre-compiled-document endpoint
-  ``/Public/CompiledDocument?meetingTemplateId={templateId}&compileOutputType={n}``
-  built from the document's ``templateId`` (see :func:`_compiled_document_url`).
-  This corrects an earlier, now-superseded belief that only a login-gated
-  SignalR compile could produce the PDF. The mechanism is TownReporter's
-  RECORDED historical proof (source ``3ebf045a``, reused behaviour re-implemented
-  in Python), plus the recorded real Longmont council packet
-  (``meetingTemplateId=15247&compileOutputType=1``: 41,472,505 bytes, 258 pages)
-  -- a historical record, not a live receipt from this pass. This adapter's own
-  live acquisition is exercised separately; see the P1/P2 handoff receipt.
-* Every document's ``link`` field was ``null`` on every meeting/document
-  observed for Longmont, so the CompiledDocument path above is the normal one.
-  An explicit vendor ``link`` is still honoured verbatim when present (and a
-  hostile scheme is refused before any fetch).
-* Of Longmont's 7 real upcoming meetings (fixture): 4 have an HTML agenda
-  (``compileOutputType == 3``); the rest range from a real PDF agenda to a
-  ``compileOutputType == 2`` document of unknown meaning to "CANCELLED" /
-  "Notice of Cancellation" meetings. A document with only a cancellation
-  notice yields an honest ``cancellation_notice_only`` error; every PDF path
-  is bounded (download byte/time cap + page/char-capped extraction) and a
-  partial extraction is REFUSED before any import, never silently persisted.
+The application adapter retains hash-identified originals and page checkpoints,
+recovers pages through an independent parser/local OCR, and identifies the agenda
+section before offering an operator preview. Partial or unsupported extraction
+cannot persist. Standalone callers without a DocumentStore retain the legacy
+bounded PDF path for compatibility.
 
-Net effect: this adapter's fully-proven, live-verified path is
-HTML-compiled-agenda extraction. A meeting with no HTML document surfaces a
-distinct, actionable :class:`~civiccast.agenda_import.base.
-AgendaSourceUpstreamError` naming which extraction path was unavailable
-(plan §9 "fail loud, never silently import nothing") rather than fabricating
-items or guessing at an unverified PDF URL.
+Acceptance evidence includes Longmont meeting3382's 41,472,505-byte, 258-page
+public packet (template15247), including cancellation after12 pages and resume.
+The pipeline is reusable across tenants; its supported structural layout and
+local OCR requirements are documented in docs/ops/agenda-import-runbook.md.
 """
 
 from __future__ import annotations
@@ -62,12 +29,14 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from civiccast.agenda_import.agenda_sections import AgendaSectionResult, extract_agenda_section
 from civiccast.agenda_import.base import (
     AgendaSourceAuthRequiredError,
     AgendaSourceError,
@@ -178,6 +147,11 @@ class PrimeGovSource:
         self._refresh_documents = refresh_documents
         self.last_document: RetainedDocument | None = None
         self.last_processing: PdfProcessingResult | None = None
+        self.last_section: AgendaSectionResult | None = None
+        self.last_meeting: dict[str, Any] | None = None
+        self.last_document_is_packet = False
+        self._cancelled: Callable[[], bool] | None = None
+        self._on_checkpoint: Callable[[PdfProcessingResult], None] | None = None
         # Set by _list_meetings when one (not both) discovery endpoint failed;
         # the router surfaces it as a response header so the operator sees a
         # PARTIAL banner instead of a silently-truncated meeting list.
@@ -206,7 +180,12 @@ class PrimeGovSource:
         return summaries
 
     def fetch_agenda(
-        self, client_code: str, event_id: str, *, archive_year: int | None = None
+        self,
+        client_code: str,
+        event_id: str,
+        *,
+        archive_year: int | None = None,
+        document_kind: str = "automatic",
     ) -> ExternalAgenda:
         # P3: retrieve the SAME meeting discovery offered, including one from an
         # explicitly-selected earlier archived year. ``archive_year`` carries the
@@ -236,6 +215,16 @@ class PrimeGovSource:
                 f"malformed documentList (got {type(documents).__name__})."
             )
 
+        if document_kind not in {"automatic", "packet"}:
+            raise ValueError("Unknown document selection.")
+        if document_kind == "packet":
+            documents = [
+                d
+                for d in documents
+                if isinstance(d, dict)
+                and _document_kind(d.get("templateName")) == "packet"
+                and d.get("compileOutputType") in (1, None)
+            ]
         document, route = _select_document(documents)
         if document is None:
             if route == "cancellation_notice_only":
@@ -313,6 +302,8 @@ class PrimeGovSource:
                     "(extraction_status=pdf_no_url)."
                 )
 
+        self.last_meeting = meeting
+        self.last_document_is_packet = _document_kind(document.get("templateName")) == "packet"
         if self._document_store is not None:
             with self._document_store.acquire(
                 source="primegov",
@@ -323,28 +314,8 @@ class PrimeGovSource:
                 download=lambda path: self._download_document(client_code, doc_url, path),
                 refresh=self._refresh_documents,
             ) as retained:
-                self.last_document = retained
-                result = process_pdf(
-                    retained.path,
-                    retained.checkpoint_path,
-                    max_pages=self._max_pdf_pages,
-                    max_chars=self._max_pdf_text_chars,
-                    tesseract_cmd=os.environ.get("CIVICCAST_TESSERACT_CMD"),
-                )
-                self.last_processing = result
-                if not result.complete:
-                    raise AgendaSourceUpstreamError(
-                        f"PDF processing {result.status}: {result.pages_read}/{result.pages_total} "
-                        f"pages retained ({', '.join(result.issues)}). Resume reuses the original "
-                        "and completed pages; no agenda was imported."
-                    )
-                # Agenda interpretation is separate from complete page recovery.
-                # The preview integration replaces this legacy numbered-line parser.
-                from civiccast.agenda_import.docparse import extract_items_from_page_texts
-
-                items = extract_items_from_page_texts([page.text for page in result.pages])
-                extraction = PdfExtraction(
-                    items=items, pages_total=result.pages_total or 0, pages_read=result.pages_read
+                return self._process_retained_agenda(
+                    retained, meeting, packet=self.last_document_is_packet
                 )
         else:
             pdf_bytes = self._fetch_document_bytes(client_code, doc_url)
@@ -382,6 +353,56 @@ class PrimeGovSource:
         return _build_agenda(meeting, source_doc_url=doc_url, items=extraction.items)
 
     # --- meeting list + transport -----------------------------------------
+
+    def configure_processing(
+        self, *, cancelled: Callable[[], bool], on_checkpoint: Callable[[PdfProcessingResult], None]
+    ) -> None:
+        self._cancelled = cancelled
+        self._on_checkpoint = on_checkpoint
+
+    def resume_retained_agenda(
+        self,
+        documents: DocumentStore,
+        document_id: str,
+        sha256: str,
+        meeting: dict[str, Any],
+        *,
+        packet: bool,
+    ) -> ExternalAgenda:
+        with documents.resume_revision(document_id, sha256) as retained:
+            return self._process_retained_agenda(retained, meeting, packet=packet)
+
+    def _process_retained_agenda(
+        self, retained: RetainedDocument, meeting: dict[str, Any], *, packet: bool
+    ) -> ExternalAgenda:
+        self.last_document = retained
+        self.last_meeting = meeting
+        self.last_document_is_packet = packet
+        result = process_pdf(
+            retained.path,
+            retained.checkpoint_path,
+            max_pages=self._max_pdf_pages,
+            max_chars=self._max_pdf_text_chars,
+            tesseract_cmd=os.environ.get("CIVICCAST_TESSERACT_CMD"),
+            cancelled=self._cancelled,
+            on_checkpoint=self._on_checkpoint,
+        )
+        self.last_processing = result
+        if not result.complete:
+            raise AgendaSourceUpstreamError(
+                f"PDF processing {result.status}: {result.pages_read}/{result.pages_total} pages retained "
+                f"({', '.join(result.issues)}). Resume reuses this original and completed pages; nothing was imported."
+            )
+        doc_url = str(retained.metadata["identity"]["url"])
+        section = extract_agenda_section(result.pages, source_doc_url=doc_url, packet=packet)
+        self.last_section = section
+        if not section.complete:
+            raise AgendaSourceUpstreamError(
+                "Agenda section could not be identified completely: " + "; ".join(section.issues)
+            )
+        # Human confirmation reviews this structural PDF interpretation.
+        items = [item.model_copy(update={"confidence": 0.85}) for item in section.items]
+        return _build_agenda(meeting, source_doc_url=doc_url, items=items)
 
     def _find_meeting(
         self, client_code: str, event_id: str, *, archive_year: int | None = None
@@ -551,6 +572,8 @@ class PrimeGovSource:
         total = 0
         current_url = url
         try:
+            if self._cancelled is not None and self._cancelled():
+                raise AgendaSourceUpstreamError("Document acquisition cancelled.")
             # The public CompiledDocument endpoint 302-redirects to the real PDF
             # object (an external public blob host). Follow redirects MANUALLY,
             # bounded in number, validating EVERY target with the existing public
@@ -598,6 +621,8 @@ class PrimeGovSource:
                                 f"HTTP {response.status_code}."
                             )
                         for chunk in response.iter_bytes():
+                            if self._cancelled is not None and self._cancelled():
+                                raise AgendaSourceUpstreamError("Document acquisition cancelled.")
                             if time.monotonic() - started > self._document_deadline_seconds:
                                 raise AgendaSourceUpstreamError(
                                     f"PrimeGov document at {url} exceeded the "

@@ -23,7 +23,7 @@ import { AgendaMinutesPanel } from './AgendaMinutesPanel'
 // Role gate: records_clerk OR meeting_operator (matches the backend _AUTHOR
 // set in civiccast/agenda/router.py).
 
-import { useId, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthRequiredState } from '../components/AuthRequiredState'
 
@@ -38,6 +38,13 @@ import {
   getStaffIdentity,
   importAgendaFromDoc,
   importExternalAgenda,
+  startAgendaImportPreview,
+  getAgendaImportPreview,
+  resumeAgendaImportPreview,
+  cancelAgendaImportPreview,
+  confirmAgendaImportPreview,
+  type AgendaImportPreview,
+  staffApiBlobRequest,
   listAgendaItems,
   listAgendaMeetings,
   markAgendaItemNow,
@@ -816,6 +823,58 @@ function isoYear(raw: string | null | undefined): number | null {
   return match === null ? null : Number(match[1])
 }
 
+function savedAgendaPreview(agendaId: string): string | null {
+  try {
+    return sessionStorage.getItem(`agenda-import-preview:${agendaId}`)
+  } catch {
+    return null
+  }
+}
+
+function AgendaPreviewDocument({ preview }: { preview: AgendaImportPreview }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const ownedUrl = useRef<string | null>(null)
+  const active = useRef(true)
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+      if (ownedUrl.current) URL.revokeObjectURL(ownedUrl.current)
+    }
+  }, [])
+  const documentMut = useMutation({
+    mutationFn: () => staffApiBlobRequest(preview.source_document_url!),
+    onSuccess: (blob) => {
+      if (!active.current) return
+      const url = URL.createObjectURL(blob)
+      ownedUrl.current = url
+      setBlobUrl(url)
+    },
+  })
+  const sourceUrl = preview.source_document_url ? blobUrl : preview.source_doc_url
+  return <>
+    {preview.source_document_url && !blobUrl && <button type="button"
+      disabled={documentMut.isPending} onClick={() => documentMut.mutate()}
+      className="text-xs underline disabled:opacity-50">
+      {documentMut.isPending ? 'Loading retained source document…' : 'Load retained source document'}
+    </button>}
+    {sourceUrl && <a href={sourceUrl} target="_blank" rel="noreferrer noopener" className="text-xs underline">
+      {preview.source_document_url ? 'Open retained source document' : 'Open published agenda'}
+    </a>}
+    {documentMut.isError && <Banner tone="warn">{apiMessage(documentMut.error, 'Could not load the retained source document.')}</Banner>}
+    <ol aria-label="Preview agenda items" className="space-y-2 text-sm">
+      {preview.items.map((item) => <li key={item.order}>
+        <span>{item.number ? `${item.number.replace(/[.)]$/, '')}. ` : ''}{item.title}</span>
+        {(preview.item_pages[String(item.order)] ?? []).map((page) => sourceUrl
+          ? <a key={page} className="ml-2 text-xs underline"
+            href={`${sourceUrl.replace(/#.*$/, '')}#page=${page}`}
+            target="_blank" rel="noreferrer noopener">Page {page}</a>
+          : <span key={page} className="ml-2 text-xs">Page {page} (load retained document to view)</span>)}
+      </li>)}
+    </ol>
+  </>
+}
+
 function ExternalImportSection({
   agendaId,
   agendaStatus,
@@ -840,6 +899,35 @@ function ExternalImportSection({
   const [meetings, setMeetings] = useState<ExternalMeetingSummary[] | null>(null)
   const [selectedEventId, setSelectedEventId] = useState('')
   const [discoveryWarning, setDiscoveryWarning] = useState<string | null>(null)
+  const [usePacket, setUsePacket] = useState(false)
+  const [previewId, setPreviewId] = useState<string | null>(() => savedAgendaPreview(agendaId))
+  const previewClient = useQueryClient()
+  const previewKey = ['agenda-import-preview', agendaId, previewId]
+  const previewQuery = useQuery({
+    queryKey: previewKey,
+    queryFn: () => getAgendaImportPreview(agendaId, previewId!),
+    enabled: previewId !== null,
+    retry: false,
+    staleTime: 1000,
+    refetchInterval: (query) =>
+      query.state.data?.status === 'queued' || query.state.data?.status === 'reading' ? 1000 : false,
+  })
+  const preview = previewQuery.data
+  const readingPreview = preview?.status === 'queued' || preview?.status === 'reading'
+
+  const rememberPreview = (next: AgendaImportPreview) => {
+    previewClient.setQueryData(['agenda-import-preview', agendaId, next.preview_id], next)
+    setPreviewId(next.preview_id)
+    try {
+      sessionStorage.setItem(`agenda-import-preview:${agendaId}`, next.preview_id)
+    } catch { /* A blocked browser store does not prevent an in-session preview. */ }
+  }
+  const clearPreview = () => {
+    setPreviewId(null)
+    try {
+      sessionStorage.removeItem(`agenda-import-preview:${agendaId}`)
+    } catch { /* The server remains the durable source of preview state. */ }
+  }
 
   const isJsPortal = source === 'js_portal'
 
@@ -900,6 +988,36 @@ function ExternalImportSection({
       setSelectedEventId('')
     },
   })
+
+  const previewMut = useMutation({
+    mutationFn: () => startAgendaImportPreview(agendaId, {
+      source: 'primegov', client_code: clientCode.trim(), event_id: selectedEventId,
+      portal_url: null, portal_vendor_hint: null, archive_year: importArchiveYear,
+      document_kind: usePacket ? 'packet' : 'automatic',
+    }),
+    onSuccess: rememberPreview,
+  })
+  const resumeMut = useMutation({
+    mutationFn: () => resumeAgendaImportPreview(agendaId, previewId!),
+    onSuccess: rememberPreview,
+  })
+  const cancelMut = useMutation({
+    mutationFn: () => cancelAgendaImportPreview(agendaId, previewId!),
+    onSuccess: rememberPreview,
+  })
+  const confirmMut = useMutation({
+    mutationFn: () => {
+      if (!previewId || preview?.status !== 'ready') throw new Error('The preview is not ready to import.')
+      return confirmAgendaImportPreview(agendaId, previewId)
+    },
+    onSuccess: () => {
+      onImported()
+      clearPreview()
+      setMeetings(null)
+      setSelectedEventId('')
+    },
+  })
+  const previewBusy = previewMut.isPending || readingPreview || resumeMut.isPending || cancelMut.isPending || confirmMut.isPending
 
   const importIs503 =
     importMut.isError && importMut.error instanceof ApiError && importMut.error.status === 503
@@ -1025,11 +1143,19 @@ function ExternalImportSection({
       </label>
 
       {source === 'primegov' && (
-        <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        <><p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
           PrimeGov discovery reads the upcoming list plus the archived list for the year of
           that date (the current year if left blank), and the import is scoped to the
           selected meeting&apos;s year.
         </p>
+        <label className="flex items-center gap-2 text-xs">
+          <input type="checkbox" aria-label="Use full published packet" checked={usePacket}
+            disabled={previewBusy || previewId !== null} onChange={(event) => setUsePacket(event.target.checked)} />
+          Use full published packet
+        </label>
+        <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          The published agenda is selected first by default. Review the preview before confirming an import.
+        </p></>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -1089,23 +1215,63 @@ function ExternalImportSection({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              aria-label="Import the selected meeting's agenda"
-              disabled={importMut.isPending || selectedEventId === ''}
-              onClick={() => importMut.mutate()}
+              aria-label={source === 'primegov' ? "Preview the selected meeting's agenda" : "Import the selected meeting's agenda"}
+              disabled={importMut.isPending || (source === 'primegov' && previewBusy) || selectedEventId === ''}
+              onClick={() => source === 'primegov' ? previewMut.mutate() : importMut.mutate()}
               className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
               style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
             >
-              {importMut.isPending ? 'Importing…' : 'Import selected meeting'}
+              {source === 'primegov'
+                ? previewMut.isPending ? 'Preparing preview…' : 'Preview selected meeting'
+                : importMut.isPending ? 'Importing…' : 'Import selected meeting'}
             </button>
             {agendaStatus === 'published' && (
               <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                This agenda is published. Importing will move it back to draft until you review
+                This agenda is published. {source === 'primegov' ? 'Confirming the import' : 'Importing'} will move it back to draft until you review
                 and republish.
               </span>
             )}
           </div>
         </>
       )}
+
+      {previewId && (
+        <section aria-label="PrimeGov agenda import preview" className="space-y-3 rounded-md border p-3">
+          <h3 className="text-sm font-semibold">Agenda import preview</h3>
+          <p className="text-sm font-semibold">{preview?.title ?? 'Selected meeting'}</p>
+          {previewQuery.isLoading && <p role="status">Loading saved preview…</p>}
+          {preview && <>
+            <p role="status" className="text-xs">
+              Preview status: {preview.status}. {preview.pages_total === null
+                ? 'Published agenda preview.'
+                : `${preview.pages_read} of ${preview.pages_total} document pages read.`}
+              {readingPreview && preview.cancel_requested ? ' Cancellation requested; stopping the reader.' : ''}
+            </p>
+            <p className="text-xs">Review these items and the source document. Confirm import adds them to this agenda.</p>
+            {preview.agenda_pages.length > 0 && <p className="text-xs">Agenda pages: {preview.agenda_pages.join(', ')}.</p>}
+            {preview.warnings.map((warning, index) => <Banner key={index} tone="warn">{warning}</Banner>)}
+            <AgendaPreviewDocument key={`${preview.preview_id}:${preview.source_document_url ?? ''}`} preview={preview} />
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={preview.status !== 'ready' || previewBusy || previewQuery.isError}
+                onClick={() => confirmMut.mutate()} className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}>Confirm import</button>
+              {preview.resumable && !readingPreview && <button type="button" disabled={previewBusy}
+                onClick={() => resumeMut.mutate()} className="text-xs underline">Resume reading</button>}
+              {readingPreview && <button type="button" disabled={cancelMut.isPending || preview.cancel_requested}
+                onClick={() => cancelMut.mutate()} className="text-xs underline">Cancel reading</button>}
+              {!readingPreview && !previewBusy && <button type="button" onClick={clearPreview}
+                className="text-xs underline">Dismiss preview</button>}
+            </div>
+          </>}
+          {previewQuery.isError && <Banner tone="warn">
+            {apiMessage(previewQuery.error, 'Could not load this preview.')}
+            {!preview && <button type="button" onClick={clearPreview} className="ml-2 underline">Dismiss unavailable preview</button>}
+          </Banner>}
+        </section>
+      )}
+      {[previewMut, resumeMut, cancelMut, confirmMut].map((mutation, index) => mutation.isError
+        ? <Banner key={index} tone="warn">{apiMessage(mutation.error, 'Could not update the agenda preview.')}</Banner> : null)}
+      {confirmMut.isSuccess && <Banner tone="ok">Imported {confirmMut.data.length} item{confirmMut.data.length === 1 ? '' : 's'}.</Banner>}
 
       {importMut.isSuccess && (
         <Banner tone={importedNeedsReview ? 'warn' : 'ok'}>

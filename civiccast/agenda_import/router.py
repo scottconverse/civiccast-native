@@ -23,9 +23,11 @@ from __future__ import annotations
 import functools
 import logging
 from datetime import UTC, date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi.responses import FileResponse
+from filelock import Timeout
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from civiccast.agenda.models import AgendaItem
@@ -45,6 +47,12 @@ from civiccast.agenda_import.config import (
 from civiccast.agenda_import.js_portal import describe_js_portal_runtime
 from civiccast.agenda_import.mapper import import_external_agenda
 from civiccast.agenda_import.models import AgendaSourceName, ExternalMeetingSummary
+from civiccast.agenda_import.previews import (
+    AgendaImportPreview,
+    PreviewStore,
+    agenda_fingerprint,
+    configured_preview_store,
+)
 from civiccast.agenda_import.primegov import archive_year_supported
 from civiccast.agenda_import.provenance import AgendaImportProvenanceStore
 from civiccast.agenda_import.registry import build_source
@@ -210,6 +218,10 @@ def import_external(
 ) -> list[AgendaItem]:
     _require_enabled(settings)
     resolved_store = _require_store(store)
+    if payload.source == "primegov":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Create and confirm an import preview for PrimeGov."
+        )
     try:
         source = build_source(
             payload.source,
@@ -393,3 +405,177 @@ __all__ = [
     "get_agenda_import_settings",
     "router",
 ]
+
+
+class AgendaImportPreviewRequest(AgendaImportExternalRequest):
+    document_kind: Literal["automatic", "packet"] = "automatic"
+
+    @model_validator(mode="after")
+    def _packet_scope(self) -> AgendaImportPreviewRequest:
+        if self.source != "primegov":
+            raise ValueError(
+                "This preview route supports PrimeGov; use the existing import route for other sources."
+            )
+        return self
+
+
+def get_agenda_preview_store() -> PreviewStore:
+    return configured_preview_store()
+
+
+def _http_error(error: Exception) -> HTTPException:
+    if isinstance(error, LookupError):
+        return HTTPException(status.HTTP_404_NOT_FOUND, str(error))
+    if isinstance(error, Timeout):
+        return HTTPException(status.HTTP_409_CONFLICT, "This preview is already processing.")
+    if isinstance(error, OSError):
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Retained document storage is unavailable."
+        )
+    return HTTPException(status.HTTP_409_CONFLICT, str(error))
+
+
+@router.post(
+    "/agenda/{agenda_id}/import-previews",
+    response_model=AgendaImportPreview,
+    status_code=202,
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def create_import_preview(
+    agenda_id: str,
+    payload: AgendaImportPreviewRequest,
+    background_tasks: BackgroundTasks,
+    store: AgendaStore | None = Depends(get_agenda_store),
+    previews: PreviewStore = Depends(get_agenda_preview_store),
+    settings: AgendaImportSettings = Depends(get_agenda_import_settings),
+) -> AgendaImportPreview:
+    _require_enabled(settings)
+    agendas = _require_store(store)
+    try:
+        baseline = agenda_fingerprint(agendas, agenda_id)
+        preview = previews.create(agenda_id, payload.model_dump(mode="json"), baseline)
+        background_tasks.add_task(previews.run, preview.preview_id, settings, build_source)
+        return preview
+    except (LookupError, ValueError, OSError) as error:
+        raise _http_error(error) from error
+
+
+@router.get(
+    "/agenda/{agenda_id}/import-previews/{preview_id}",
+    response_model=AgendaImportPreview,
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def get_import_preview(
+    agenda_id: str,
+    preview_id: str,
+    previews: PreviewStore = Depends(get_agenda_preview_store),
+    settings: AgendaImportSettings = Depends(get_agenda_import_settings),
+) -> AgendaImportPreview:
+    _require_enabled(settings)
+    try:
+        return previews.get(agenda_id, preview_id)
+    except (LookupError, ValueError, OSError) as error:
+        raise _http_error(error) from error
+
+
+@router.post(
+    "/agenda/{agenda_id}/import-previews/{preview_id}/resume",
+    response_model=AgendaImportPreview,
+    status_code=202,
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def resume_import_preview(
+    agenda_id: str,
+    preview_id: str,
+    background_tasks: BackgroundTasks,
+    previews: PreviewStore = Depends(get_agenda_preview_store),
+    settings: AgendaImportSettings = Depends(get_agenda_import_settings),
+) -> AgendaImportPreview:
+    _require_enabled(settings)
+    try:
+        preview = previews.queue_resume(agenda_id, preview_id)
+        background_tasks.add_task(previews.run, preview_id, settings, build_source)
+        return preview
+    except (LookupError, ValueError, OSError, Timeout) as error:
+        raise _http_error(error) from error
+
+
+@router.post(
+    "/agenda/{agenda_id}/import-previews/{preview_id}/cancel",
+    response_model=AgendaImportPreview,
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def cancel_import_preview(
+    agenda_id: str,
+    preview_id: str,
+    previews: PreviewStore = Depends(get_agenda_preview_store),
+    settings: AgendaImportSettings = Depends(get_agenda_import_settings),
+) -> AgendaImportPreview:
+    _require_enabled(settings)
+    try:
+        return previews.cancel(agenda_id, preview_id)
+    except (LookupError, ValueError, OSError) as error:
+        raise _http_error(error) from error
+
+
+@router.get(
+    "/agenda/{agenda_id}/import-previews/{preview_id}/document",
+    response_class=FileResponse,
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+def get_preview_original(
+    agenda_id: str,
+    preview_id: str,
+    previews: PreviewStore = Depends(get_agenda_preview_store),
+    settings: AgendaImportSettings = Depends(get_agenda_import_settings),
+) -> FileResponse:
+    _require_enabled(settings)
+    try:
+        return FileResponse(
+            previews.original_path(agenda_id, preview_id), media_type="application/pdf"
+        )
+    except (LookupError, ValueError, OSError) as error:
+        raise _http_error(error) from error
+
+
+@router.post(
+    "/agenda/{agenda_id}/import-previews/{preview_id}/confirm",
+    response_model=list[AgendaItem],
+    dependencies=[Depends(require_any_role(*_AUTHOR))],
+    openapi_extra=_AUTHOR_EXTRA,
+)
+def confirm_import_preview(
+    agenda_id: str,
+    preview_id: str,
+    store: AgendaStore | None = Depends(get_agenda_store),
+    previews: PreviewStore = Depends(get_agenda_preview_store),
+    settings: AgendaImportSettings = Depends(get_agenda_import_settings),
+    provenance: AgendaImportProvenanceStore | None = Depends(get_agenda_import_provenance_store),
+) -> list[AgendaItem]:
+    _require_enabled(settings)
+    agendas = _require_store(store)
+    try:
+        written, request = previews.confirm(agenda_id, preview_id, agendas)
+    except AgendaNotFoundError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from error
+    except AgendaItemOrderConflictError as error:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+    except (LookupError, ValueError, OSError, Timeout) as error:
+        raise _http_error(error) from error
+    if provenance is not None:
+        try:
+            provenance.record_import(
+                agenda_id=agenda_id,
+                source=request["source"],
+                client_code=request["client_code"],
+                external_id=request["event_id"],
+            )
+        except Exception:
+            logger.exception("Import provenance could not be recorded for %s", agenda_id)
+    return written

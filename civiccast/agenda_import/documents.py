@@ -41,6 +41,42 @@ class DocumentStore:
     def __init__(self, root: Path) -> None:
         self.root = root
 
+    def get_revision(self, document_id: str, sha256: str) -> RetainedDocument:
+        """Resolve the exact previewed original, even after a newer amendment."""
+        for value in (document_id, sha256):
+            if len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+                raise ValueError("Invalid retained document identity.")
+        folder = self.root / document_id
+        version = folder / "versions" / sha256
+        manifest = version / "manifest.json"
+        if not manifest.is_file():
+            version = folder
+            manifest = folder / "legacy-manifest.json"
+            if not manifest.is_file():
+                manifest = folder / "manifest.json"
+        if not manifest.is_file():
+            raise LookupError("Retained document revision not found.")
+        metadata = json.loads(manifest.read_text(encoding="utf-8"))
+        identity = metadata.get("identity", {})
+        identity_digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        original = version / "original.pdf"
+        if (
+            metadata.get("version") != 1
+            or metadata.get("sha256") != sha256
+            or identity_digest != document_id
+            or not original.is_file()
+            or _sha256(original) != sha256
+        ):
+            raise ValueError("Retained original is missing or changed; resume refused.")
+        return RetainedDocument(document_id, original, version / "pages.json", metadata)
+
+    @contextmanager
+    def resume_revision(self, document_id: str, sha256: str) -> Iterator[RetainedDocument]:
+        # Validate before using the identifier as a filesystem component.
+        retained = self.get_revision(document_id, sha256)
+        with FileLock(str(self.root / document_id / "document.lock"), timeout=1):
+            yield retained
+
     @contextmanager
     def acquire(
         self,

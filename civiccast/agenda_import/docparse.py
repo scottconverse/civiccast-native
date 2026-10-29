@@ -1,49 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Shared agenda-document item extraction (plan §5 ``docparse.py``).
+"""Shared HTML and legacy flat PDF agenda extraction.
 
-Built in Phase 2 for PrimeGov, reused unchanged by Phase 3 (CivicClerk) --
-neither adapter is the ONE place that decides what to do with an empty
-result; both extractors here just return ``[]`` when nothing reliable is
-found, and it's the calling :class:`~civiccast.agenda_import.base.AgendaSource`
-adapter's job to treat that as "fail loud" per plan §9/§10.
+PrimeGov HTML parents and numbered lettered children are merged in document
+order, excluding unnumbered descriptions and post-adjourn appendices. Captured
+public fixtures cover both parent-only agendas and the 30-item council agenda.
 
-Two extractors:
-
-* :func:`extract_items_from_html` -- PrimeGov's real, **live-verified**
-  compiled-agenda HTML shape (``longmont.primegov.com/Portal/Meeting?
-  meetingTemplateId=...``, captured 2026-07-08): a flat sequence of
-  ``<tr class='section-row'>`` blocks, each with a ``.number-cell-section``
-  order label and a ``.section-heading .item-cell`` title (itself a run of
-  ``<b>`` fragments). Regex-based, not a DOM parser -- the repo has no
-  HTML-parsing dependency (`bs4`/`lxml` are not declared; stdlib ``re`` +
-  ``html.unescape`` is the ladder-rung-3 answer) and this shape is regular
-  enough that a non-greedy scan over real captured fixtures round-trips
-  exactly (golden test: ``tests/agenda_import/test_docparse.py``).
-
-* :func:`extract_items_from_pdf` -- a bounded, honest PDF-text extractor
-  (``pypdf``) for the vendor-family case where a compiled agenda ships only
-  as a PDF. **Ceiling, stated up front:** it recognizes flat, top-level
-  numbered lines only (``"1. Call to order"``) -- the same numbering
-  convention :func:`civiccast.agenda.service._split_number_and_title` already
-  accepts for operator-pasted text. Lettered/roman-numeral sub-items,
-  multi-line wrapped titles, and scanned-image PDFs (no extractable text
-  layer) are NOT recognized; such a PDF yields ``[]``, and the caller must
-  treat that as "no reliable items" (an honest miss), never fabricate a
-  best-guess item list. Upgrade path if a PDF-heavy tenant needs more:
-  layout-aware extraction (column/font-size heuristics) is real, scoped
-  future work, not silently bolted on here.
-
-  This extractor was proven against a **synthetically generated** PDF (via
-  ``reportlab``, an existing repo dependency) in
-  ``tests/agenda_import/test_docparse.py::TestExtractItemsFromPdf`` --
-  **no live PrimeGov tenant's PDF-only compiled agenda was fetchable
-  anonymously during this implementation pass** (every guessed download URL
-  for a ``compileOutputType: 1`` document returned PrimeGov's own
-  "Document Not Found" page; the real download path is a client-side
-  SignalR compile-then-download flow gated behind an anti-forgery token, not
-  a plain GET). See ``primegov.py`` module docstring for the live-verification
-  ledger. This is a known, disclosed gap, not a silent one.
+The legacy PDF helpers recognize flat numbered lines and remain available to
+CivicClerk and direct callers. PrimeGov's application path instead uses retained
+originals, resumable page recovery (pdf_processing), then agenda-section parsing
+(agenda_sections). Public PrimeGov PDFs use the CompiledDocument endpoint;
+the old assumption that anonymous PDF retrieval required SignalR was incorrect.
 """
 
 from __future__ import annotations
@@ -72,6 +39,15 @@ _SECTION_ROW_RE = re.compile(
     re.DOTALL,
 )
 
+# A numbered child has its own number-cell followed by an agenda-item title.
+# Description rows have no number-cell, so their body text is never imported.
+_CHILD_ROW_RE = re.compile(
+    r"<td\b[^>]*class=['\"]number-cell['\"][^>]*>(?P<number>.*?)</td>\s*"
+    r"<td\b[^>]*class=['\"]item-cell['\"][^>]*>\s*"
+    r"<div\b[^>]*class=['\"]agenda-item['\"][^>]*>(?P<title>.*?)</div>",
+    re.DOTALL,
+)
+
 # Bounded PDF heuristic (module docstring "ceiling"): a line that begins with
 # a plain integer + separator, mirroring the existing operator-paste
 # convention in civiccast/agenda/service.py's _NUMBER_PREFIX -- restricted to
@@ -94,8 +70,9 @@ def extract_items_from_html(compiled_html: str) -> list[ExternalAgendaItem]:
     Order is the item's position in the document (1-based) -- the vendor
     doesn't ship a separate machine-readable sequence field the way Legistar
     does, but the HTML is itself already in display order, so position IS
-    the order. The ``number`` label ("1.", "2.") is kept verbatim as
-    display metadata, same convention as Legistar's ``EventItemAgendaNumber``.
+    the order. Parent number labels ("1.", "2.") remain verbatim; lettered
+    children are qualified with their numeric parent ("4.A"). Unnumbered prose
+    is excluded. Adjourn/adjournment ends the agenda before appendices.
 
     Returns ``[]`` if no ``section-row`` blocks are found (corrupted/
     shape-drifted HTML) -- the caller (``PrimeGovSource.fetch_agenda``)
@@ -103,12 +80,29 @@ def extract_items_from_html(compiled_html: str) -> list[ExternalAgendaItem]:
     empty import" rule (plan §9/§10).
     """
     items: list[ExternalAgendaItem] = []
-    for idx, match in enumerate(_SECTION_ROW_RE.finditer(compiled_html), start=1):
+    parent_number: str | None = None
+    matches = sorted(
+        [(match.start(), False, match) for match in _SECTION_ROW_RE.finditer(compiled_html)]
+        + [(match.start(), True, match) for match in _CHILD_ROW_RE.finditer(compiled_html)],
+        key=lambda entry: entry[0],
+    )
+    for _offset, child, match in matches:
         number = _clean_text(match.group("number")) or None
         title = _clean_text(match.group("title"))
+        if child:
+            label = re.fullmatch(r"([A-Z])[.)]?", number or "")
+            if parent_number is None or label is None or not title:
+                continue
+            number = f"{parent_number}.{label[1]}"
+        else:
+            parent = re.fullmatch(r"(\d+)[.)]?", number or "")
+            parent_number = parent[1] if parent else None
+        idx = len(items) + 1
         if not title:
             title = f"Agenda item {idx}"
         items.append(ExternalAgendaItem(order=idx, title=title[:_ITEM_TITLE_MAX], number=number))
+        if not child and re.fullmatch(r"adjourn(?:ment)?[.!]?", title, re.IGNORECASE):
+            break
     return items
 
 
