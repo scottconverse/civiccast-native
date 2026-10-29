@@ -147,6 +147,13 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
     components = lock["components"]
     vcvarsall = find_vcvarsall()
     environment = load_pinned_msvc_environment(vcvarsall)
+    # CMake's try_compile subprocess can reinitialize empty cache entries from
+    # these environment variables, so clear both sources of ambient launchers.
+    environment = {
+        key: value
+        for key, value in environment.items()
+        if key.upper() not in {"CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER"}
+    }
     # VC/Auxiliary/Build/vcvarsall.bat identifies the actual selected installation;
     # a runner may provision it anywhere, independently of ProgramFiles and PATH.
     tools = verify_msvc_cmake_tools(vcvarsall.parents[3], lock["build"])
@@ -172,6 +179,8 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
         "-DBUILD_SHARED_LIBS=OFF",
         "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
         "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+        "-DCMAKE_C_COMPILER_LAUNCHER:STRING=",
+        "-DCMAKE_CXX_COMPILER_LAUNCHER:STRING=",
         f"-DCMAKE_INSTALL_PREFIX={prefix.as_posix()}",
         f"-DCMAKE_C_FLAGS={' '.join(lock['build']['c_flags'])} /pathmap:{scratch.resolve()}=ocr-source",
         f"-DCMAKE_CXX_FLAGS={' '.join(lock['build']['cxx_flags'])} /pathmap:{scratch.resolve()}=ocr-source",
@@ -199,6 +208,7 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
                 "-DDISABLE_CURL=ON",
                 "-DINSTALL_CONFIGS=OFF",
                 "-DENABLE_NATIVE=OFF",
+                "-DENABLE_CCACHE=OFF",
             ]
         )
         run(

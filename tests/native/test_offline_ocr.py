@@ -112,3 +112,44 @@ def test_ocr_deterministic_flags_are_bound_to_reviewed_lock():
     build = json.loads(lock_path.read_text(encoding="utf-8"))["build"]
     assert build["c_flags"] == ["/experimental:deterministic"]
     assert build["cxx_flags"] == ["/experimental:deterministic", "/EHsc"]
+    assert build["compiler_cache"] is False
+
+
+def test_ocr_configuration_disables_ambient_compiler_launchers(tmp_path, monkeypatch):
+    selected = tmp_path / "pinned-msvc"
+    monkeypatch.setattr(
+        builder, "find_vcvarsall", lambda: selected / "VC/Auxiliary/Build/vcvarsall.bat"
+    )
+    monkeypatch.setattr(
+        builder,
+        "load_pinned_msvc_environment",
+        lambda path: {
+            "CMAKE_C_COMPILER_LAUNCHER": "ambient-ccache",
+            "CMAKE_CXX_COMPILER_LAUNCHER": "ambient-ccache",
+        },
+    )
+    monkeypatch.setattr(
+        builder,
+        "verify_msvc_cmake_tools",
+        lambda *a: {"cmake": selected / "cmake.exe", "ninja": selected / "ninja.exe"},
+    )
+    monkeypatch.setattr(builder, "_acquire", lambda *a: None)
+    monkeypatch.setattr(builder, "_extract_sources", lambda *a: None)
+    configurations = []
+
+    def run(command, environment):
+        assert not any(key.upper().endswith("COMPILER_LAUNCHER") for key in environment)
+        if "-S" in command:
+            configurations.append(command)
+            if command[command.index("-S") + 1].endswith("tesseract-5.5.4"):
+                raise RuntimeError("configuration captured without compiling")
+        return ""
+
+    monkeypatch.setattr(builder, "_run_build_command", run)
+    with pytest.raises(RuntimeError, match="configuration captured"):
+        builder.stage_offline_ocr(tmp_path / "output", tmp_path / "scratch")
+    assert len(configurations) == 2
+    for command in configurations:
+        assert "-DCMAKE_C_COMPILER_LAUNCHER:STRING=" in command
+        assert "-DCMAKE_CXX_COMPILER_LAUNCHER:STRING=" in command
+    assert "-DENABLE_CCACHE=OFF" in configurations[-1]

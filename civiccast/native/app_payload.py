@@ -129,7 +129,7 @@ OCR_FILES: Final[dict[str, tuple[str, str, str]]] = {
         "Apache-2.0",
     ),
 }
-OCR_LOCK_SHA256: Final[str] = "29325c5cf7767cc6e819fd09e2f82dcf8862b2a3cb2984de6f61dec9da5eb8f2"
+OCR_LOCK_SHA256: Final[str] = "e44aabd55106f76a965cc64229fd04d3534cb35d97eedb9f01f60f9de9222183"
 #: The pack "component" identity for the signed native-app-payload
 #: ``.ccpack`` (``scripts/build_native_app_payload_pack.py``): the CPython
 #: 3.12 embeddable interpreter + the ``civiccast`` wheel + its hash-pinned

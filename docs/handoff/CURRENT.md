@@ -31,7 +31,7 @@ and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
 do not seek them as a prerequisite or claim human-validated translation accuracy.
 Language edit/review/publication/player-selection software acceptance remains required.
 
-Current state: PR282 open, head8667458f. Required CI executing.
+Current state: PR282 open, head ee796d1207c8f028862a634dcfc97f18b4d57220. Required CI executing; OCR reproducibility failed.
 First CI failures diagnosed: missing artifact step timeouts (five), inventory
 invoked outside uv environment, installer Playwright unsupported on ubuntu-latest
 26.04 (pin affected job to24.04). Corrections pushed and those checks pass; no package rebuild.
@@ -51,8 +51,19 @@ tests pass); Hosted8667458f exposed LNK1181 missing dotproduct.cpp.obj and D9007
 pathmap. Single-object probes under both full and minimal MSVC produce the object;
 no missing-object cause claimed. Proven deterministic/EHsc flags now pinned; OCR
 lock29325c5cf7767cc6e819fd09e2f82dcf8862b2a3cb2984de6f61dec9da5eb8f2.
-Next hosted run uses verbose first/last plus exact dotproduct command/object/rsp
-diagnostics if it fails; no feature disables or dependency version changes.
+Hosted run40948301974 failed at20:27:34Z with the same missing dotproduct object.
+Its exact compiler command exposed ambient C:/Strawberry/c/bin/ccache.exe ahead
+of pinned cl.exe. Upstream Tesseract ENABLE_CCACHE defaults ON and installs
+compiler launchers. Correction: supported ENABLE_CCACHE=OFF, blank compiler-launcher cache entries,
+and removal of only inherited C/CXX launcher environment keys (try_compile
+otherwise reinitializes them). Eight focused tests and actual pinned-CMake
+configure-only proof with invalid ambient launcher pass; hosted success pending.
+OCR lock now e44aabd55106f76a965cc64229fd04d3534cb35d97eedb9f01f60f9de9222183;
+app payload binds that exact LF hash. No full local OCR or product rebuild.
+This is an observed unpinned launcher, not yet proof of the missing-object cause.
+No OCR feature or dependency-version changes. PR automated review on31cf34c6
+completed with no findings; later changes reviewed by root, no new independent
+review claim.
 No signed product build has run. All compiler/agent jobs are terminal; CI jobs and
 single runner/waiter remain active as recorded below.
 Next: required CI and normal merge, then ONE signed RC1 build and isolated acceptance.

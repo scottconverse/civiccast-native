@@ -34,6 +34,7 @@
     "linker": "14.50.35730.0",
     "c_flags": ["/experimental:deterministic"],
     "cxx_flags": ["/experimental:deterministic", "/EHsc"],
+    "compiler_cache": false,
     "static_runtime": true,
     "image_format": "BMP",
     "disabled_dependencies": ["zlib", "libpng", "libjpeg", "libtiff", "giflib", "libwebp", "openjpeg", "libarchive", "libcurl", "openmp"]
