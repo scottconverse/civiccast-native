@@ -3008,7 +3008,9 @@ def test_addsize_declares_the_candidate_enforced_sidecar_budget() -> None:
     assert match is not None, "CIVICCAST_ADDSIZE_PACKS_KB define not found"
     addsize_kb = int(match.group(1))
 
-    assert addsize_kb == 5_400_000
+    # Actual required sidecars + extracted trees from RC1 build40970229720.
+    # The old5,400,000KiB declaration understated this measured requirement.
+    assert addsize_kb * 1024 >= 6_145_182_639
 
 
 def test_addsize_is_declared_before_the_directory_page_and_used_in_preinstall() -> None:

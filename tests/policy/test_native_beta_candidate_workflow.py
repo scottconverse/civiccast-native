@@ -1495,6 +1495,7 @@ def test_candidate_reuses_reviewed_local_pyav_without_release_publication() -> N
     assert (
         reuse["if"] == "inputs.reviewed_pyav_release_tag != '' || env.BUILD_TARGET == 'self-hosted'"
     )
+    assert "New-Item -ItemType Directory -Force -Path $reuse" in reuse["run"]
     assert "if ($env:REVIEWED_RELEASE)" in reuse["run"]
     assert "runtime-artifact-mirror" in reuse["run"]
     assert "Copy-Item -LiteralPath $mirrorWheel -Destination $reuse" in reuse["run"]
