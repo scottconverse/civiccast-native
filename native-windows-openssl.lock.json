@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "version": "3.5.9",
+  "source": {
+    "version": "3.5.9",
+    "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz",
+    "bytes": 53279637,
+    "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a"
+  },
+  "distribution": "upstream-openssl-source-build",
+  "archive": {
+    "filename": "openssl-3.5.9-civiccast-windows-x64.zip",
+    "bytes": 2805153,
+    "sha256": "062f6d64ae51eb970e46422e6791bced241867574179aa278a82a08245f82491"
+  },
+  "files": {
+    "libcrypto-3-x64.dll": {
+      "bytes": 6260224,
+      "sha256": "aa20423966287639a7ed2ca4c5df07cdfa69171b24be64ab24d360d58a99c960"
+    },
+    "libssl-3-x64.dll": {
+      "bytes": 1985536,
+      "sha256": "ee0c06ebc370dcada77d8d182821c774962e68616d93bc4d928c9ddc4be7cfe2"
+    },
+    "LICENSE.txt": {
+      "bytes": 10175,
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+    },
+    "LicenseRef-Microsoft-VCRedist.txt": {
+      "bytes": 1965,
+      "sha256": "84e6678fc347644a24c605d172355f7529c07243a9a10152d939b1ffafcf535d"
+    },
+    "provenance.json": {
+      "bytes": 1780,
+      "sha256": "ab5bc1f1acc54e9b96f0a79b6b0e2c5ef7497493cbccb0b4569488ef954d44a1"
+    }
+  },
+  "license": "Apache-2.0 AND LicenseRef-Microsoft-VCRedist"
+}

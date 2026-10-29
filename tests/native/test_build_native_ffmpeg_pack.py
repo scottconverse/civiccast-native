@@ -61,7 +61,7 @@ def _make_fixture_root(tmp_path: Path) -> tuple[Path, dict[str, tuple[int, str]]
     root = tmp_path / "ffmpeg-src"
     (root / "bin").mkdir(parents=True)
     pins: dict[str, tuple[int, str]] = {}
-    for name in ("ffmpeg.exe", "ffprobe.exe", "avcodec-62.dll", "avutil-60.dll"):
+    for name in ("ffmpeg.exe", "ffprobe.exe", "avcodec-63.dll", "avutil-61.dll"):
         body = f"pretend-{name}-bytes".encode("ascii")
         (root / "bin" / name).write_bytes(body)
         pins[name] = (len(body), hashlib.sha256(body).hexdigest())
@@ -184,8 +184,8 @@ def test_refuses_a_hash_mismatched_binary(tmp_path: Path, monkeypatch: pytest.Mo
     root, pins = _make_fixture_root(tmp_path)
     _patch_minimal_pins(monkeypatch, pins)
 
-    original_bytes, _ = pins["avcodec-62.dll"]
-    (root / "bin" / "avcodec-62.dll").write_bytes(b"X" * original_bytes)
+    original_bytes, _ = pins["avcodec-63.dll"]
+    (root / "bin" / "avcodec-63.dll").write_bytes(b"X" * original_bytes)
 
     with pytest.raises(builder.FfmpegPackBuildError, match="SHA-256"):
         _build(tmp_path, root)

@@ -668,7 +668,13 @@ def test_resolve_shipped_licenses_derives_the_distinct_set_from_distribution_of(
 
     licenses = build_native_runtime_closure.resolve_shipped_licenses(distribution_of)
 
-    assert licenses == ("Apache-2.0", "BSD-2-Clause", "LGPL-2.1-or-later", "Zlib")
+    assert licenses == (
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "LGPL-2.1-or-later",
+        "LicenseRef-Microsoft-VCRedist",
+        "Zlib",
+    )
 
 
 def test_resolve_shipped_licenses_excludes_unresolved_paths() -> None:
@@ -994,3 +1000,34 @@ def test_write_license_notices_readme_points_at_the_bundled_texts_directory(
     )
 
     assert "licenses/texts/" in readme
+
+
+def test_png_plugin_staging_reaches_manifest_and_license_bom(tmp_path: Path) -> None:
+    """A required implicit decoder must pass the real packaging license gate."""
+    from civiccast.native.runtime_closure import select_plugin_seeds
+    from civiccast.native.runtime_manifest import (
+        build_runtime_manifest,
+        hash_directory_tree,
+        render_license_bom,
+    )
+
+    stage = tmp_path / "stage"
+    relative = "gstreamer_plugins/lib/gstreamer-1.0/gstpng.dll"
+    plugin = stage / relative
+    plugin.parent.mkdir(parents=True)
+    plugin.write_bytes(b"retained PNG plugin fixture")
+    metadata = stage / "gstreamer_plugins-1.28.5.dist-info"
+    metadata.mkdir()
+    (metadata / "RECORD").write_text(f"{relative},,28\n", encoding="utf-8")
+    index = build_native_runtime_closure.build_distribution_index(stage)
+    origins = build_native_runtime_closure.build_origins(stage, index)
+    seeds = select_plugin_seeds(origins, required=frozenset({"pngdec"}))
+    out = tmp_path / "packaged"
+    distributions = build_native_runtime_closure.copy_closure_into_tree(stage, out, seeds, index)
+    entries = hash_directory_tree(out, distribution_of=distributions)
+    manifest = build_runtime_manifest(entries, gstreamer_version="1.28.5", lock_sha256="0" * 64)
+    assert manifest["files"][0]["path"] == "lib/gstreamer-1.0/gstpng.dll"
+    assert manifest["files"][0]["license"] == "LGPL-2.1-or-later"
+    bom = render_license_bom(entries)
+    assert "lib/gstreamer-1.0/gstpng.dll" in bom
+    assert "LGPL-2.1-or-later" in bom

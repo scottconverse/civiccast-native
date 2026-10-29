@@ -1341,6 +1341,26 @@ def build(*, stage: Path, out: Path, requirements: Path | None = None) -> dict[s
     print(f"Writing upstream license notices for {len(shipped_distributions)} distribution(s) ...")
     distribution_of.update(write_license_notices(stage, out, shipped_distributions))
 
+    # Replace only the reviewed affected shared libraries before any final hashes
+    # are calculated. Original wheels and their selected plugin set stay pinned.
+    # Each overlay verifies archive/files and imported names/ordinals, then the
+    # combined tree is checked below so a new dependency cannot be hidden.
+    from scripts.native_glib_soup_overlay import overlay_directory as glib_overlay
+    from scripts.native_gstreamer_ffmpeg_overlay import overlay_directory as ffmpeg_overlay
+    from scripts.native_openssl_overlay import overlay_directory as openssl_overlay
+    from scripts.native_security_overlay import overlay_directory as library_overlay
+
+    security_cache = ROOT / "build/native-security-cache"
+    changed_binaries = []
+    for overlay in (openssl_overlay, glib_overlay, ffmpeg_overlay, library_overlay):
+        for path, (component, version, license_) in overlay(out, security_cache).items():
+            if classify_shipped_file(path) != license_:
+                raise RuntimeError(f"security overlay license policy mismatch: {path}: {license_}")
+            distribution_of[path] = f"{component}@{version}"
+            if path.endswith((".dll", ".exe", ".pyd")):
+                changed_binaries.append(out / path)
+    verify_overlaid_pe_closure(out, changed_binaries)
+
     # CC-WS5-PKG-004 fix: bundle the actual TEXT for every license the tree
     # ships (D3), derived from what is actually in the tree so far -- never a
     # fixed list -- so a future new license with no text added for it halts
@@ -1355,6 +1375,15 @@ def build(*, stage: Path, out: Path, requirements: Path | None = None) -> dict[s
     manifest = build_runtime_manifest(
         entries, gstreamer_version=_gstreamer_version(), lock_sha256=lock_sha256
     )
+    manifest["security_overlays"] = {
+        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+        for name in (
+            "native-windows-openssl.lock.json",
+            "native-windows-glib-soup.lock.json",
+            "native-windows-gstreamer-ffmpeg.lock.json",
+            "native-windows-security-libraries.lock.json",
+        )
+    }
     (out / "runtime-manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
@@ -1365,6 +1394,28 @@ def build(*, stage: Path, out: Path, requirements: Path | None = None) -> dict[s
     print(f"  file_count  = {manifest['file_count']}")
     print(f"  total_bytes = {manifest['total_bytes']}")
     return manifest
+
+
+def verify_overlaid_pe_closure(out: Path, changed_binaries: list[Path]) -> None:
+    """Replacements must not introduce a new unshipped native dependency.
+
+    Original plugins retain the existing closure/hardware policy. Checking every
+    optional baseline module here would invent a new hardware/optional gate.
+    """
+    binaries = [p for p in out.rglob("*") if p.suffix.lower() in {".dll", ".pyd", ".exe"}]
+    names = {p.name.lower() for p in binaries}
+    for binary in changed_binaries:
+        with pefile.PE(str(binary)) as pe:
+            imports = [
+                *getattr(pe, "DIRECTORY_ENTRY_IMPORT", []),
+                *getattr(pe, "DIRECTORY_ENTRY_DELAY_IMPORT", []),
+            ]
+            for entry in imports:
+                name = entry.dll.decode("ascii").lower()
+                if name not in names and not is_system_dll(name):
+                    raise RuntimeError(
+                        f"security overlay introduced an unresolved dependency: {binary.name}: {name}"
+                    )
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+Unpublished candidate `v1.0.0-rc.1`: administrator agenda setup, bundled offline OCR, managed agenda backup/restore, and shipped dependency coverage. Readiness evidence is tracked in the current handoff; no RC1 publication is claimed.
+
 ## [1.0.0-beta.20] - 2026-10-21
 
 - Recovery station-state: replace permission handling; private-key protections unchanged.

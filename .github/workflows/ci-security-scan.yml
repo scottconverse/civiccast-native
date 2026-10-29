@@ -53,8 +53,42 @@ jobs:
 
       - name: pip-audit (fail on any un-allowlisted vulnerability)
         run: |
-          uv run pip-audit --format json > pip-audit-report.json || true
+          # CivicCast itself is the editable source under review, not a PyPI dependency.
+          # The checker permits only that exact editable marker; other skips fail.
+          uv run pip-audit --skip-editable --format json > pip-audit-report.json || true
           python scripts/check_pip_audit_allowlist.py pip-audit-report.json
+
+      - name: Audit exact shipped Windows wheel pins
+        run: |
+          # No host-platform resolution: these are the same fully pinned Windows
+          # wheels the offline payload installs, including PDFium and OCR callers.
+          uv run pip-audit --no-deps --disable-pip -r requirements-native-app.txt --format json > native-pip-audit-report.json || true
+          python scripts/check_pip_audit_allowlist.py native-pip-audit-report.json
+
+      - name: Export shipped native component inventory
+        run: uv run python scripts/native_security_inventory.py --out native-security.cdx.json
+
+      - name: Install pinned native vulnerability scanner
+        run: |
+          curl --fail --location --retry 2 https://github.com/anchore/grype/releases/download/v0.121.0/grype_0.121.0_linux_amd64.tar.gz -o grype.tar.gz
+          echo '64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519  grype.tar.gz' | sha256sum --check
+          tar -xzf grype.tar.gz grype
+
+      - name: Audit native components (fail on every untriaged finding)
+        run: |
+          ./grype sbom:native-security.cdx.json --quiet -o json --file native-security-grype.json
+          python scripts/check_native_audit.py native-security-grype.json
+
+      - name: Retain exact shipped dependency scan evidence
+        timeout-minutes: 5
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: shipped-dependency-security
+          path: |
+            native-pip-audit-report.json
+            native-security.cdx.json
+            native-security-grype.json
 
   bandit:
     name: bandit (service code static analysis)

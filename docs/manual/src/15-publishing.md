@@ -301,3 +301,7 @@ The **Submit a program** form lower on Home lets a producer send a program to th
 Open **Live captions** in the resident portal and choose the public channel. Share the page’s phone/browser link (for example `/#/captions?channel=public`). Adjust **Text size** from 24 to 72 pixels; channel selection and links work by keyboard.
 
 This is the channel’s automatic **English** live sidecar, not an approved official transcript. Live translation is unavailable. The first snapshot says **Latest available captions; waiting for new input**; only a later changed feed says it is receiving new captions. An empty/missing feed says captions are unavailable. After 30 seconds without a changed sidecar, the display clears its text and reports no new input. Silence can also produce that message. It retries automatically; changing channels immediately clears the previous channel’s text. Recorded translations remain selectable in the recording player after staff review.
+
+### RC1 translation review limitation
+
+Qualified human language review for Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic is pending. RC1 software workflow checks cover editing, review decisions, publication and player track selection; they do not establish translation accuracy. Model-assisted checks are not qualified human review. Have a competent speaker review material translated records before relying on them.

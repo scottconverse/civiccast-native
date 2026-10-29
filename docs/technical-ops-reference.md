@@ -800,9 +800,10 @@ and `civicclerk` talk to each vendor's documented, anonymous, plain-HTTP
 JSON/HTML endpoint (no browser needed); `js_portal` is the fallback for a
 portal that renders its content client-side with JavaScript and has no such
 endpoint (CivicPlus AgendaCenter, Granicus, or a JS-hydrated Legistar public
-page). Set `CIVICCAST_AGENDA_SOURCE` to one of `legistar` / `primegov` /
-`civicclerk` / `js_portal` to enable the corresponding routes (the default,
-`off`, makes them 404 with a message naming the env var). Every import lands
+page). Use **Agendas → Agenda source setup** as a setup administrator to save
+the default provider and tenant. Settings apply on the next request and survive
+restart. Environment-based configuration remains a compatibility fallback until
+the first save. Import is disabled by default. Every confirmed import lands
 as a draft — an import into an already-published agenda reopens it to draft
 for operator review before it can go public again (AI/agenda non-negotiables
 §4.2); this is never configurable to auto-publish.
@@ -1231,7 +1232,7 @@ version from the station you are monitoring.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.20","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-rc.1","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

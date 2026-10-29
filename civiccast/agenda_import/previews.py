@@ -19,7 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from civiccast.agenda.models import AgendaItem, validate_source_doc_url
 from civiccast.agenda.store import AgendaStore
 from civiccast.agenda_import.config import AgendaImportSettings
-from civiccast.agenda_import.documents import DocumentStore, _write_json, configured_document_store
+from civiccast.agenda_import.documents import (
+    DocumentStore,
+    _write_json,
+    agenda_snapshot_lock,
+    configured_document_store,
+)
 from civiccast.agenda_import.mapper import import_external_agenda
 from civiccast.agenda_import.models import ExternalAgenda, ExternalAgendaItem
 from civiccast.agenda_import.pdf_processing import PdfProcessingResult
@@ -80,7 +85,7 @@ class PreviewStore:
         return record
 
     def _save(self, record: dict[str, Any]) -> None:
-        _write_json(self._path(record["preview_id"]), record)
+        _write_json(self._path(record["preview_id"]), record, snapshot_root=self.documents.root)
 
     def _public(self, record: dict[str, Any]) -> AgendaImportPreview:
         public = {k: v for k, v in record.items() if not k.startswith("_")}
@@ -282,35 +287,45 @@ class PreviewStore:
     def confirm(
         self, agenda_id: str, preview_id: str, agendas: AgendaStore
     ) -> tuple[list[AgendaItem], dict[str, Any]]:
-        with FileLock(str(self._path(preview_id).with_suffix(".lock")), timeout=0):
-            record = self._load(preview_id, agenda_id)
-            if record["status"] == "confirmed":
-                return [], record["_request"]
-            if record["status"] != "ready" or "_external" not in record:
-                raise ValueError("Only a complete, reviewed preview can be confirmed.")
-            if agenda_fingerprint(agendas, agenda_id) != record["_baseline"]:
+        # Always take the existing preview lock first. Processing owns it while
+        # publishing checkpoints and must never wait for this gate in reverse order.
+        with (
+            FileLock(str(self._path(preview_id).with_suffix(".lock")), timeout=0),
+            agenda_snapshot_lock(self.documents.root),
+        ):
+            return self._confirm_locked(agenda_id, preview_id, agendas)
+
+    def _confirm_locked(
+        self, agenda_id: str, preview_id: str, agendas: AgendaStore
+    ) -> tuple[list[AgendaItem], dict[str, Any]]:
+        record = self._load(preview_id, agenda_id)
+        if record["status"] == "confirmed":
+            return [], record["_request"]
+        if record["status"] != "ready" or "_external" not in record:
+            raise ValueError("Only a complete, reviewed preview can be confirmed.")
+        if agenda_fingerprint(agendas, agenda_id) != record["_baseline"]:
+            raise ValueError(
+                "The agenda changed after this preview. Create a new preview before confirming."
+            )
+        if record.get("document_id"):
+            self.original_path(agenda_id, preview_id)  # verifies original hash before writes
+        external = ExternalAgenda.model_validate(record["_external"])
+        incoming = {item.order: item for item in external.items}
+        for existing in agendas.list_items(agenda_id, order_by="order"):
+            proposed = incoming.get(existing.order)
+            if proposed is None or (
+                (existing.number or "").strip().rstrip(".)").upper()
+                != (proposed.number or "").strip().rstrip(".)").upper()
+            ):
                 raise ValueError(
-                    "The agenda changed after this preview. Create a new preview before confirming."
+                    "Existing agenda numbering/order differs from this preview. "
+                    "Create a new empty agenda or reconcile existing items manually; "
+                    "no items were imported and operator edits were preserved."
                 )
-            if record.get("document_id"):
-                self.original_path(agenda_id, preview_id)  # verifies original hash before writes
-            external = ExternalAgenda.model_validate(record["_external"])
-            incoming = {item.order: item for item in external.items}
-            for existing in agendas.list_items(agenda_id, order_by="order"):
-                proposed = incoming.get(existing.order)
-                if proposed is None or (
-                    (existing.number or "").strip().rstrip(".)").upper()
-                    != (proposed.number or "").strip().rstrip(".)").upper()
-                ):
-                    raise ValueError(
-                        "Existing agenda numbering/order differs from this preview. "
-                        "Create a new empty agenda or reconcile existing items manually; "
-                        "no items were imported and operator edits were preserved."
-                    )
-            written = import_external_agenda(agendas, agenda_id, external)
-            record["status"] = "confirmed"
-            self._save(record)
-            return written, record["_request"]
+        written = import_external_agenda(agendas, agenda_id, external)
+        record["status"] = "confirmed"
+        self._save(record)
+        return written, record["_request"]
 
 
 def configured_preview_store() -> PreviewStore:

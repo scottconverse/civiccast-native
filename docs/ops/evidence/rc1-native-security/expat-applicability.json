@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "reviewed": "2026-10-29",
+  "scope": "Bounded reconciliation of the two shipped Expat copies after correcting the NVD vendor to libexpat_project. No broad library audit or underlying binary fix is claimed.",
+  "scanner_receipt": {
+    "path": "build/expat-only-grype.json",
+    "components": {
+      "gstreamer-libexpat@2.7.1": 28,
+      "cpython-libexpat@2.9.0": 2
+    },
+    "result": "30 findings individually classified in security/native-audit-triage.json; no unreviewed Expat findings"
+  },
+  "gstreamer": {
+    "files": {
+      "bin/libexpat.dll": {
+        "sha256": "8c3ac82b4b88dbe8014cf98271b80110bb1872ecc34850ee68a2460f9e04df41",
+        "bytes": 208384
+      },
+      "bin/fontconfig-1.dll": {
+        "sha256": "3cbe651873b77201208362cc0fbb1ac048510f08867e3a0437384269f21650cd",
+        "bytes": 333824
+      }
+    },
+    "recipe_url": "https://raw.githubusercontent.com/GStreamer/cerbero/1.28.5/recipes/expat.recipe",
+    "recipe_sha256": "30b3149d18155d85370bff7b1b502a0afd451074e5f511c2b848ffd72b29d94e",
+    "source_url": "https://raw.githubusercontent.com/fontconfig/fontconfig/2.16.1/src/fcxml.c",
+    "source_sha256": "7ab9bb7f6bfa044dd50ae1846d5d9ed799760709bd40ad32e9f5f45a63cc2efa",
+    "pe_consumers": [
+      {
+        "path": "bin/fontconfig-1.dll",
+        "symbols": [
+          29,
+          52,
+          7,
+          31,
+          12,
+          11,
+          21,
+          2,
+          25,
+          17,
+          18
+        ],
+        "resolved_symbols": [
+          "XML_SetDoctypeDeclHandler",
+          "XML_SetUserData",
+          "XML_GetBuffer",
+          "XML_SetElementHandler",
+          "XML_GetErrorCode",
+          "XML_GetCurrentLineNumber",
+          "XML_ParserFree",
+          "XML_ErrorString",
+          "XML_SetCharacterDataHandler",
+          "XML_ParseBuffer",
+          "XML_ParserCreate"
+        ]
+      }
+    ],
+    "source_observations": [
+      "FcConfigParseAndLoadFromMemoryInternal creates a fresh UTF-8 XML_ParserCreate parser without a namespace separator and frees it after parsing.",
+      "XML_GetBuffer(BUFSIZ) precedes each XML_ParseBuffer call; each supplied length is at most BUFSIZ.",
+      "No XML_ExternalEntityParserCreate, parser reset/resume, or unknown encoding handler is imported; active-parser callbacks do not feed/free/reset it.",
+      "The shipped closure has no xmlwf executable."
+    ],
+    "trust_boundary": "The only native consumer parses service-local Fontconfig configuration. CivicCast media/font/PDF/CAP/RSS input is not passed as Fontconfig XML, and product code exposes no Fontconfig XML upload/parse-from-memory route. If an untrusted principal can alter the service Fontconfig files/environment, these applicability decisions must be revisited; the underlying2.7.1 library remains vulnerable for arbitrary untrusted configuration XML."
+  },
+  "python": {
+    "source": {
+      "name": "cpython",
+      "version": "3.12.16",
+      "license": "PSF-2.0",
+      "url": "https://www.python.org/ftp/python/3.12.16/Python-3.12.16.tgz",
+      "sha256": "710c3e75dac8b2f258d9cd0f76e5c4c2e9175fac9e249c98901552f7cf33b7dd"
+    },
+    "actual_runtime": "3.12.16 [MSC v.1950 AMD64] / expat_2.9.0",
+    "reset": "No XML_ParserReset call or wrapper is present in pinned Modules/pyexpat.c or Modules/_elementtree.c; Lib/xml/sax/expatreader.py reset creates another ParserCreate. Actual runtime ParserCreate object exposes no Reset method.",
+    "reproduced_before_fix": [
+      "CAP accepted an internal entity declaration.",
+      "RSS accepted a DTD placed after5000leading spaces, beyond the existing4096character prefix guard."
+    ],
+    "correction": "Both supported untrusted feed parsers use existing defusedxml with forbid_dtd=True and forbid_entities=True; CAP preserves empty-list refusal and RSS preserves ValueError refusal/cache fallback. vMix already uses defusedxml entity rejection. Other stdlib parse sites consume generated exports/local validator reports.",
+    "actual_runtime_proof": "Both malicious declaration payloads were rejected using the actual source-built3.12.16 interpreter/Expat2.9.0, with project modules and existing pure-Python defusedxml loaded from the pinned development environment.",
+    "tests": [
+      "tests/eas/test_cap.py::test_parse_cap_xml_rejects_dtd_before_entity_expansion",
+      "tests/cg/test_feed_fetcher.py::test_parse_rss_rejects_dtd_after_prefix_guard_window",
+      "tests/native/test_native_security_inventory.py::test_inventory_includes_ocr_pdfium_native_server_and_excludes_build_node"
+    ],
+    "verification": "29 focused CAP/RSS/inventory tests passed; Ruff passed."
+  },
+  "decision_groups": {
+    "trusted-fontconfig-configuration-input-only": [
+      "CVE-2025-59375",
+      "CVE-2026-66046",
+      "CVE-2026-115506",
+      "CVE-2026-45186",
+      "CVE-2026-41080",
+      "CVE-2026-25210",
+      "CVE-2026-32777",
+      "CVE-2026-56407",
+      "CVE-2026-56403",
+      "CVE-2025-66382",
+      "CVE-2026-56405",
+      "CVE-2026-56408"
+    ],
+    "consumer-API-precondition-absent": [
+      "CVE-2026-93990",
+      "CVE-2026-77214",
+      "CVE-2026-56406",
+      "CVE-2026-50219",
+      "CVE-2026-56412",
+      "CVE-2026-56131",
+      "CVE-2026-32776",
+      "CVE-2026-56132",
+      "CVE-2026-32778",
+      "CVE-2026-56404",
+      "CVE-2026-76957",
+      "CVE-2026-24515"
+    ],
+    "introduced-after-this-copy-and-external-parser-absent": [
+      "CVE-2026-76641"
+    ],
+    "tool-not-shipped": [
+      "CVE-2026-56410",
+      "CVE-2026-56411",
+      "CVE-2026-56409"
+    ],
+    "python-reset-unexposed": [
+      "CVE-2026-113351"
+    ],
+    "python-untrusted-DTD-rejected": [
+      "CVE-2026-115506"
+    ]
+  },
+  "evidence": [
+    "https://github.com/libexpat/libexpat/pull/1321",
+    "https://github.com/libexpat/libexpat/pull/1331",
+    "https://github.com/libexpat/libexpat/pull/1431",
+    "https://nvd.nist.gov/vuln/detail/CVE-2026-115506",
+    "civiccast/eas/cap.py",
+    "civiccast/cg/feed_fetcher.py",
+    "civiccast/control_room/lpm_lab_stage45.py",
+    "civiccast/reporting/epg.py",
+    "civiccast/records/pdfa.py"
+  ]
+}

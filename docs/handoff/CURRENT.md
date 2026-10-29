@@ -1,4 +1,194 @@
-# CURRENT — Beta20 PDF package published; documentation integration — October 29, 2026
+# CURRENT — ACTIVE: RC1 offline agenda readiness — October 29, 2026
+
+## RC1 current assignment (supersedes historical completion below)
+
+Owner request: merged corrections, one consolidated signed RC1 candidate, isolated
+installed acceptance and cleanup. STOP before RC1 tagging/publication/public asset
+replacement. Beta20 publication is complete. Never probe or modify the host station.
+
+Candidate: C:/Dev/cc-pdf-processing, feat/rc1-agenda-offline, based on main
+25c9dcc4a5202339f77d2ff165a3e534dd772d95 (PR281). Version identity: 1.0.0-rc.1; manual parser accepts dotted RC syntax. Preserve unrelated Windows recovery documents.
+
+Required outcomes: administrator UI agenda enablement/tenant persistence; bundled
+pinned offline Tesseract/English/DLLs/licenses; automatic managed agenda backup and
+safe replacement restore; shipped operator/install/recovery guidance; actual shipped
+runtime dependency security coverage; competent language acceptance for Spanish,
+Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic.
+
+Root owns integration, recovery, version/docs, required CI/normal merge, one signed
+build and isolated installed service/PostgreSQL/browser acceptance. Bounded Sol6.1
+medium agents agenda_setup, offline_ocr and agenda_recovery own config/UI, OCR/native
+inventory/security and managed recovery respectively. No DeepSeek; watcher observes/nudges only. All owned dependency-source builds and agent tasks are terminal; no signed RC1/product build has launched.
+
+Acceptance still pending: real discovery/explicit selection, visible original/page
+links, exact 30 items, zero writes before confirm, incomplete refusal, persistence
+after isolated restart, bundled OCR under service identity, backup/restore/resume,
+signatures/install/upgrade preservation/uninstall, final affected diff/repository review.
+Reuse unaffected retained 258-page/checkpoint/development OCR/YouTube/blackout evidence.
+Owner revision relayed by the authorized watcher October29: qualified human review
+for Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic is PENDING
+and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
+do not seek them as a prerequisite or claim human-validated translation accuracy.
+Language edit/review/publication/player-selection software acceptance remains required.
+
+Current state: PR282 remains open. Last tested head5bbf881015d39a1a5ba611075887da21e8c95db6.
+No merge, signed RC1 build, guest installation, tag or publication yet.
+Required unit run40955160859/job123734196810 terminal:24failed/11913passed/
+112skipped/5deselected,57m27s. Claims verifier consequently failed, also reporting
+stale workflow/contract bindings and missing input-transfer job inventory.
+Owned CI waiter session75660 is terminal; no duplicate waiter.
+
+Focused correction now prepared (no product/runtime-byte changes):
+- Installer text-stub fixtures isolate secured_postgres_sources; production
+  archive/hash verification stays unchanged. Ubuntu frontend assertion now24.04.
+- Native exact counts2144pure/2386total/2383Windows-not-integration; floors raised
+  to2094/2333, retaining50margin. All34affected tests verified across focused runs.
+- Three stale docs tests now support RC editions and distinguish RC1 source from
+  still-published Beta20 manual downloads; exact artifact hashes remain checked.
+  No manual/public artifact changed or rerendered for test-only corrections.
+- Six workflow/contract blob bindings renewed only for reviewed archive transfer
+  and raised floors. Transfer job inventoried as NONproducer; named claim code,
+  tests, trust root, producer nodes/attestation unchanged. Sixteen affected
+  policy regressions pass; real static inventory/needs/bindings pass. Actual
+  same-run claims verification remains required on new CI run. No installed
+  or hardware claim renewed. Ruff/format/diff checks passed for corrections.
+
+Valid passing evidence at5bbf8810 retained:
+- Native Windows job123734271897:2383native+35installer+57realmedia, zero
+  failures/errors/skips. outputs/rc1-windows-5bbf8810. This proves fixed PNG
+  graphics/board/emergency behavior under hosted Windows; no local physical GPU.
+- Repro40955160743:two independent clean app builds byte-identical;
+  outputs/rc1-repro-5bbf8810. Earlier failure was ambient ccache; supported
+  ENABLE_CCACHE=OFF plus explicit empty launcher cache/env fixed it. OCRlock
+  e44aabd55106f76a965cc64229fd04d3534cb35d97eedb9f01f60f9de9222183.
+- PublicWebKit40955160895 passed unchanged after one playback-ready precondition
+  failure on910cb6bf; trace retained. No weakened playback assertion.
+- Security40955160860 passed; outputs/rc1-security/ci-5bbf8810.
+- PNG omitted implicit decoder regression fixed by existing pinned gstpng.dll,
+  explicit pngdec requirement and confirmed per-file LGPL mapping. Real pinned
+  DLL staging through manifest/BOM passes; exact source/licence/failure-to-fix
+  receipts docs/ops/evidence/rc1-native-security/png-decoder-regression.json.
+- Optional randomized40955160865 failed35m14s; not an owner release gate and no
+  extra investigation/rerun launched. Do not claim every check is green.
+
+Next: push these focused CI corrections, required CI including same-run claims,
+normal merge, ONE signed RC1 build, existing isolated acceptance and cleanup.
+No signed product build or dependency archive rebuild for these CI-only changes.
+Current ead567a3 and rollback8fdce69e complete kits safely moved (same volume)
+to C:/CivicCastTester/rc1-preserved-kits/<full-SHA> before any build pruning;
+station-index presence/hash checked. Reuse ead.../station from this protected root.
+Restore retained kits to canonical staging after build/final cleanup. No deletion.
+Owned hidden runner session61380 / Runner.Listener PID4504 started2026-10-29
+19:36:29Z, executable C:/actions-runner/bin/Runner.Listener.exe; two input transfer
+jobs passed. Runner stopped cleanly while idle October29~21:35Z; session61380 terminal
+and PID4504 absent, no Runner.Worker. All input transfers succeeded.
+Use hidden run.cmd --once per authorized build job after required CI/merge.
+Historical cancellation:
+verify identity then Ctrl-C owned session. Single PR waiter session75660 uses
+45-second gh checks watch, log coding-chat work/rc1-ci-wait.log; terminal result
+triggers failure repair or merge. Cancel waiter with Ctrl-C only if superseded.
+
+Passed source evidence: setup backend73pass/1optional skip, operator UI46pass,
+types/lint; recovery combined70pass and runtime10pass; real junction escape
+regressions8pass after six reproduced failures; language workflow5pass and
+player selection6pass (not human accuracy review). Model reuse27pass; OCR122
+focused tests and real raster recovery passed in development. Final native
+integration/policy tests63pass, pip-audit policy7pass; CAP/RSS entity rejection
+29pass plus actual shipped-Python proof. Changed Python Ruff and diff checks pass.
+Root reviewed affected source; no independent candidate audit is claimed.
+
+Package corrections (built/pinned/mirrored; not signed/installed acceptance):
+- CPython3.12.16 cp312 archive b06074f51101293e2d81059dde190ba9325665e926e4e2a16c0e3916c49be9db;
+  PyAV18.0.0/FFmpeg8.1.3 with four exact backports wheel
+  5ab3fae3f85d4121919f70643e026452eb2a678b4a3f557b9ca487724c1399f0.
+- Ollama0.40.13, PostgreSQL17.11-2, standalone FFmpeg N-128142-g28fda48e0b,
+  Cryptography50.0.2/OpenSSL4.0.3 and minimal offline Tesseract5.5.4/English.
+- GStreamer FFmpeg7.1.5-security1 overlay 40cf143eda356ea14573323c8dcfbd4c4e33c83a2510e50bbaae95912b143246;
+  GLib2.88.4/libsoup3.8.1/nghttp2 1.70.0 overlay
+  34da86644a17511887de4f01b7ea18708f07c15e1f92f1448dda68166eebe6b9;
+  standard-ABI static-CRT OpenSSL3.5.9 overlay
+  062f6d64ae51eb970e46422e6791bced241867574179aa278a82a08245f82491.
+- Support-library overlay 6545e5f76472135310815f68296b427a8efc9810ba28a4c4c919241cfd04e683
+  (2666766 bytes): zlib pinned security source 6be4bcda (runtime1.3.2.1-motley,
+  not a stable-release claim), libpng1.6.57, libxml2 2.15.4, HarfBuzz15.0.0,
+  standalone SQLite3.54.1 with automatic initialization. Earlier archive e42d...
+  reused Python's OMIT_AUTOINIT SQLite and is SUPERSEDED; reproduced failure fixed.
+- All19 changed DLLs pass combined import/closure checks. Scratch runtime
+  compression/SQLite operations and real PostgreSQL bootstrap/XML XPath pass;
+  unchanged PG DLL proof remains valid after SQLite-only correction.
+- Native Grype report has129 raw matches, all individually evidenced/triaged by
+  the existing checker. This is NOT129 confirmed vulnerabilities or zero matches.
+  Final CI scan now passed at d3777c1, run40942012789:
+  153 native components /129 individually triaged matches;83 Windows wheels/zero
+  vulnerabilities. Evidence coding-chat outputs/rc1-security/ci-d3777c1. Exact evidence lives under
+  docs/ops/evidence/rc1-native-security and build/native-security-final-grype.json.
+  Existing pipeline now covers shipped Windows requirements and native components;
+  no threshold waivers. Only the project's own editable distribution is exempt
+  from PyPI scanning; third-party skipped dependencies fail.
+
+Manual PDF/DOCX and docsite rendered and affected content visually reviewed in
+coding-chat outputs/rc1-doc-review. Canonical manual SHA
+37d386db5d94b0c0449985859dbc7b57e606c983767e70cd9ef3acac59f3ff50.
+Final signed workflow renders companions from its final SHA. Installed browser, offline OCR, complete lifecycle and separate true Beta20-to-RC1
+upgrade scripts are prepared under coding-chat work/rc1-acceptance but NOT executed.
+Main lane same-RC1 reinstall is explicitly not cross-version upgrade evidence. Required CI, normal merge, signed build, installed service/PostgreSQL/
+browser acceptance and cleanup remain. Source compiler jobs ended; CI runner/waiter recorded above.
+Host station untouched. STOP before RC1 tagging/publication/public assets.
+
+
+## Historical Beta20 delivery (complete; do not reopen)
+
+## Compaction checkpoint
+
+No active goal or outstanding delivery work. Await Scott's next assignment. Do not
+restart monitoring, builds, tests, publication, L1/L2 or Tesseract bundling merely
+because context resumes. Root is coder/coordinator; CivicCast Current Coder is
+watcher/nudger only. No DeepSeek. Use the approved Sol6.1 medium routing when needed;
+no automatic delegation or invented review gates.
+
+Working checkout: C:/Dev/cc-pdf-processing, branch docs/publish-pdf-package-20261029.
+Coding chat cwd: C:/Users/scott/Documents/Codex/2026-10-28/re.
+CURRENT contains the local terminal receipt, intentionally not pushed as another
+bookkeeping-only CI cycle. On compaction inspection, unrelated untracked
+docs/ops/windows-update-recovery-2026-10-29.md and its evidence directory were present;
+preserve them. They are not part of this delivered assignment.
+
+Current complete kit:
+C:/CivicCastTester/kit-staging/ead567a33614a65554a69ef186342d691c43b7dc
+One rollback kit:
+C:/CivicCastTester/kit-staging/8fdce69e4fccfba80f2984a0d034d8851b4840e0
+Installer filename: CivicCast (Native)_1.0.0-beta.20_x64-setup.exe.
+Public release: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20
+Full artifact/acceptance report and publication cleanup receipt are in coding-chat
+outputs/CivicCast-signed-installer-ead567a3.md and CivicCast-published-20261029.json.
+All owned build/acceptance/upload/CI helpers ended; old PIDs/session IDs below are
+historical, not authority to stop any current process. The host station was untouched.
+
+## Final delivery receipt
+
+PR281 normally merged2026-10-29T17:38:53Z as25c9dcc4a5202339f77d2ff165a3e534dd772d95,
+head61a18829d51da0f3c768c3c83c1baee010a342d6. All applicable required checks passed,
+including Unit/WS4/Claims run40913928157; no review findings. Single waiter48362/
+cell17 exited0. Public release and annotated provenance tag delivered, unchanged
+originalBeta20tag. Publication needs no further work; Tesseract bundled addition
+deferred per Scott. Signedbytes remain exactly the prepared/accepted candidate.
+Final cleanup removed five redundant upload binaries/manuals (~0.88GiB), retaining
+small checksums/sidecar/manual receipts, all evidence/source, currenteadkit and ONE
+rollback8fdkit. Prior watcher cleanup recovered83.84GiB separately. No station action.
+Delivery+cleanup receipt: coding-chat outputs/CivicCast-published-20261029.json.
+This local terminal receipt does not trigger another bookkeeping CI run.
+
+Earlier publication chronology below is historical; remaining-work statements
+are superseded by delivery above.
+
+Standing owner directive October29 (relayed by authorized watcher): after EACH
+completed delivery, remove temporary build artifacts as the final step. Preserve
+the current complete signed kit, ONE complete rollback kit, all source/unrelated
+work and evidence/receipts. Never touch the running station. Do not rebuild removed
+candidate caches or add cleanup tests/audit loops. Watcher already removed25
+redundant completed dirs (83.84GiB); current eadkit and rollback8fdkit remain.
+Small reports formerly in C:/CivicCastTester/candidates were preserved in coordinator
+outputs/cleanup-20261029; candidates copies are removed, do not recreate them.
 
 Public revision DELIVERED at existing v1.0.0-beta.20 release. All27asset sizes and
 GitHub digests verified against prepared replacements and retained old assets:
@@ -9,7 +199,11 @@ Originalrelease tag a17449189a39af6474d914137eab020169f91023 unchanged; new anno
 archive/v1.0.0-beta.20-package-revision-20261029 points at artifact sourceead567a3.
 Release notes disclose exact source, accepted checks, external OCR prerequisites,
 and unchanged historical/model evidence. No signing rebuild or station action.
-Remaining: publication docs PR, applicable required CI and normal merge.
+Publication docs PR281 and required CI40913928157 are complete, as recorded above.
+Historical waiter session48362/cell17 ended successfully. Its retained log is
+work/publish-ead567a3/pr281-ci.log under the coding chat cwd. No waiter remains.
+Public assets already verified; do not repeat verification or re-upload without
+a new affected requirement or demonstrated defect.
 
 Publication preparation history follows.
 

@@ -1,8 +1,8 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.20 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-rc.1 (unpublished native Windows candidate)
 author: The CivicCast Authors
-date: 2026-10-17
+date: 2026-10-29
 urlcolor: blue
 toccolor: black
 ---
@@ -56,13 +56,13 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This manual identifies the Beta 20 software edition. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
+This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
 
 The October 17 documentation correction reconciles operating instructions and
 refreshes the CLI, API and settings references. Existing installed Help may still
 contain the older wording until its application package is updated.
 
-This Beta 20 software edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record for the package you use.
+This RC1 candidate adds administrator agenda setup, bundled offline English OCR and managed agenda recovery to the earlier edition. It also covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record for the package you use.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 
@@ -202,7 +202,7 @@ These are the words used most in Part I. Each is explained again where it first 
 
 ### Source edition and release evidence
 
-This manual identifies the Beta 20 software edition. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Keep each historical result with its named release. For publication, download, installation, and acceptance status, use the matching release page and verification record; do not infer status from this manual.
+This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Keep each historical result with its named release. For publication, download, installation, and acceptance status, use the matching release page and verification record; do not infer status from this manual.
 
 **Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This remains a Beta 11 host measurement; it does not establish performance of the current package. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
@@ -972,20 +972,29 @@ You should see the item in the **Agenda items** table. Use **Edit** on a row to 
 
 > **Known issue (beta.11):** The **Order** box starts at 0 every time. If you add a second item without changing it, the station refuses with "Another agenda item already occupies (agenda_id='…', order=0)." Change **Order** to the next free number (0, 1, 2, and so on) for each new item.
 
-> **Known issue (beta.11):** The timecode must be typed as seconds. The screen does not accept hours and minutes.
-
 #### Fill the agenda automatically
 
 The **Bulk actions** section has four ways to fill an agenda without typing each item.
 
 - **Sync from chapters** makes an item for each eligible *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). The result shows the number of source chapters, new items and skipped items with their reasons. Source chapter times are converted to the trimmed playback timeline: a marker at source 32 seconds with a 2-second trim-in becomes a 30-second agenda link. Markers outside the selected trim are omitted. Existing occupied positions are preserved; repeated synchronization does not duplicate them. If you change a trim after synchronization, review and update the existing agenda times before publishing; re-sync does not overwrite your agenda edits. A zero-new-item result therefore explains whether chapters were absent or their positions were already occupied.
 - **Import from doc (paste plain-text agenda, one item per line)**: paste the agenda text and click **Import**. Each non-blank line becomes one draft item. A leading number such as "3.a" or "VII" becomes the **Number**. It reads "Imported N item(s)." and the help line says "Taken literally, one item per line — nothing to review." Lines whose position already has an item are skipped.
-- **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." A PDF that is a scan of paper, with no text in it, finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
-- **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and import it. See the Known issue below.
+- **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." This direct upload action reads the PDF text layer and does not use the external-preview OCR workflow. A scan with no text layer finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
+- **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and preview it. See the setup and review steps below.
 
 > **Warning:** Importing a PDF or an external meeting into an agenda that is already **published** moves it back to **draft**. Review it and publish again.
 
-> **Known issue (beta.11):** The **Import from an external agenda system** block is shown on every station but is **switched off** unless your IT person turns it on. If it is off, **Find meetings** answers in a yellow banner: "Agenda import is not enabled. Set CIVICCAST_AGENDA_SOURCE to 'legistar', 'primegov', 'civicclerk', or 'js_portal' to turn it on." You cannot fix that from this screen. Ask your IT person. "Tenant / site code" is the short name your city has in that system (the screen's example is `longmont`). The JS-portal choice also needs an optional add-on; if it is missing, the screen says "JS-portal runtime: not installed." and **Find meetings** is grey.
+### Set up and review a PrimeGov meeting
+
+A station administrator opens **Agendas**, then **Agenda source setup**, chooses **Use Longmont / PrimeGov** (or PrimeGov and the municipality's **Tenant / site code**), then clicks **Save agenda source**. Public PrimeGov agendas need no password. Saving applies immediately and survives a restart; no service restart or environment editing is needed. Only a setup administrator can save these settings. Records clerks and meeting operators can then use the saved defaults.
+
+Choose or create the recording's agenda, set the meeting date filter and click **Find meetings**. Select the intended meeting explicitly. If only part of the meeting list could be retrieved, read the warning before selecting. A connection error does not mean there are no meetings: check the tenant, date and network connection, then retry. Other supported providers remain available; JS-rendered portals still require their optional runtime.
+
+PrimeGov uses an agenda first when available. Choose the packet option when you need the full meeting packet. Start the preview and leave it to read the retained original. Large packets and scanned pages can take minutes. **Cancel** stops processing without importing items; **Resume** reuses completed pages from the same retained original. A changed document gets its own revision.
+
+Review the numbered titles, parent/child order and warnings. Load the **original PDF** and use the source-page links to inspect the matching pages. Loading a large original may take time. Previewing does not write agenda items. Only **Confirm** applies a complete preview; partial, failed or cancelled previews cannot be confirmed. Review the resulting draft and publish separately. Import confirmation can reopen a published agenda as a draft.
+
+RC1 includes offline English OCR for scanned pages. It does not send page images to a provider. If text extraction and OCR cannot recover a page within the processing limits, the preview remains incomplete. Keep the original, inspect the indicated pages and obtain a legible replacement or enter reviewed items manually. A warning is not a claim that an unreadable page was recovered.
+
 
 > **For IT staff:** turning on agenda import is covered in [Part II, Integrations](#ch-integrations).
 
@@ -2388,6 +2397,10 @@ Open **Live captions** in the resident portal and choose the public channel. Sha
 
 This is the channel’s automatic **English** live sidecar, not an approved official transcript. Live translation is unavailable. The first snapshot says **Latest available captions; waiting for new input**; only a later changed feed says it is receiving new captions. An empty/missing feed says captions are unavailable. After 30 seconds without a changed sidecar, the display clears its text and reports no new input. Silence can also produce that message. It retries automatically; changing channels immediately clears the previous channel’s text. Recorded translations remain selectable in the recording player after staff review.
 
+### RC1 translation review limitation
+
+Qualified human language review for Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic is pending. RC1 software workflow checks cover editing, review decisions, publication and player track selection; they do not establish translation accuracy. Model-assisted checks are not qualified human review. Have a competent speaker review material translated records before relying on them.
+
 \newpage
 
 ## Reports, analytics, program guide export, underwriting, and apps {#ch-station-business}
@@ -3222,7 +3235,7 @@ The application services listen on the station computer's loopback address. To p
 | --- | --- | --- | --- |
 | TCP 8000 | The CivicCast web server: operator console at `/operator/`, resident portal at `/`, the API, and `/health` | The station computer only | `children.py`, `core.py` |
 | TCP 5432 (or the first free of 5433, 5434, 5435, 5544) | PostgreSQL database | The station computer only | `provision/models.py`, `port_select.py` |
-| TCP 11434 | The bundled Ollama AI engine (version 0.30.6) | The station computer only | `children.py` |
+| TCP 11434 | The bundled Ollama AI engine (version 0.40.13) | The station computer only | `children.py` |
 | TCP 38474 | The setup window's one-copy-at-a-time guard | The station computer only | `main.rs` |
 | UDP 17800 upward; UDP 18000 to 18499 | Internal media relays between the playout engine and ffmpeg or TSDuck. Source ports for outgoing transport streams sit 1,000 above the first range | The station computer only | `ts_relay.py`, `hls_relay.py` |
 
@@ -3290,7 +3303,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-This manual identifies the Beta 20 software edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) and the version-specific verification record for the package you use to confirm publication, download, installation, and acceptance status. Run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
+This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) and the version-specific verification record for the package you use to confirm publication, download, installation, and acceptance status. Run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
 
 The complete offline kit contains the installer, its verification metadata, runtime packs, and signed station index/model packs. The exact file list comes from the matching release manifest; the Chapter 10 tree shows the working layout rather than every download or checksum file. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -4136,7 +4149,7 @@ Original recordings, archived caption tracks and the recorded-caption review wor
 
 ### Configure AI models {#configuration-ai}
 
-The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` reads) chooses the model behind three jobs. The default for each is a model that runs on this computer. The local AI engine is **Ollama 0.30.6**, started and watched by the CivicCast service on `127.0.0.1:11434`.
+The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` reads) chooses the model behind three jobs. The default for each is a model that runs on this computer. The local AI engine is **Ollama 0.40.13**, started and watched by the CivicCast service on `127.0.0.1:11434`.
 
 | Job | Default | Other choices |
 | --- | --- | --- |
@@ -4793,6 +4806,8 @@ Original recordings, archived caption tracks and recorded-caption review remain 
 ### Back up and restore
 
 #### Station backup and restore
+
+Managed agenda originals, their hashes, completed-page checkpoints and preview/confirmation state are included automatically with the associated database records. You do not need to select the agenda document directory as a media root. Agenda source settings are part of station configuration. On a replacement installation, restore the archive through the existing offline restore workflow; managed agenda files map to the replacement installation’s document directory. Resume uses the retained original and completed pages. Keep the recovery passphrase and verify your archive before replacing a station.
 
 Use **Station backup and restore** to create, verify and restore portable station archives. The encrypted `.ccbackup` contains the database, configured station files and portable CivicCast credentials, plus every file beneath the selected media roots. Choose an absolute destination, keep the recovery passphrase separately, and verify an off-station copy. A daily UTC schedule and bounded retention are available after saving the unattended passphrase in protected station storage. The station screen shows progress and the last run; the detailed inventory, restore steps and limitations are in the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md).
 
@@ -5984,7 +5999,7 @@ is not included in the published Beta 19 package.
 
 ### External agenda import
 
-The agenda screen can look up a meeting in an outside agenda system and import it. This is **off by default**. To turn it on, set `CIVICCAST_AGENDA_SOURCE` to `legistar`, `primegov`, `civicclerk` or `js_portal`, then restart the service. The other settings are `CIVICCAST_AGENDA_SOURCE_CLIENT`, `CIVICCAST_AGENDA_SOURCE_TOKEN` and `CIVICCAST_AGENDA_SOURCE_TIMEOUT_S` (default 10 seconds). A value other than those (or `off`) is rejected with a message listing the allowed values.
+Agenda import starts disabled. A setup administrator enables it in **Agendas**, then **Agenda source setup**, chooses the provider and saves the tenant/site code. **Use Longmont / PrimeGov** supplies the Longmont defaults; **Save agenda source** persists them and applies immediately without a restart. Existing environment-based settings remain a compatibility fallback until settings are saved. Legacy Legistar credentials remain protected and are never returned in the setup response. Public PrimeGov requires no credentials. Staff must still choose the meeting and confirm its complete preview; setup never imports or publishes records automatically.
 
 The tenant or site code that staff type on the screen must be 1 to 64 letters, digits, hyphens or underscores. The portal address for a `js_portal` source must not carry a user name or password, and must not point at a private or local address. A `js_portal` source also needs an optional add-on; the screen reports "JS-portal runtime: not installed." when it is missing.
 
@@ -6593,7 +6608,7 @@ This is about how the files you download came to exist, and what checks stand be
 
 **What this shows.**
 
-- **Pinned inputs.** Three lock files fix every external input: the runtime dependencies (ffmpeg n8.1.2 LGPL shared build, Node 24.15.0, Ollama 0.30.6, PostgreSQL 17.10-2 and TSDuck 3.44), the build toolchain, and the AI models (gemma4:12b, gemma4:e4b and translategemma:4b, each with its manifest and blob digests). A download is admitted only if its size and SHA-256 match.
+- **Pinned inputs.** Reviewed source and artifact pins fix the runtime dependencies, including the security-updated interpreter, OCR and media libraries, the build toolchain, and the AI models (gemma4:12b, gemma4:e4b and translategemma:4b, each with its manifest and blob digests). A download is admitted only if its size and SHA-256 match.
 - **The build refuses a dirty tree** and binds itself to one full commit identifier. It builds a GStreamer runtime closure and verifies it, builds each pack and signs it with an Ed25519 key held as a build secret, deleted afterward.
 - **The trust-bridge check** runs the compiled installer's own code on the freshly signed packs, so a signing mistake is caught before anything is published.
 - **Authenticode.** `setup.exe` is signed through Azure Trusted Signing (the key never leaves Microsoft's hardware), with an RFC 3161 timestamp, and the build fails unless Windows reports the signature as `Valid`. Checksums are regenerated from the signed file. Windows may still show a SmartScreen prompt, which is a matter of reputation, not signature.
@@ -8847,7 +8862,7 @@ Everything here is program files. Changing it needs Administrator rights, and un
 | `<I>\packs\captions-floor\` | The standard (Medium) caption model. |
 | `<I>\packs\captions-whistle\` | The signed Whistle model and CPU engine for native live captions. |
 | `<I>\dependencies\ffmpeg\bin\` | `ffmpeg.exe` and `ffprobe.exe`. |
-| `<I>\dependencies\ollama\` | The Ollama AI engine (version 0.30.6). |
+| `<I>\dependencies\ollama\` | The Ollama AI engine (version 0.40.13). |
 | `<I>\dependencies\cuda\` | Optional graphics-card libraries. |
 | `<I>\components\<name>\` | The AI models: `summary-gemma4-12b`, `summary-gemma4-e4b`, `translation-translategemma-4b`, and the optional `captions-large-v3`. |
 | `<I>\models\ollama\` | The merged AI model store that the Ollama engine reads. |
@@ -10220,20 +10235,22 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 | Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-beta.20 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
+| CivicCast program and web portals | 1.0.0-rc.1 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
-| FFmpeg (`ffmpeg.exe`, `ffprobe.exe` and libraries) | n8.1.2 build | LGPL-3.0-or-later | Preparing and checking media. |
-| PostgreSQL | 17.10 | PostgreSQL License | The database. |
+| FFmpeg (`ffmpeg.exe`, `ffprobe.exe` and libraries) | Reviewed builds pinned in the runtime and app payload records | LGPL-3.0-or-later for the standalone build; LGPL-2.1-or-later for the GStreamer and PyAV libraries | Preparing and checking media. |
+| PostgreSQL | 17.11 | PostgreSQL License | The database. |
 | TSDuck (optional) | 3.44 | BSD-2-Clause | Checking and smoothing a cable stream. |
-| Ollama | 0.30.6 | MIT | The local AI engine. |
+| Ollama | 0.40.13 | MIT | The local AI engine. |
 | OpenSSL | 3.x | Apache-2.0 | Secure connections. |
 | Node.js | 24.15.0 (listed in the runtime lock) | MIT | Listed in the runtime dependency lock. |
 | Whisper large-v3 speech model (via faster-whisper) | pinned revision | MIT | Captions (the optional Large model). The standard Medium model is a separate pack whose license this table does not restate. |
 | Whistle speech model and `cactus-needle` engine | Whistle engine 3.1.0; model and wheel hashes pinned in `civiccast/native/app_payload.py` | Apache-2.0 for both | CPU-first live captions. Whistle is included in the signed station pack set. |
 | Gemma 4 (12B, e4b) and TranslateGemma 4B models | as pinned in the model lock | The publisher's license, carried inside each model package | Summaries and Spanish translation. Read the license inside the package; this manual does not restate it. |
-| Smaller libraries | various | BSD-2-Clause, BSD-3-Clause, MIT, Zlib, Libpng, bzip2, FreeType License (FTL), HPND-sell-variant, MIT-Modern-Variant, Unicode-TOU, SQLite's public-domain dedication, ICU, LGPL-2.1-or-later (glib, pango, libsoup, gettext, and others) | Text, fonts, images, networking and compression support. |
+| Smaller libraries | various | BSD-2-Clause, BSD-3-Clause, MIT, Zlib, Libpng, bzip2, FreeType License (FTL), HPND-sell-variant, MIT-Modern-Variant, Unicode-TOU, SQLite's public-domain dedication, ICU, LGPL-2.0-or-later (libsoup), LGPL-2.1-or-later (GLib, Pango, gettext, and others) | Text, fonts, images, networking and compression support. |
+| Python runtime | 3.12.16, verified source build | PSF-2.0 and bundled dependency licenses | Runs CivicCast. |
+| Tesseract and English language data | Tesseract 5.5.4; data revision pinned in the OCR lock | Apache-2.0; supporting library licenses accompany the runtime | Offline OCR for external agenda previews. |
 | Python packages | pinned by hash | Each under its own license, listed per package in the build's bill of materials | The CivicCast program's dependencies. |
 | Web portal libraries | pinned | Not restated here | React, React Router, TanStack Query and hls.js in the portal bundles. |
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
@@ -10275,7 +10292,7 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the published Beta 20 edition. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies the current package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual describes the unpublished RC1 candidate. Beta 20 remains the current published release. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies that published package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |

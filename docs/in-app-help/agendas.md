@@ -1,3 +1,13 @@
+# RC1 current agenda guidance
+
+A setup administrator uses **Agenda source setup → Use Longmont / PrimeGov → Save agenda source**. Public PrimeGov needs no credentials. Saving applies immediately and survives restart. Records clerks and meeting operators choose a meeting explicitly, review the retained original and numbered preview, then confirm a complete import. Previewing does not create agenda items; confirmation does not publish them.
+
+Load the original PDF and use the source-page links to inspect titles. Large packets and OCR may take minutes. Cancel stops processing; Resume reuses completed pages from the retained revision. RC1 includes offline English OCR. If a page remains unreadable or a limit is reached, the preview stays incomplete and cannot be confirmed. Obtain a legible source or enter reviewed items manually.
+
+Agenda time fields accept `hh:mm:ss` and whole seconds. Use the recording clock indicated by the form.
+
+The historical audit below describes older releases only. Current shipped Help is rendered from `docs/USER-MANUAL.md`.
+
 > Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
 
 # Agendas (nav id: agendas)

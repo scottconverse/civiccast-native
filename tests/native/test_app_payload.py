@@ -241,7 +241,7 @@ def test_native_lock_authorizes_only_the_reviewed_lgpl_pyav_wheel() -> None:
     )
     assert av_block is not None
     hashes = re.findall(r"--hash=sha256:([0-9a-f]{64})", av_block.group("body"))
-    assert hashes == ["0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce"]
+    assert hashes == ["5ab3fae3f85d4121919f70643e026452eb2a678b4a3f557b9ca487724c1399f0"]
 
 
 def test_native_app_lock_matches_its_reviewed_identity() -> None:
@@ -252,3 +252,25 @@ def test_native_app_lock_matches_its_reviewed_identity() -> None:
 def test_native_build_toolchain_lock_matches_its_reviewed_identity() -> None:
     lock = _REPO_ROOT / "native-windows-build-toolchain.lock.json"
     assert hashlib.sha256(lock.read_bytes()).hexdigest() == APP_BUILD_TOOLCHAIN_LOCK_SHA256
+
+
+def test_embedded_ffmpeg_static_crt_attribution_keeps_component_identity() -> None:
+    from civiccast.native.app_payload import (
+        EMBEDDED_FFMPEG_BINARY_LICENSE,
+        EMBEDDED_FFMPEG_BUILD,
+        EMBEDDED_FFMPEG_LICENSE,
+        component_version_for_payload_path,
+        license_for_payload_path,
+    )
+
+    binary = "Lib/site-packages/av.libs/avcodec-62.dll"
+    assert license_for_payload_path("av", binary) == EMBEDDED_FFMPEG_BINARY_LICENSE
+    assert "LicenseRef-Microsoft-VCRedist" in EMBEDDED_FFMPEG_BINARY_LICENSE
+    assert component_version_for_payload_path("av", "18.0.0", binary) == EMBEDDED_FFMPEG_BUILD
+    assert (
+        license_for_payload_path(
+            "av", "Lib/site-packages/av-18.0.0.dist-info/FFMPEG-PROVENANCE.json"
+        )
+        == EMBEDDED_FFMPEG_LICENSE
+    )
+    assert license_for_payload_path("av", "Lib/site-packages/av/__init__.py") == "BSD-3-Clause"

@@ -1,0 +1,744 @@
+{
+  "component": "gstreamer-ffmpeg",
+  "exact_source": "98581d546ff453ce1f29c4af8448996d6ac992f7",
+  "baseline_raw_matches": 55,
+  "final_registry_verified": true,
+  "real_encode_and_decode_eos": true,
+  "all_68_factory_results_unchanged": true,
+  "findings": [
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2023-6601",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2023-6602",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2023-6604",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2023-6605",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2024-55069",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-0518",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-10256",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-12343",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-1373",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-1594",
+      "status": "fixed",
+      "basis": "fixed-in-stable-source",
+      "rationale": "Exact selected stable source already contains the cited upstream fix: reverse git-apply check succeeds against pristine pinned source. Official upstream security listing and immutable patch retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "stable-source-fix-checks.json"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/c2184b65d214d60f2d3df86a11ca502567a3d134"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-22919",
+      "status": "fixed",
+      "basis": "fixed-in-stable-source",
+      "rationale": "Exact selected stable source already contains the cited upstream fix: reverse git-apply check succeeds against pristine pinned source. Official upstream security listing and immutable patch retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "stable-source-fix-checks.json"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/145a3a84550a1c3a3b848c12a64b53c3c41d2888"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-22921",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-25468",
+      "status": "fixed",
+      "basis": "fixed-in-stable-source",
+      "rationale": "Exact selected stable source already contains the cited upstream fix: reverse git-apply check succeeds against pristine pinned source. Official upstream security listing and immutable patch retained. Cited d5873b changes IAMF parser cleanup, and IAMF demuxing is additionally absent from compiled profile.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "stable-source-fix-checks.json"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/d5873be583ada9e1fb887e2fe8dcfd4b12e0efcd"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-25469",
+      "status": "fixed",
+      "basis": "fixed-in-stable-source",
+      "rationale": "Exact selected stable source already contains the cited upstream fix: reverse git-apply check succeeds against pristine pinned source. Official upstream security listing and immutable patch retained. Cited d5873b changes IAMF parser cleanup, and IAMF demuxing is additionally absent from compiled profile.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "stable-source-fix-checks.json"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/d5873be583ada9e1fb887e2fe8dcfd4b12e0efcd"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-59730",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2025-9951",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107660",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107675",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107676",
+      "status": "fixed",
+      "basis": "upstream-security-backport",
+      "rationale": "Verified immutable upstream patch is applied to exact pinned stable source before compilation and included in exact locked compiled artifact provenance.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "source-acquisition.json"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/2c2f6e96e31795ae95a8f8323a493ffbc493111f"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107677",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107678",
+      "status": "fixed",
+      "basis": "upstream-security-backport",
+      "rationale": "Verified immutable upstream patch is applied to exact pinned stable source before compilation and included in exact locked compiled artifact provenance.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "source-acquisition.json"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/969c7eb091989a664cb7bf66a1f02051cc46cb52"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107695",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107696",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107697",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-107698",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-30754",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-30997",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-30998",
+      "status": "not_affected",
+      "basis": "disabled-tool",
+      "rationale": "Reported tools/zmqsend.c program is not built or packaged; library-only configure profile disables programs and all external libraries.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-30999",
+      "status": "fixed",
+      "basis": "fixed-in-stable-source",
+      "rationale": "Exact selected stable source already contains the cited upstream fix: reverse git-apply check succeeds against pristine pinned source. Official upstream security listing and immutable patch retained. The researcher identifies caller-owned src_buf cleanup in tools/zmqsend.c; CVE summary incorrectly describes the core allocator as an overflow. That program is also absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json",
+        "stable-source-fix-checks.json",
+        "30999-researcher-disclosure.txt"
+      ],
+      "upstream_fix": "https://github.com/FFmpeg/FFmpeg/commit/144af8f81abc1385631b4e1f4672cd415a9c6e05"
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-40962",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-52295",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-52296",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-52297",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-64830",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-64832",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-64833",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-64834",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-64835",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-65703",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-65704",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-65705",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-65706",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-66036",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-66037",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-66038",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-66039",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-66040",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-66041",
+      "status": "not_affected",
+      "basis": "disabled-filter",
+      "rationale": "Compiled filter registry contains only null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink; reported filter/backend is absent.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-70628",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-70629",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-70630",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-70631",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-70632",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-8461",
+      "status": "not_affected",
+      "basis": "disabled-codec",
+      "rationale": "Compiled registry contains only AAC encoder and H264/AAC decoders; reported codec/encoder/parser is absent. Exact no-everything configure profile and actual binary registry retained.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    },
+    {
+      "component": "gstreamer-ffmpeg",
+      "version": "7.1.5-security1",
+      "cve": "CVE-2026-96611",
+      "status": "not_affected",
+      "basis": "disabled-demux-mux-protocol",
+      "rationale": "Actual binary enumeration confirms no FFmpeg demuxers, muxers, input protocols or output protocols; network/autodetection disabled. This includes MOV and HLS, unlike the old Cerbero build. Native GStreamer qtdemux and MP4 mux still pass real H264/AAC pipeline.",
+      "evidence": [
+        "secured-capabilities.json",
+        "secured-factories-pipelines.json",
+        "native-windows-gstreamer-ffmpeg.lock.json"
+      ]
+    }
+  ],
+  "factory_contract_followup": {
+    "evidence": "png-decoder-regression.json",
+    "note": "The historical 68 explicit factory check omitted implicit decodebin PNG support. Native pngdec is now required (69 total, 56 required); FFmpeg source, codecs and pins remain unchanged."
+  }
+}

@@ -6,6 +6,10 @@ system. Staff use one operator console; residents watch through a separate
 portal. Optional cloud services may charge their own usage fees, while CivicCast
 has no per-minute software fee.
 
+## RC1 preparation
+
+`v1.0.0-rc.1` is an **unpublished candidate**. RC1 work covers administrator agenda setup, bundled offline OCR, managed agenda recovery and installed workflow acceptance. It is not available as a public release. Qualified human language review remains pending; translation accuracy is not human-validated. Beta20 below remains the public installation target.
+
 ## Current published package
 
 [`v1.0.0-beta.20`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20) is the current published native Windows pre-release. The [Beta 20 verification record](docs/releases/v1.0.0-beta.20-verification.md) identifies the exact package and scoped acceptance. The package was revised October 29, 2026 with retained/resumable PDF processing and ordered agenda preview/confirmation; revision source `ead567a33614a65554a69ef186342d691c43b7dc`, setup SHA-256 `8a37e2bc48d1f0d63fde088c682730f9b2b49e812e674168ddf462b5b01b9f34`, while the published tag target is unchanged. Scanned-page OCR requires separately installed Tesseract and English data; bundling is deferred to a later version. Beta20 adds recovery station-state replacement ACL repair that preserves private-key protection, dependency security corrections, bounded relay log retention and efficient draining, and CG text wrapping/reduction; long text may render small, so preview at intended resolution. Roku required acceptance is software/API mocks only, with no hardware testing. Short-transcript summary generation passed on installed signed 34e213fe with local gemma4:e4b; this is not a long-meeting benchmark. Caption acceptance observed an 8.763 s sample delay with brief prior-program carryover; this limitation remains.

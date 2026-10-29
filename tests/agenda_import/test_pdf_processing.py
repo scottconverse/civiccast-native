@@ -14,6 +14,23 @@ from reportlab.pdfgen import canvas
 from civiccast.agenda_import import pdf_processing as processing
 
 
+def test_service_uses_bundled_ocr_without_user_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    ocr = runtime / "OCR"
+    (ocr / "tessdata").mkdir(parents=True)
+    (ocr / "tesseract.exe").write_bytes(b"exe")
+    (ocr / "tessdata/eng.traineddata").write_bytes(b"model")
+    monkeypatch.setattr(processing.sys, "executable", str(runtime / "python.exe"))
+    monkeypatch.setattr(processing.shutil, "which", lambda command: None)
+    assert processing._resolve_tesseract("") == (str(ocr / "tesseract.exe"), ocr / "tessdata")
+    # Explicit owner override is authoritative, even if missing; never mask misconfiguration.
+    assert processing._resolve_tesseract("absent-override") == (None, None)
+    (ocr / "tessdata/eng.traineddata").unlink()
+    assert processing._resolve_tesseract("") == (None, None)
+
+
 def _pdf(path: Path, pages: int = 1) -> Path:
     document = canvas.Canvas(str(path))
     for number in range(1, pages + 1):

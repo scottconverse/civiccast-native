@@ -85,6 +85,14 @@ def test_parse_cap_xml_garbage_returns_empty() -> None:
     assert parse_cap_xml("", source_id="s") == []
 
 
+def test_parse_cap_xml_rejects_dtd_before_entity_expansion() -> None:
+    document = _CAP_XML.split("?>", 1)[1]
+    declaration = '<!DOCTYPE alert [<!ENTITY label "untrusted entity">]>'
+    document = document.replace("Tornado Warning issued", "&label;")
+    assert parse_cap_xml(" " * 5000 + declaration + document, source_id="s") == []
+    assert parse_cap_xml("<!DOCTYPE alert>" + _CAP_XML.split("?>", 1)[1], source_id="s") == []
+
+
 def test_parse_nws_geojson_extracts_alert_with_geocodes() -> None:
     [alert] = parse_nws_geojson(_NWS_GEOJSON, source_id="src_nws")
     assert alert.identifier == "urn:oid:2.49.0.1.840.0.NWS.1"

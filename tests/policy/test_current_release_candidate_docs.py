@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -141,14 +142,26 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
     assert PUBLISHED_RELEASE_TAG.casefold() in normalized
     assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in normalized
     if CURRENT_CANDIDATE_TAG.casefold() != PUBLISHED_RELEASE_TAG.casefold():
-        candidate_section = normalized.split("## current source candidate", 1)[1].split("## ", 1)[0]
+        # The heading may describe a beta or RC preparation. Locate the actual
+        # source-version declaration rather than hard-coding a heading label.
+        sections = [
+            " ".join(section.replace("**", "").split()).casefold()
+            for section in re.split(r"(?m)^## .+\n", text)[1:]
+        ]
+        candidates = [
+            section
+            for section in sections
+            if f"`{CURRENT_CANDIDATE_TAG}` is an unpublished candidate".casefold() in section
+        ]
+        assert len(candidates) == 1, "README must distinguish the unpublished source candidate"
+        candidate_section = candidates[0]
         published_section = normalized.split("## current published package", 1)[1].split("## ", 1)[
             0
         ]
         assert (
             f"`{CURRENT_CANDIDATE_TAG}` is an unpublished candidate".casefold() in candidate_section
         )
-        assert "installation verification is pending" in candidate_section
+        assert "not available as a public release" in candidate_section
         assert "signed" in published_section
         assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in published_section
     assert (

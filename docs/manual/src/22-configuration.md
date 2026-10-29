@@ -323,7 +323,7 @@ Original recordings, archived caption tracks and the recorded-caption review wor
 
 ## Configure AI models {#configuration-ai}
 
-The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` reads) chooses the model behind three jobs. The default for each is a model that runs on this computer. The local AI engine is **Ollama 0.30.6**, started and watched by the CivicCast service on `127.0.0.1:11434`.
+The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` reads) chooses the model behind three jobs. The default for each is a model that runs on this computer. The local AI engine is **Ollama 0.40.13**, started and watched by the CivicCast service on `127.0.0.1:11434`.
 
 | Job | Default | Other choices |
 | --- | --- | --- |

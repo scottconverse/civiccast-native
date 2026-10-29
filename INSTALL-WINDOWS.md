@@ -2,7 +2,7 @@
 
 CivicCast Beta 20 is a complete native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
 
-[Beta 20 manual PDF](https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf) · [Beta 20 package verification](docs/releases/v1.0.0-beta.20-verification.md) · [Beta 20 source manual](docs/USER-MANUAL.md)
+[Beta 20 manual PDF](https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/USER-MANUAL.pdf) · [Beta 20 package verification](docs/releases/v1.0.0-beta.20-verification.md) · [RC1 candidate source manual](docs/USER-MANUAL.md)
 
 `v1.0.0-beta.20` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20). Run its `setup.exe` with the adjacent `packs` and `station` folders intact, or use the download command below.
 
@@ -109,3 +109,9 @@ Historical Beta 13 installation evidence: its normal Beta 11 upgrade, controlled
 ## Selective model acquisition decision
 
 The current supported station activation contract requires all six signed station components, including both summary packs and translation. Removing one from a downloaded kit is not a supported small installation. Selective acquisition is feasible only with coordinated signed-index/activation/runtime changes and a smaller supported capability profile; it is deferred as separate implementation work. The complete offline kit and data-preserving upgrade route remain supported.
+
+## RC1 candidate agenda setup and OCR
+
+The unpublished `v1.0.0-rc.1` candidate includes English OCR in its offline runtime. Do not install Tesseract separately or edit service environment variables for ordinary PrimeGov setup. A setup administrator uses **Agendas → Agenda source setup → Use Longmont / PrimeGov → Save agenda source**. Review the chosen meeting’s preview and original pages before confirming. Unreadable pages cannot be confirmed. These instructions describe RC1 source; Beta20 public downloads still have their documented external OCR prerequisite. RC1 tagging/publication is not authorized by candidate preparation.
+
+Qualified human review of Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic remains pending. RC1 does not claim human-validated translation accuracy; review translated records before publication.

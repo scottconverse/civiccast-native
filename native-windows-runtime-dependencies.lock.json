@@ -2,17 +2,17 @@
   "artifacts": {
     "ffmpeg": {
       "archive": "zip",
-      "bytes": 70835150,
+      "bytes": 82856725,
       "expected_executables": [
         "bin/ffmpeg.exe",
         "bin/ffprobe.exe"
       ],
-      "filename": "ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1.zip",
-      "sha256": "e9712ffbdb03ef71bbab660c75b835bfe698ef6fad0247c76d8d394a39a3db63",
+      "filename": "ffmpeg-N-128142-g28fda48e0b-win64-lgpl-shared.zip",
+      "sha256": "cdc8388862f20bb0393141f944fe18b54e7a6de50fd42a24db58c63fb48c6a8c",
       "spdx_license": "LGPL-3.0-or-later",
-      "strip_prefix": "ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1",
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1.zip",
-      "version": "n8.1.2-50-g1a748fe2cd"
+      "strip_prefix": "ffmpeg-N-128142-g28fda48e0b-win64-lgpl-shared",
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-28-19-47/ffmpeg-N-128142-g28fda48e0b-win64-lgpl-shared.zip",
+      "version": "N-128142-g28fda48e0b"
     },
     "node": {
       "archive": "zip",
@@ -33,26 +33,26 @@
     },
     "ollama": {
       "archive": "zip",
-      "bytes": 1456569673,
+      "bytes": 1601969847,
       "expected_executables": [
         "ollama.exe"
       ],
-      "filename": "ollama-windows-amd64-v0.30.6.zip",
+      "filename": "ollama-windows-amd64-v0.40.13.zip",
       "license_notice": {
         "bytes": 1058,
-        "filename": "ollama-LICENSE-v0.30.6.txt",
+        "filename": "ollama-LICENSE-v0.40.13.txt",
         "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226",
-        "url": "https://raw.githubusercontent.com/ollama/ollama/v0.30.6/LICENSE"
+        "url": "https://raw.githubusercontent.com/ollama/ollama/v0.40.13/LICENSE"
       },
-      "sha256": "563f37062efba941e2cd689475a1156e23cca8aedec27bd33e05e44606b3c425",
+      "sha256": "7afa38624fa62ee5d8293422d0ab084c1bb4603134c7f4dafce11a033b57cc19",
       "spdx_license": "MIT",
       "strip_prefix": ".",
-      "url": "https://github.com/ollama/ollama/releases/download/v0.30.6/ollama-windows-amd64.zip",
-      "version": "0.30.6"
+      "url": "https://github.com/ollama/ollama/releases/download/v0.40.13/ollama-windows-amd64.zip",
+      "version": "0.40.13"
     },
     "postgres": {
       "archive": "zip",
-      "bytes": 333927270,
+      "bytes": 340722468,
       "expected_executables": [
         "bin/initdb.exe",
         "bin/pg_ctl.exe",
@@ -61,7 +61,7 @@
         "bin/postgres.exe",
         "bin/psql.exe"
       ],
-      "filename": "postgresql-17.10-2-windows-x64-binaries.zip",
+      "filename": "postgresql-17.11-2-windows-x64-binaries.zip",
       "include": [
         "bin/**",
         "lib/**",
@@ -69,11 +69,11 @@
         "commandlinetools_3rd_party_licenses.txt",
         "server_license.txt"
       ],
-      "sha256": "ef9b1e5e23d2e8a83914ba13d9dc536a72210fba53fd1808ff1f7e06bb22b106",
+      "sha256": "2f868d77832f5cbc62182a0ca57f02df14d33d85ce0d0bbaaeb0de3a7029bd2b",
       "spdx_license": "PostgreSQL",
       "strip_prefix": "pgsql",
-      "url": "https://get.enterprisedb.com/postgresql/postgresql-17.10-2-windows-x64-binaries.zip",
-      "version": "17.10-2"
+      "url": "https://get.enterprisedb.com/postgresql/postgresql-17.11-2-windows-x64-binaries.zip",
+      "version": "17.11-2"
     },
     "tsduck": {
       "archive": "zip",

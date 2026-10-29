@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Agenda import API surface (plan §6): import + discovery routes.
+"""Agenda import API surface (plan §6): station setup, import and discovery routes.
 
-``CIVICCAST_AGENDA_SOURCE=off`` (the default) makes both routes act as if
-they don't exist -- a 404 naming the env var, never a 500 or a startup
+``CIVICCAST_AGENDA_SOURCE=off`` (the default) is the fallback until the station
+saves settings through the operator UI.
+Disabled import routes return an actionable 404, never a 500 or a startup
 failure (plan §7). Role gating mirrors :mod:`civiccast.agenda.router`'s
 ``_AUTHOR`` scopes (``records_clerk`` / ``meeting_operator``): agenda import
 is a staff-only write path, same trust level as the existing agenda CRUD.
@@ -56,6 +57,12 @@ from civiccast.agenda_import.previews import (
 from civiccast.agenda_import.primegov import archive_year_supported
 from civiccast.agenda_import.provenance import AgendaImportProvenanceStore
 from civiccast.agenda_import.registry import build_source
+from civiccast.agenda_import.settings import (
+    AgendaSourceSettings,
+    AgendaSourceSettingsStore,
+    AgendaSourceSettingsUpdate,
+    default_agenda_import_settings_path,
+)
 from civiccast.auth.roles import require_any_role
 
 logger = logging.getLogger(__name__)
@@ -64,7 +71,7 @@ _AUTHOR = ("records_clerk", "meeting_operator")
 _AUTHOR_EXTRA = {"x-required-roles": list(_AUTHOR)}
 
 _DISABLED_DETAIL = (
-    "Agenda import is not enabled. Set CIVICCAST_AGENDA_SOURCE to 'legistar', "
+    "Agenda import is not enabled. Ask a setup administrator to enable it in Agenda source setup. Legacy deployments may set CIVICCAST_AGENDA_SOURCE to 'legistar', "
     "'primegov', 'civicclerk', or 'js_portal' to turn it on."
 )
 
@@ -97,7 +104,19 @@ def _settings() -> AgendaImportSettings:
 
 def get_agenda_import_settings() -> AgendaImportSettings:
     """DI seam so tests can override without touching the environment."""
-    return _settings()
+    try:
+        saved = get_agenda_source_settings_store().load()
+        return AgendaImportSettings(
+            source=saved.source,
+            client_code=saved.client_code,
+            token=_settings().token,
+            timeout_seconds=saved.timeout_seconds,
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            503,
+            "Agenda settings could not be read. Restore a valid settings file or contact support.",
+        ) from exc
 
 
 def _require_enabled(settings: AgendaImportSettings) -> None:
@@ -120,6 +139,40 @@ def get_agenda_import_provenance_store() -> AgendaImportProvenanceStore | None:
 
 
 router = APIRouter(prefix="/api/staff", tags=["staff", "agenda-import"])
+
+
+def get_agenda_source_settings_store() -> AgendaSourceSettingsStore:
+    return AgendaSourceSettingsStore(default_agenda_import_settings_path())
+
+
+@router.get(
+    "/agenda-sources/settings",
+    response_model=AgendaSourceSettings,
+    dependencies=[Depends(require_any_role(*_AUTHOR, "setup_admin", "support_admin"))],
+)
+def read_agenda_source_settings() -> AgendaSourceSettings:
+    try:
+        return get_agenda_source_settings_store().load()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            503,
+            "Agenda settings could not be read. Restore a valid settings file or contact support.",
+        ) from exc
+
+
+@router.put(
+    "/agenda-sources/settings",
+    response_model=AgendaSourceSettings,
+    dependencies=[Depends(require_any_role("setup_admin"))],
+)
+def save_agenda_source_settings(settings: AgendaSourceSettingsUpdate) -> AgendaSourceSettings:
+    try:
+        get_agenda_source_settings_store().save(settings)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            503, "Agenda settings could not be saved. Check station storage and try again."
+        ) from exc
+    return settings
 
 
 class AgendaImportExternalRequest(BaseModel):
@@ -226,7 +279,7 @@ def import_external(
         source = build_source(
             payload.source,
             timeout_seconds=settings.timeout_seconds,
-            token=settings.token,
+            token=settings.token if payload.source == "legistar" else None,
             portal_url=payload.portal_url,
             portal_vendor_hint=payload.portal_vendor_hint,
         )
@@ -321,7 +374,7 @@ def list_external_meetings(
         adapter = build_source(
             source,
             timeout_seconds=settings.timeout_seconds,
-            token=settings.token,
+            token=settings.token if source == "legistar" else None,
             portal_url=resolved_portal_url,
             portal_vendor_hint=portal_vendor_hint,
         )

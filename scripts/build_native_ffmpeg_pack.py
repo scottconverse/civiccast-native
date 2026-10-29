@@ -129,7 +129,10 @@ FFMPEG_RUNTIME_COMPONENT: Final[str] = "native-ffmpeg-runtime"
 #: ``prove_ffmpeg_runtime`` runs) passed locally against the new archive:
 #: LGPLv3 self-report, ``--disable-libx264``/``--disable-libx265``, and a real
 #: h264/aac mp4 produced and probed successfully.
-FFMPEG_VERSION: Final[str] = "n8.1.2-50-g1a748fe2cd"
+#: RC1 uses the reviewed upstream snapshot with RTSP redirect, SSH host-key,
+#: HDR serialization and PSSH fixes absent from the current release branches.
+#: Historical repin notes above do not describe this security revision.
+FFMPEG_VERSION: Final[str] = "N-128142-g28fda48e0b"
 
 #: The reviewed SPDX identifier for this artifact, cross-checked three ways
 #: (see ``civiccast.native.runtime_licenses``'s Category 7 header): the
@@ -181,42 +184,30 @@ class FfmpegPackBuildError(RuntimeError):
 #: a monthly survivor. The new pin deliberately uses the 2026-08-31 MONTHLY
 #: release (``autobuild-2026-08-31-13-27``) so the exact bytes survive pruning.
 FFMPEG_BIN_PINS: Final[dict[str, tuple[int, str]]] = {
-    "avcodec-62.dll": (
-        70_869_504,
-        "7841b61935e19de12ddf0b0130991f9cdc00602f65b4c266ef52296bae2e4f51",
+    "avcodec-63.dll": (
+        92657664,
+        "cecf41c4d818ad703b8bb47d4d7bd5696c7ef267b12a429a369e1eecbcce0cb7",
     ),
-    "avdevice-62.dll": (
-        3_923_968,
-        "daad819cdcf5885e9822c6090157264c8fd63d70a349c87937cc5a95873f8de4",
+    "avdevice-63.dll": (
+        5008384,
+        "8eb750c1cc883d7e6b7e1e6a7b396eaabd44504e20a6288efa85fc9434c2ae65",
     ),
-    "avfilter-11.dll": (
-        30_029_312,
-        "223e6a352a42e92352373b766dad3365598673847bc4bd0bf715e69b6da59e6c",
+    "avfilter-12.dll": (
+        32043008,
+        "fc1180598fd8f4500669587e4fd9329ed10a679cfc490ecaee1b8690e36ac8f6",
     ),
-    "avformat-62.dll": (
-        22_107_648,
-        "1134a8e7307b592c0f6e0b38ca276e5a11d0b26ea310778d0a4c763214970391",
+    "avformat-63.dll": (
+        25978368,
+        "ffccfa518a13dd8dcf3028cb4beea35b386a014475306aa910f9daf0347a1eba",
     ),
-    "avutil-60.dll": (
-        2_937_344,
-        "391fca8b7b97f6b30024073cbdcc961cca15f58a5200d27946176bec1d401f69",
+    "avutil-61.dll": (3050496, "9eaef9173519a3faab099e73f4e1e9f146df88a20fe809f07697f46d4e5234c7"),
+    "ffmpeg.exe": (573440, "d2750869506b0f15c8052790e4d22050616a5e6342ac7f9f92a026b65ca71821"),
+    "ffprobe.exe": (276480, "013ebad46d813263a72f55f9fabe93d8dfb4d93a59a75c29ab6e38a515aaa863"),
+    "swresample-7.dll": (
+        751616,
+        "bec7e7997fcfcd681eff3ea29559e444fef9da4d7448d9d6e48e9598859656bb",
     ),
-    "ffmpeg.exe": (
-        541_184,
-        "e8a54fc7f15c45b95ac898d4fc8fc8f39a89ee848c5b4df888a4cc4512e15226",
-    ),
-    "ffprobe.exe": (
-        225_792,
-        "5ba069188d571fee274b5c3c43ea94496df3f5362b1e33bd815f68e32e975847",
-    ),
-    "swresample-6.dll": (
-        722_944,
-        "3797bd73c3dcf9557ac7a2ea08ddc5d80704f09ba88fec765367ab30c0949ab7",
-    ),
-    "swscale-9.dll": (
-        12_759_040,
-        "cc52d8ecb6782b8517b3ce3167f759d1cd5dc1e69695ff8725a96465c172739e",
-    ),
+    "swscale-10.dll": (2415104, "c96257f0bf42475520b8d016d61298323da5cb437671eceb1c8e06c78b6ee8d0"),
 }
 
 #: The two executables, kept as a named tuple rather than re-derived from the

@@ -51,6 +51,11 @@ vi.mock('../api/client', () => ({
   staffApiBlobRequest: vi.fn(),
 }))
 
+vi.mock('../api/agenda-settings', () => ({
+  agendaSettingsKey: ['agenda-source-settings'], getAgendaSourceSettings: vi.fn(), saveAgendaSourceSettings: vi.fn(),
+}))
+import { getAgendaSourceSettings, saveAgendaSourceSettings } from '../api/agenda-settings'
+
 import {
   ApiError,
   createAgendaItem,
@@ -142,6 +147,9 @@ function importPreview(overrides: Partial<AgendaImportPreview> = {}): AgendaImpo
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(getAgendaSourceSettings).mockResolvedValue({ source: 'off', client_code: null,
+    portal_url: null, portal_vendor_hint: 'generic', timeout_seconds: 10 })
+  vi.mocked(saveAgendaSourceSettings).mockImplementation(async (settings) => settings)
   sessionStorage.clear()
   vi.stubGlobal('URL', class extends URL {
     static createObjectURL = vi.fn(() => 'blob:retained-agenda')
@@ -972,5 +980,45 @@ describe('PrimeGov retained import previews', () => {
     await panel.findByRole('link', { name: 'Page 1' })
     fireEvent.click(await panel.findByRole('button', { name: 'Dismiss preview' }))
     await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:retained-agenda'))
+  })
+})
+
+
+describe('Agenda source setup', () => {
+  it('lets a setup administrator save Longmont without an agenda or author permission', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const view = renderScreen()
+    const setup = await view.findByRole('region', { name: 'Agenda source setup' })
+    fireEvent.click(await within(setup).findByRole('button', { name: 'Use Longmont / PrimeGov' }))
+    fireEvent.click(within(setup).getByRole('button', { name: 'Save agenda source' }))
+    await waitFor(() => expect(saveAgendaSourceSettings).toHaveBeenCalledWith({
+      source: 'primegov', client_code: 'longmont', portal_url: null,
+      portal_vendor_hint: 'generic', timeout_seconds: 10,
+    }, expect.anything()))
+    expect((await within(setup).findByRole('status')).textContent).toContain('applies now and after restart')
+    expect(listMeetingAgendas).not.toHaveBeenCalled()
+  })
+
+  it('keeps setup errors actionable and allows retry after a failed save', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(saveAgendaSourceSettings).mockRejectedValueOnce(new ApiError('Storage unavailable', 503, 'Check station storage and try again.'))
+    const view = renderScreen()
+    const setup = await view.findByRole('region', { name: 'Agenda source setup' })
+    fireEvent.click(await within(setup).findByRole('button', { name: 'Use Longmont / PrimeGov' }))
+    fireEvent.click(within(setup).getByRole('button', { name: 'Save agenda source' }))
+    expect((await within(setup).findByRole('alert')).textContent).toContain('Check station storage')
+    expect((within(setup).getByRole('button', { name: 'Save agenda source' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('loads saved discovery defaults while preserving an explicit provider choice', async () => {
+    vi.mocked(getAgendaSourceSettings).mockResolvedValue({ source: 'primegov', client_code: 'longmont',
+      portal_url: null, portal_vendor_hint: 'generic', timeout_seconds: 10 })
+    const view = renderScreen()
+    const source = await view.findByRole('combobox', { name: 'External agenda source' })
+    await waitFor(() => expect((source as HTMLSelectElement).value).toBe('primegov'))
+    expect((view.getByRole('textbox', { name: 'Tenant / site code' }) as HTMLInputElement).value).toBe('longmont')
+    fireEvent.change(source, { target: { value: 'legistar' } })
+    expect((source as HTMLSelectElement).value).toBe('legistar')
+    expect(view.queryByRole('region', { name: 'Agenda source setup' })).toBeNull()
   })
 })

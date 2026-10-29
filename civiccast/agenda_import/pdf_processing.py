@@ -29,6 +29,16 @@ from typing import Any
 _SUCCESS = {"complete", "blank"}
 
 
+def _resolve_tesseract(command: str) -> tuple[str | None, Path | None]:
+    """Prefer the signed app-local runtime, independent of service PATH/profile."""
+    if command:
+        return shutil.which(command), None
+    bundled = Path(sys.executable).resolve().parent / "OCR"
+    if (bundled / "tesseract.exe").is_file() and (bundled / "tessdata/eng.traineddata").is_file():
+        return str(bundled / "tesseract.exe"), bundled / "tessdata"
+    return shutil.which("tesseract"), None
+
+
 def _readable_text(text: str) -> bool:
     """Missing glyph substitutions make a text layer unsafe as complete evidence."""
     return bool(text.strip()) and "\ufffd" not in text
@@ -76,7 +86,12 @@ def _save_checkpoint(path: Path, result: PdfProcessingResult) -> None:
             json.dump({"version": 1, **asdict(result)}, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
-        temporary.replace(path)
+        # Only publish under the agenda backup gate; OCR remains interruptible
+        # and preview polling can continue while a database snapshot is taken.
+        from civiccast.agenda_import.documents import checkpoint_snapshot_lock
+
+        with checkpoint_snapshot_lock(path):
+            temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -390,20 +405,29 @@ def _worker_extract(
                 # Only a uniformly white rendered page is confirmed blank.
                 if all(low == 255 for low, _high in image.getextrema()):
                     return {"status": "blank", "method": "pdfium_render"}
-                executable = shutil.which(tesseract_cmd or "tesseract")
+                executable, tessdata = _resolve_tesseract(tesseract_cmd)
                 if not executable:
                     return {
                         "status": "unavailable",
                         "method": "pdfium_render",
                         "issue": "Page has visual content but local Tesseract OCR is unavailable",
                     }
-                image_path = directory / "page.png"
+                image_path = directory / "page.bmp"
                 image.save(image_path)
             finally:
                 bitmap.close()
     output = directory / "ocr"
     subprocess.run(  # noqa: S603 -- configured local executable; no shell
-        [executable, str(image_path), str(output), "-l", "eng", "--psm", "3"],
+        [
+            executable,
+            str(image_path),
+            str(output),
+            *(["--tessdata-dir", str(tessdata)] if tessdata else []),
+            "-l",
+            "eng",
+            "--psm",
+            "3",
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

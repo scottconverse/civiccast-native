@@ -50,9 +50,18 @@ to an adapter; `civiccast.agenda_import.router` exposes it as two staff
 routes (`GET /api/staff/agenda-sources/{source}/{client_code}/meetings` for
 discovery, `POST /api/staff/agenda/{agenda_id}/import-external` for the
 actual import), gated the same way as every other agenda-editor write
-(`records_clerk`/`meeting_operator`). `CIVICCAST_AGENDA_SOURCE` (env,
-default `off`) selects the one active vendor for a station; both routes 404
-naming the env var when it is `off`.
+(`records_clerk`/`meeting_operator`). The station's default vendor and tenant are configured by a `setup_admin` in
+**Agendas → Agenda source setup**. The **Use Longmont / PrimeGov** preset selects
+PrimeGov and tenant `longmont`; **Save agenda source** enables discovery immediately,
+without service restart. Defaults persist in `agenda-import-settings.json` beside
+station state and are included in station configuration backups. Operators may
+still explicitly choose any supported provider and tenant for discovery/import.
+`GET /api/staff/agenda-sources/settings` exposes only non-secret settings to agenda
+authors, setup administrators and support administrators; only setup administrators
+may `PUT` settings. No token is accepted or returned by these endpoints. Existing
+`CIVICCAST_AGENDA_SOURCE`, client and timeout environment settings remain the fallback
+until the first Save, and existing Legistar tokens continue to be used only by Legistar.
+A new install defaults to disabled; import routes return an actionable 404 until enabled.
 
 Shared, vendor-agnostic errors
 (`AgendaSourceAuthRequiredError`/`AgendaSourceUpstreamError`/

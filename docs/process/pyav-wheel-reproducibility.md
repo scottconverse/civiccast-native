@@ -9,11 +9,23 @@ source archive, the MSYS2 base, the PyAV sdist — is verified against its own
 pinned hash and that check is **always strict**, on every build lane. This
 document is only about the *output* check: the compiled wheel itself.
 
-For a documentation-only package revision, the candidate workflow can take
-`reviewed_pyav_release_tag` to extract the retained wheel from that release's
-`native-app-payload.ccpack`. It accepts only the unchanged reviewed filename,
-size and SHA-256, then passes it through the existing `--reviewed-pyav-wheel`
-builder option. This does not enable advisory hashing or change any pin.
+The candidate workflow reuses the current reviewed wheel from
+`C:\CivicCastTester\runtime-artifact-mirror` on its self-hosted lane when
+`reviewed_pyav_release_tag` is empty. An explicit release tag instead downloads
+the wheel's standalone release asset. Both paths require the current reviewed
+filename, size and SHA-256 and pass `--reviewed-pyav-wheel` without advisory
+hashing. The historical Beta20 asset no longer matches the current security
+patch pins and remains preserved as historical evidence.
+
+The existing app reproducibility workflow transfers the reviewed interpreter ZIP
+and PyAV wheel from that mirror with a source-free internal runner job. It checks
+fixed reviewed sizes/hashes, uses the shared `sandbox-lab` lock, and uploads only
+those two files with one-day retention. Only internal pull requests and manual
+runs can use this transfer; forks skip it. The hosted job rechecks the source pins,
+interpreter provenance hash and exact PyAV upstream/security-patch provenance
+before performing the existing two-workspace byte-equality proof. No binary
+release asset or tag is created by this flow.
+
 Hosted preparation can also take `reuse_station_run_id` and
 `reuse_station_source_sha` to reuse that run's signed station embed artifact
 when station inputs are unchanged. The coordinator must establish that unchanged

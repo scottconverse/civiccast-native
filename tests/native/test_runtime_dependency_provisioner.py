@@ -21,11 +21,11 @@ PROVISIONER_PATH = ROOT / "scripts" / "provision_native_runtime_dependencies.py"
 BUILD_TOOLCHAIN_LOCK_PATH = ROOT / "native-windows-build-toolchain.lock.json"
 ARTIFACT_NAMES = {"postgres", "tsduck", "ffmpeg", "node", "ollama"}
 EXPECTED_VERSIONS = {
-    "postgres": "17.10-2",
+    "postgres": "17.11-2",
     "tsduck": "3.44-4676",
-    "ffmpeg": "n8.1.2-50-g1a748fe2cd",
+    "ffmpeg": "N-128142-g28fda48e0b",
     "node": "24.15.0",
-    "ollama": "0.30.6",
+    "ollama": "0.40.13",
 }
 EXPECTED_SPDX_LICENSES = {
     "postgres": "PostgreSQL",
@@ -113,9 +113,9 @@ def _artifact(name: str, body: bytes) -> dict[str, object]:
     elif name == "ollama":
         artifact["license_notice"] = {
             "bytes": len(FIXTURE_OLLAMA_LICENSE),
-            "filename": "ollama-LICENSE-v0.30.6.txt",
+            "filename": "ollama-LICENSE-v0.40.13.txt",
             "sha256": hashlib.sha256(FIXTURE_OLLAMA_LICENSE).hexdigest(),
-            "url": "https://raw.githubusercontent.com/ollama/ollama/v0.30.6/LICENSE",
+            "url": "https://raw.githubusercontent.com/ollama/ollama/v0.40.13/LICENSE",
         }
     return artifact
 
@@ -183,9 +183,9 @@ def test_committed_runtime_lock_is_complete_and_reviewable(provisioner: object) 
             assert artifact["strip_prefix"] == "."
             assert artifact["license_notice"] == {
                 "bytes": 1058,
-                "filename": "ollama-LICENSE-v0.30.6.txt",
+                "filename": "ollama-LICENSE-v0.40.13.txt",
                 "sha256": "5934ed2ce0d15154bcdb9c85203210abac0da4314af34081e36df4599f90b226",
-                "url": "https://raw.githubusercontent.com/ollama/ollama/v0.30.6/LICENSE",
+                "url": "https://raw.githubusercontent.com/ollama/ollama/v0.40.13/LICENSE",
             }
             assert provisioner.is_approved_download_url(artifact["license_notice"]["url"])
         else:

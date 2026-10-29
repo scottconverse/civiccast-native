@@ -985,3 +985,110 @@ def test_no_signed_pack_metadata_carries_a_build_input_path(
         )
         assert str(parent) not in rendered, component
         assert "source_root" not in verified.metadata, component
+
+
+def test_cross_version_reuse_signs_new_core_and_index_and_links_identical_models(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    models = _write_test_ollama_lock(tmp_path)
+    monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+    _bind_tiny_whistle_contract(monkeypatch)
+    original = _bundle_from_root(
+        tmp_path / "beta20", output_name="station", models=models, product_version="1.0.0-beta.20"
+    )
+    source = Path(original["output_dir"])
+    source_index = (source / builder.STATION_INDEX_FILENAME).read_bytes()
+    source_core = (source / "core.ccpack").read_bytes()
+    output = tmp_path / "rc1"
+    result = builder.reuse_station_bundle(
+        source,
+        output_dir=output,
+        public_key=_dev_key().public_key(),
+        signing_key_id="development-test-key",
+        product_version="1.0.0-rc.1",
+        channel="beta",
+        signing_private_key=_dev_key(),
+        created_epoch=1_800_000_000,
+    )
+    index = builder.verify_station_media(
+        output / builder.STATION_INDEX_FILENAME,
+        public_key=_dev_key().public_key(),
+        expected_product_version="1.0.0-rc.1",
+        expected_compatible_core="1.0.0-rc.1",
+        expected_channel="beta",
+        expected_signing_key_id="development-test-key",
+    )
+    assert index.created_epoch == result["created_epoch"] == 1_800_000_000
+    assert result["product_version"] == result["compatible_core"] == "1.0.0-rc.1"
+    assert set(result["packs"]) == set(original["packs"])
+    for pack in index.packs:
+        core = pack.component == "core"
+        version = "1.0.0-rc.1" if core else builder.STATION_MODEL_PACK_PRODUCT_VERSION
+        compatible = "1.0.0-rc.1" if core else builder.STATION_MODEL_PACK_COMPATIBLE_CORE
+        verify_native_pack(
+            output / pack.filename,
+            public_key=_dev_key().public_key(),
+            expected_component=pack.component,
+            expected_product_version=version,
+            expected_compatible_core=compatible,
+            expected_signing_key_id="development-test-key",
+        )
+        if core:
+            assert not (output / pack.filename).samefile(source / pack.filename)
+            assert pack.sha256 != original["packs"]["core"]["sha256"]
+        else:
+            assert (output / pack.filename).samefile(source / pack.filename)
+            assert pack.sha256 == original["packs"][pack.component]["sha256"]
+            assert pack.bytes == original["packs"][pack.component]["bytes"]
+    assert (source / builder.STATION_INDEX_FILENAME).read_bytes() == source_index
+    assert (source / "core.ccpack").read_bytes() == source_core
+    assert (output / builder.STATION_INDEX_FILENAME).read_bytes() != source_index
+    report = json.loads((output / "native-station-bundle-report.json").read_text())
+    assert report["product_version"] == "1.0.0-rc.1"
+    assert report["packs"]["core"]["sha256"] == result["packs"]["core"]["sha256"]
+    assert not (output / "core-notice.txt").exists()
+
+
+@pytest.mark.parametrize(
+    "defect", ["index-signature", "payload", "current-pin", "wrong-private-key"]
+)
+def test_cross_version_reuse_fails_closed_before_writing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str
+) -> None:
+    from civiccast.installer.native_distribution import NativeDistributionError
+
+    models = _write_test_ollama_lock(tmp_path)
+    monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+    _bind_tiny_whistle_contract(monkeypatch)
+    original = _bundle_from_root(tmp_path / "source", output_name="station", models=models)
+    source = Path(original["output_dir"])
+    private_key = _dev_key()
+    if defect == "index-signature":
+        path = source / builder.STATION_INDEX_FILENAME
+        envelope = json.loads(path.read_text())
+        envelope["manifest"]["product_version"] = "unsigned-version-change"
+        path.write_text(json.dumps(envelope))
+    elif defect == "payload":
+        with (source / "summary-gemma4-12b.ccpack").open("ab") as handle:
+            handle.write(b"tamper")
+    elif defect == "current-pin":
+        lock_path = models["_lock_path"]
+        lock = json.loads(lock_path.read_text())
+        lock["models"]["gemma4-12b"]["manifest_sha256"] = "0" * 64
+        lock_path.write_text(json.dumps(lock))
+    else:
+        private_key = Ed25519PrivateKey.generate()
+    output = tmp_path / "rejected"
+    with pytest.raises(
+        (NativeDistributionError, NativePackVerificationError, builder.StationBundleBuildError)
+    ):
+        builder.reuse_station_bundle(
+            source,
+            output_dir=output,
+            public_key=_dev_key().public_key(),
+            signing_key_id="development-test-key",
+            product_version="1.0.0-rc.1",
+            channel="beta",
+            signing_private_key=private_key,
+        )
+    assert not output.exists()

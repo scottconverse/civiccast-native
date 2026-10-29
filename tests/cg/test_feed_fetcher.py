@@ -140,6 +140,15 @@ def test_parse_rss_rejects_dtd() -> None:
         parse_rss(_BILLION_LAUGHS)
 
 
+def test_parse_rss_rejects_dtd_after_prefix_guard_window() -> None:
+    payload = (
+        " " * 5000
+        + '<!DOCTYPE rss [<!ENTITY title "untrusted">]><rss><channel><item><title>&title;</title></item></channel></rss>'
+    )
+    with pytest.raises(ValueError):
+        parse_rss(payload)
+
+
 def test_parse_ical_event() -> None:
     items = parse_ical(_ICAL)
     assert len(items) == 1

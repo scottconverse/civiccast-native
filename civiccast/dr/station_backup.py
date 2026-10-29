@@ -17,12 +17,13 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import tempfile
 import threading
 import time
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import closing
+from contextlib import AbstractContextManager, closing, nullcontext
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -50,6 +51,19 @@ _MAX_RETENTION = 100
 _MAX_SCHEDULED_ATTEMPTS = 3
 _SCHEDULED_RETRY_DELAYS_SECONDS = (15 * 60, 60 * 60)
 _STATE_LOAD_ERROR = "_load_error"
+
+
+def _reject_managed_reparse_paths(path: Path) -> None:
+    """Reject redirected managed paths, including existing parent junctions."""
+    for candidate in (path, *path.parents):
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue  # Replacement directories may not exist yet.
+        if stat.S_ISLNK(info.st_mode) or (
+            getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            raise ValueError("managed paths must not contain symbolic links or reparse points")
 
 
 class BackupSchedule(BaseModel):
@@ -150,6 +164,8 @@ class StationBackupService:
         config_paths_provider: BackupPathsProvider | None = None,
         credential_paths_provider: BackupPathsProvider | None = None,
         media_roots: Sequence[Path] = (),
+        managed_roots: Mapping[str, Path] | None = None,
+        snapshot_guard: Callable[[], AbstractContextManager[Any]] | None = None,
         state_path: Path | None = None,
         credential_exporter: CredentialExporter | None = None,
         credential_importer: CredentialImporter | None = None,
@@ -170,6 +186,10 @@ class StationBackupService:
         self.config_paths_provider = config_paths_provider
         self.credential_paths_provider = credential_paths_provider
         self.media_roots = tuple(Path(path).expanduser().absolute() for path in media_roots)
+        self.managed_roots = {
+            name: Path(path).expanduser().absolute() for name, path in (managed_roots or {}).items()
+        }
+        self.snapshot_guard = snapshot_guard or nullcontext
         self.state_path = (
             Path(state_path).expanduser().absolute()
             if state_path is not None
@@ -258,6 +278,7 @@ class StationBackupService:
         if _STATE_LOAD_ERROR in self._state:
             raise RuntimeError("repair the persisted backup state before creating another backup")
         _validate_destination_media_overlap(self.destination, self.media_roots)
+        _validate_destination_media_overlap(self.destination, tuple(self.managed_roots.values()))
         if not self._job_lock.acquire(blocking=False):
             raise RuntimeError("another station backup operation is already running")
         try:
@@ -275,16 +296,21 @@ class StationBackupService:
                 bundle_dir.mkdir()
                 self._progress("database", 5, progress)
                 database_dir = bundle_dir / "database"
-                manifest = run_full_backup(
-                    database_url=self.database_url,
-                    dest_dir=database_dir,
-                    pg_dump_command=self.pg_dump_command,
-                    pg_dumpall_command=self.pg_dumpall_command,
-                )
+                # The agenda mutation gate covers its DB confirmation and durable
+                # files together. Release it before copying optional large media.
+                with self.snapshot_guard():
+                    manifest = run_full_backup(
+                        database_url=self.database_url,
+                        dest_dir=database_dir,
+                        pg_dump_command=self.pg_dump_command,
+                        pg_dumpall_command=self.pg_dumpall_command,
+                    )
+                    managed_payload = self._copy_managed_payload(bundle_dir)
                 payload = self._copy_payload(
                     bundle_dir,
                     lambda phase, percent: self._progress(phase, percent, progress),
                 )
+                payload.extend(managed_payload)
                 credentials = self.credential_exporter() if self.credential_exporter else {}
                 if credentials:
                     credential_payload = {
@@ -359,6 +385,58 @@ class StationBackupService:
             raise
         finally:
             self._job_lock.release()
+
+    def _copy_managed_payload(self, bundle_dir: Path) -> list[dict[str, Any]]:
+        payload: list[dict[str, Any]] = []
+        for index, (name, source) in enumerate(self.managed_roots.items()):
+            _reject_managed_reparse_paths(source)
+            if not source.exists():
+                continue
+            if not source.is_dir():
+                raise ValueError("managed backup root must be a real directory")
+            root_member = f"payload/managed/{index:03d}"
+            # Validate before descending: rglob follows Windows junctions even
+            # though Path.is_symlink() is false for those reparse points.
+            pending = [source]
+            children = []
+            while pending:
+                directory = pending.pop()
+                _reject_managed_reparse_paths(directory)
+                for child in directory.iterdir():
+                    _reject_managed_reparse_paths(child)
+                    children.append(child)
+                    if child.is_dir():
+                        pending.append(child)
+            for file_index, child in enumerate(sorted(children)):
+                if not child.is_file() or child.name.endswith((".lock", ".tmp", ".part")):
+                    continue
+                if child.name.startswith("."):
+                    continue
+                relative = child.relative_to(source).as_posix()
+                # Retained IDs already consume 128 path characters. Keep staging
+                # members flat so Windows TEMP does not exceed MAX_PATH; the
+                # authenticated relative_path restores the original tree.
+                member = f"{root_member}/{file_index:06d}-{child.name}"
+                target = bundle_dir / member
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _copy_file(child, target)
+                payload.append(
+                    {
+                        **_file_record(target, "media", member),
+                        "source_path": str(source),
+                        "relative_path": relative,
+                        "managed_root": name,
+                    }
+                )
+            payload.append(
+                {
+                    "kind": "media-root",
+                    "source_path": str(source),
+                    "member_prefix": root_member,
+                    "managed_root": name,
+                }
+            )
+        return payload
 
     def _copy_payload(
         self, bundle_dir: Path, progress: ProgressCallback | None
@@ -468,6 +546,7 @@ class StationBackupService:
                         "source_path": record.get("source_path"),
                         "relative_path": record.get("relative_path"),
                         "size_bytes": record.get("size_bytes"),
+                        "managed_root": record.get("managed_root"),
                     }
                     for record in manifest["payload"]
                 ],
@@ -505,6 +584,7 @@ class StationBackupService:
                 bundle = _decrypt_and_extract(Path(archive_path), Path(temp_name), passphrase)
                 manifest = _read_station_manifest(bundle)
                 _verify_members(bundle, manifest)
+                target_paths = self._managed_restore_targets(manifest["payload"], target_paths)
                 _validate_payload_targets(manifest["payload"], target_paths)
                 media_path_mappings = _media_path_mappings(manifest["payload"], target_paths)
                 _remap_station_state_payload(bundle, manifest["payload"], media_path_mappings)
@@ -533,6 +613,7 @@ class StationBackupService:
                     _remap_database_media_paths(target_database_url, media_path_mappings)
                 else:
                     raise ValueError(f"unsupported database engine: {core_manifest.engine}")
+                _preserve_managed_restore_roots(manifest["payload"], target_paths)
                 restored = _restore_payload(
                     bundle,
                     manifest["payload"],
@@ -557,6 +638,32 @@ class StationBackupService:
             raise
         finally:
             self._job_lock.release()
+
+    def _managed_restore_targets(
+        self, records: Sequence[Mapping[str, Any]], target_paths: Mapping[str, Path]
+    ) -> dict[str, Path]:
+        targets = dict(target_paths)
+        for record in records:
+            name = record.get("managed_root")
+            if name is None:
+                continue
+            if not isinstance(name, str) or name not in self.managed_roots:
+                raise ValueError("backup requires an unsupported managed restore root")
+            source = record.get("source_path")
+            if not isinstance(source, str) or record.get("kind") not in {"media", "media-root"}:
+                raise ValueError("backup managed root record is invalid")
+            target = self.managed_roots[name]
+            if source in targets and Path(targets[source]).resolve() != target.resolve():
+                raise ValueError("managed agenda restore must use the replacement station's root")
+            _reject_managed_reparse_paths(target)
+            if target.exists() and not target.is_dir():
+                raise ValueError("managed restore root must be a directory")
+            if record.get("kind") == "media":
+                relative = _safe_media_relative_path(record.get("relative_path"))
+                child = target.joinpath(*relative.parts)
+                _reject_managed_reparse_paths(child)
+            targets[source] = target
+        return targets
 
     def list_backups(self) -> list[BackupArtifact]:
         if not self.destination.is_dir():
@@ -1296,6 +1403,23 @@ def _remap_database_media_paths(database_url: str, mappings: Sequence[tuple[Path
     return total_updated
 
 
+def _preserve_managed_restore_roots(
+    records: Sequence[Mapping[str, Any]], target_paths: Mapping[str, Path]
+) -> None:
+    """Retain old state for rollback without mixing stale previews into the DB snapshot."""
+    roots = {
+        Path(target_paths[str(record["source_path"])])
+        for record in records
+        if record.get("managed_root") is not None and record.get("kind") == "media-root"
+    }
+    for root in roots:
+        if root.exists():
+            rollback = root.with_name(
+                f"{root.name}.pre-restore-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid4().hex[:6]}"
+            )
+            root.replace(rollback)
+
+
 def _restore_payload(
     bundle: Path,
     records: Sequence[Mapping[str, Any]],
@@ -1330,7 +1454,11 @@ def _restore_payload(
         else:
             target = Path(target_base)
         target.parent.mkdir(parents=True, exist_ok=True)
-        temporary = target.with_name(f".{target.name}.{uuid4().hex}.restore")
+        # Keep the sibling staging name short: retained document trees contain
+        # two full SHA256 components and Windows may still enforce MAX_PATH.
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".r-", dir=target.parent)
+        os.close(descriptor)
+        temporary = Path(temporary_name)
 
         def report_copy(copied: int) -> None:
             nonlocal copied_bytes
@@ -1339,8 +1467,11 @@ def _restore_payload(
                 fraction = copied_bytes / total_bytes if total_bytes else 1
                 progress("restoring-files", 55 + round(fraction * 40))
 
-        _copy_file(source, temporary, report_copy)
-        temporary.replace(target)
+        try:
+            _copy_file(source, temporary, report_copy)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
         restored += 1
     for record in records:
         if record.get("kind") == "media-root" and isinstance(record.get("source_path"), str):

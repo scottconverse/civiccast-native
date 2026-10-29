@@ -57,13 +57,46 @@ PYAV_SDIST_URL: Final[str] = (
 PYAV_SDIST_SHA256: Final[str] = "4ef7e72c3d3a872584a1215173b16e0226811037f40dcdbf75992631098df1ba"
 PYAV_SDIST_BYTES: Final[int] = 4_340_222
 
-FFMPEG_COMMIT: Final[str] = "8c9502e9b048e21e1cae96477e338ac0635645ba"
-FFMPEG_BUILD: Final[str] = f"{FFMPEG_COMMIT[:10]}-minimal-msvc"
+FFMPEG_COMMIT: Final[str] = "611cec792aa54e2e53dbc1be95dcf5955d9a99ba"
+FFMPEG_BUILD: Final[str] = f"{FFMPEG_COMMIT[:10]}-security1-minimal-msvc"
 FFMPEG_SOURCE_URL: Final[str] = f"https://github.com/FFmpeg/FFmpeg/archive/{FFMPEG_COMMIT}.tar.gz"
 FFMPEG_SOURCE_SHA256: Final[str] = (
-    "97da8d05b040186096349179bd349168609235781776acee37015e87f8e898fc"
+    "d6228fe2111721062178221edf9b4c449b66fc9b06c1fd15eb14c97537daa559"
 )
-FFMPEG_SOURCE_BYTES: Final[int] = 16_902_915
+FFMPEG_SOURCE_BYTES: Final[int] = 16_923_579
+# Immutable upstream fixes backported without adopting master ABI major versions.
+# The append API patch excludes master's version/APIchanges hunks; the selected
+# implementation/header/tests add a symbol while preserving the 8.1 DLL ABI.
+FFMPEG_SECURITY_PATCHES: Final[tuple[tuple[str, int, str, tuple[str, ...]], ...]] = (
+    (
+        "969c7eb091989a664cb7bf66a1f02051cc46cb52",
+        1207,
+        "594a0cbca9527bc1edab7f76679af5a73cee23aadc878e2cc6a9001e22742c45",
+        ("libavutil/encryption_info.c",),
+    ),
+    (
+        "2c2f6e96e31795ae95a8f8323a493ffbc493111f",
+        2179,
+        "fb9d5c7625495040858ef316396d10d8be62c514187d0e19cc455410dbce79a9",
+        ("libavutil/hdr_dynamic_metadata.c",),
+    ),
+    (
+        "d1434518fbd03789e3e5dc0657a7a9f1123ce074",
+        7774,
+        "1fd3c8a2b37bb24fe4c8500422090453e18a06634e2647d8fb50216beb5332b8",
+        (
+            "libavutil/encryption_info.c",
+            "libavutil/encryption_info.h",
+            "libavutil/tests/encryption_info.c",
+        ),
+    ),
+    (
+        "71403a21b02a92b925e26e609e9bd3e48df451cf",
+        4810,
+        "af4bf01465777b2b8d159e8cd8a2185f155a0db39baa7fc2c0e6acf4d5f734b8",
+        ("libavformat/isom.h", "libavformat/mov.c"),
+    ),
+)
 MSYS2_BASE_URL: Final[str] = (
     "https://repo.msys2.org/distrib/x86_64/msys2-base-x86_64-20260611.tar.xz"
 )
@@ -121,22 +154,15 @@ MSVC_LINKER_VERSION: Final[str] = "14.50.35730.0"
 SOURCE_DATE_EPOCH: Final[int] = 1_704_067_200
 UV_VERSION: Final[str] = "uv 0.11.15 (3cffe97c2 2026-05-18 x86_64-pc-windows-msvc)"
 UV_SHA256: Final[str] = "d4ffe0b73cbb1fa3d11242567d55c6e9058c4e885fae9272764409583a4e8640"
-# Re-pinned 2026-08-25 (fix/self-hosted-lane-av-provenance): ffmpeg_provenance()
-# now also embeds pyav_sdist_url/sha256/bytes inside the wheel's own
-# FFMPEG-PROVENANCE.json (see that function's docstring), which changes the
-# reviewed wheel's bytes deterministically -- the embedding mechanism itself
-# (SOURCE_DATE_EPOCH, the fixed zip timestamp, sort_keys=True on the JSON) is
-# unchanged and was already exercised for the FFmpeg-only fields it already
-# carried. Captured from a real hosted `windows-latest` build (run
-# 32831619693's "Two independent Windows workspaces" gate, workspace-a) after
-# that gate correctly caught the stale pin -- both `verify_artifact(candidate,
-# ...)` and `verify_artifact(output, ...)` in build() check the SAME repacked
-# wheel (output is a byte-for-byte copy of candidate), so there is exactly one
-# new reviewed value to carry, not two.
+# Re-pinned 2026-10-29 from the reviewed local MSVC toolchain after the four
+# upstream security backports. The produced wheel passed clean-venv LGPL/decode,
+# exact upstream/patch provenance, and every member RECORD digest verification.
+# Source and patch identities stay strict on every lane; cross-machine output
+# differences retain the existing documented advisory posture.
 EXPECTED_WHEEL_SHA256: Final[str] = (
-    "0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce"
+    "5ab3fae3f85d4121919f70643e026452eb2a678b4a3f557b9ca487724c1399f0"
 )
-EXPECTED_WHEEL_BYTES: Final[int] = 4_347_090
+EXPECTED_WHEEL_BYTES: Final[int] = 4_348_926
 
 _DIST_INFO: Final[str] = f"av-{PYAV_VERSION}.dist-info"
 _RECORD: Final[str] = f"{_DIST_INFO}/RECORD"
@@ -193,6 +219,16 @@ def ffmpeg_provenance() -> dict[str, object]:
         "source_archive_url": FFMPEG_SOURCE_URL,
         "source_archive_sha256": FFMPEG_SOURCE_SHA256,
         "source_archive_bytes": FFMPEG_SOURCE_BYTES,
+        "security_patches": [
+            {
+                "commit": commit,
+                "url": f"https://github.com/FFmpeg/FFmpeg/commit/{commit}.patch",
+                "bytes": size,
+                "sha256": digest,
+                "included_paths": list(paths),
+            }
+            for commit, size, digest, paths in FFMPEG_SECURITY_PATCHES
+        ],
         "external_libraries": [],
         "configure_options": list(FFMPEG_CONFIGURE_OPTIONS),
         "relinking": (
@@ -732,20 +768,57 @@ done
     path.chmod(0o755)
 
 
+def apply_ffmpeg_security_patches(
+    source_dir: Path,
+    *,
+    cache_dir: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    patches: Sequence[tuple[str, int, str, tuple[str, ...]]] = FFMPEG_SECURITY_PATCHES,
+) -> None:
+    """Apply only the reviewed paths from strictly verified upstream patches."""
+    for commit, size, digest, paths in patches:
+        patch = acquire_verified_artifact(
+            f"https://github.com/FFmpeg/FFmpeg/commit/{commit}.patch",
+            cache_dir / f"ffmpeg-{commit}.patch",
+            expected_bytes=size,
+            expected_sha256=digest,
+        )
+        arguments = [
+            "git.exe",
+            "apply",
+            "--no-index",
+            "--whitespace=nowarn",
+            *(f"--include={path}" for path in paths),
+            str(patch),
+        ]
+        runner([*arguments[:3], "--check", *arguments[3:]], cwd=source_dir, check=True)
+        runner(arguments, cwd=source_dir, check=True)
+
+
 def build_minimal_ffmpeg(
     *,
     cache_dir: Path,
     scratch: Path,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    source_commit: str = FFMPEG_COMMIT,
+    source_bytes: int = FFMPEG_SOURCE_BYTES,
+    source_sha256: str = FFMPEG_SOURCE_SHA256,
+    security_patches: Sequence[tuple[str, int, str, tuple[str, ...]]] = FFMPEG_SECURITY_PATCHES,
+    configure_options: Sequence[str] = FFMPEG_CONFIGURE_OPTIONS,
+    dll_prefixes: Sequence[str] = _ALLOWED_FFMPEG_DLL_PREFIXES,
 ) -> Path:
-    """Build a shared LGPL FFmpeg with zero external libraries."""
+    """Build a pinned shared LGPL FFmpeg profile with zero external libraries.
+
+    Defaults retain the PyAV profile. The GStreamer security overlay supplies
+    its separately pinned stable-ABI source, patches and narrower codec profile.
+    """
 
     scratch.mkdir(parents=True, exist_ok=False)
     source_archive = acquire_verified_artifact(
-        FFMPEG_SOURCE_URL,
-        cache_dir / f"ffmpeg-{FFMPEG_COMMIT}.tar.gz",
-        expected_bytes=FFMPEG_SOURCE_BYTES,
-        expected_sha256=FFMPEG_SOURCE_SHA256,
+        f"https://github.com/FFmpeg/FFmpeg/archive/{source_commit}.tar.gz",
+        cache_dir / f"ffmpeg-{source_commit}.tar.gz",
+        expected_bytes=source_bytes,
+        expected_sha256=source_sha256,
     )
     msys_archive = acquire_verified_artifact(
         MSYS2_BASE_URL,
@@ -847,7 +920,10 @@ def build_minimal_ffmpeg(
 
     source_extract = scratch / "ffmpeg-source"
     safe_extract_tar(source_archive, source_extract)
-    source_dir = _single_directory(source_extract, f"FFmpeg-{FFMPEG_COMMIT}")
+    source_dir = _single_directory(source_extract, f"FFmpeg-{source_commit}")
+    apply_ffmpeg_security_patches(
+        source_dir, cache_dir=cache_dir, runner=runner, patches=security_patches
+    )
     (source_dir / "civiccast-cl.rsp").write_text(
         "/experimental:deterministic\n"
         f'"/pathmap:{source_dir.resolve()}=C:\\CivicCast\\FFmpegSource"\n',
@@ -880,7 +956,7 @@ def build_minimal_ffmpeg(
         "--prefix=/CivicCast/FFmpeg",
         f"--ld=./{linker_wrapper.name}",
         f"--x86asmexe={FFMPEG_X86ASM_EXE}",
-        *FFMPEG_CONFIGURE_OPTIONS,
+        *configure_options,
     ]
     configured = runner(
         [str(bash), "-lc", " ".join(shlex.quote(arg) for arg in configure)],
@@ -903,7 +979,7 @@ def build_minimal_ffmpeg(
         [
             str(bash),
             "-lc",
-            f"make -j16 && make DESTDIR={install_root.as_posix()} install",
+            f"make -j2 && make DESTDIR={install_root.as_posix()} install",
         ],
         cwd=source_dir,
         env=environment,
@@ -913,7 +989,7 @@ def build_minimal_ffmpeg(
         shutil.copy2(import_library, output / "lib" / import_library.name)
     shutil.copy2(source_dir / "COPYING.LGPLv2.1", output / "LICENSE.txt")
     dlls = sorted((output / "bin").glob("*.dll"))
-    if len(dlls) != len(_ALLOWED_FFMPEG_DLL_PREFIXES):
+    if len(dlls) != len(dll_prefixes):
         raise PyAvWheelBuildError(f"minimal FFmpeg emitted unexpected DLL set: {dlls!r}")
     return output
 

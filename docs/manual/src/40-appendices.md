@@ -233,7 +233,7 @@ Everything here is program files. Changing it needs Administrator rights, and un
 | `<I>\packs\captions-floor\` | The standard (Medium) caption model. |
 | `<I>\packs\captions-whistle\` | The signed Whistle model and CPU engine for native live captions. |
 | `<I>\dependencies\ffmpeg\bin\` | `ffmpeg.exe` and `ffprobe.exe`. |
-| `<I>\dependencies\ollama\` | The Ollama AI engine (version 0.30.6). |
+| `<I>\dependencies\ollama\` | The Ollama AI engine (version 0.40.13). |
 | `<I>\dependencies\cuda\` | Optional graphics-card libraries. |
 | `<I>\components\<name>\` | The AI models: `summary-gemma4-12b`, `summary-gemma4-e4b`, `translation-translategemma-4b`, and the optional `captions-large-v3`. |
 | `<I>\models\ollama\` | The merged AI model store that the Ollama engine reads. |
@@ -1542,20 +1542,22 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 | Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-beta.20 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
+| CivicCast program and web portals | 1.0.0-rc.1 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
-| FFmpeg (`ffmpeg.exe`, `ffprobe.exe` and libraries) | n8.1.2 build | LGPL-3.0-or-later | Preparing and checking media. |
-| PostgreSQL | 17.10 | PostgreSQL License | The database. |
+| FFmpeg (`ffmpeg.exe`, `ffprobe.exe` and libraries) | Reviewed builds pinned in the runtime and app payload records | LGPL-3.0-or-later for the standalone build; LGPL-2.1-or-later for the GStreamer and PyAV libraries | Preparing and checking media. |
+| PostgreSQL | 17.11 | PostgreSQL License | The database. |
 | TSDuck (optional) | 3.44 | BSD-2-Clause | Checking and smoothing a cable stream. |
-| Ollama | 0.30.6 | MIT | The local AI engine. |
+| Ollama | 0.40.13 | MIT | The local AI engine. |
 | OpenSSL | 3.x | Apache-2.0 | Secure connections. |
 | Node.js | 24.15.0 (listed in the runtime lock) | MIT | Listed in the runtime dependency lock. |
 | Whisper large-v3 speech model (via faster-whisper) | pinned revision | MIT | Captions (the optional Large model). The standard Medium model is a separate pack whose license this table does not restate. |
 | Whistle speech model and `cactus-needle` engine | Whistle engine 3.1.0; model and wheel hashes pinned in `civiccast/native/app_payload.py` | Apache-2.0 for both | CPU-first live captions. Whistle is included in the signed station pack set. |
 | Gemma 4 (12B, e4b) and TranslateGemma 4B models | as pinned in the model lock | The publisher's license, carried inside each model package | Summaries and Spanish translation. Read the license inside the package; this manual does not restate it. |
-| Smaller libraries | various | BSD-2-Clause, BSD-3-Clause, MIT, Zlib, Libpng, bzip2, FreeType License (FTL), HPND-sell-variant, MIT-Modern-Variant, Unicode-TOU, SQLite's public-domain dedication, ICU, LGPL-2.1-or-later (glib, pango, libsoup, gettext, and others) | Text, fonts, images, networking and compression support. |
+| Smaller libraries | various | BSD-2-Clause, BSD-3-Clause, MIT, Zlib, Libpng, bzip2, FreeType License (FTL), HPND-sell-variant, MIT-Modern-Variant, Unicode-TOU, SQLite's public-domain dedication, ICU, LGPL-2.0-or-later (libsoup), LGPL-2.1-or-later (GLib, Pango, gettext, and others) | Text, fonts, images, networking and compression support. |
+| Python runtime | 3.12.16, verified source build | PSF-2.0 and bundled dependency licenses | Runs CivicCast. |
+| Tesseract and English language data | Tesseract 5.5.4; data revision pinned in the OCR lock | Apache-2.0; supporting library licenses accompany the runtime | Offline OCR for external agenda previews. |
 | Python packages | pinned by hash | Each under its own license, listed per package in the build's bill of materials | The CivicCast program's dependencies. |
 | Web portal libraries | pinned | Not restated here | React, React Router, TanStack Query and hls.js in the portal bundles. |
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
@@ -1597,7 +1599,7 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the published Beta 20 edition. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies the current package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual describes the unpublished RC1 candidate. Beta 20 remains the current published release. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies that published package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |

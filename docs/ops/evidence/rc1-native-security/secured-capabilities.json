@@ -1,0 +1,118 @@
+{
+  "dlls": {
+    "avcodec-61.dll": {
+      "version": "61.19.101",
+      "license": "LGPL version 2.1 or later",
+      "imports": [
+        "avutil-59.dll",
+        "KERNEL32.dll"
+      ],
+      "configuration": "--prefix=/CivicCast/FFmpeg --ld=./civiccast-mslink --x86asmexe='nasm --reproducible' --toolchain=msvc --arch=x86_64 --target-os=win64 --enable-shared --disable-static --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-network --disable-everything --disable-avdevice --enable-avcodec --enable-avfilter --enable-avformat --enable-avutil --enable-swresample --enable-swscale --enable-decoder='h264,aac' --enable-encoder=aac --enable-parser='h264,aac,aac_latm' --enable-filter='null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink' --extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro"
+    },
+    "avfilter-10.dll": {
+      "version": "10.5.100",
+      "license": "LGPL version 2.1 or later",
+      "imports": [
+        "swscale-8.dll",
+        "avutil-59.dll",
+        "KERNEL32.dll"
+      ],
+      "configuration": "--prefix=/CivicCast/FFmpeg --ld=./civiccast-mslink --x86asmexe='nasm --reproducible' --toolchain=msvc --arch=x86_64 --target-os=win64 --enable-shared --disable-static --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-network --disable-everything --disable-avdevice --enable-avcodec --enable-avfilter --enable-avformat --enable-avutil --enable-swresample --enable-swscale --enable-decoder='h264,aac' --enable-encoder=aac --enable-parser='h264,aac,aac_latm' --enable-filter='null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink' --extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro"
+    },
+    "avformat-61.dll": {
+      "version": "61.7.103",
+      "license": "LGPL version 2.1 or later",
+      "imports": [
+        "avcodec-61.dll",
+        "avutil-59.dll",
+        "KERNEL32.dll"
+      ],
+      "configuration": "--prefix=/CivicCast/FFmpeg --ld=./civiccast-mslink --x86asmexe='nasm --reproducible' --toolchain=msvc --arch=x86_64 --target-os=win64 --enable-shared --disable-static --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-network --disable-everything --disable-avdevice --enable-avcodec --enable-avfilter --enable-avformat --enable-avutil --enable-swresample --enable-swscale --enable-decoder='h264,aac' --enable-encoder=aac --enable-parser='h264,aac,aac_latm' --enable-filter='null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink' --extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro"
+    },
+    "avutil-59.dll": {
+      "version": "59.39.100",
+      "license": "LGPL version 2.1 or later",
+      "imports": [
+        "bcrypt.dll",
+        "KERNEL32.dll"
+      ],
+      "configuration": "--prefix=/CivicCast/FFmpeg --ld=./civiccast-mslink --x86asmexe='nasm --reproducible' --toolchain=msvc --arch=x86_64 --target-os=win64 --enable-shared --disable-static --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-network --disable-everything --disable-avdevice --enable-avcodec --enable-avfilter --enable-avformat --enable-avutil --enable-swresample --enable-swscale --enable-decoder='h264,aac' --enable-encoder=aac --enable-parser='h264,aac,aac_latm' --enable-filter='null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink' --extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro"
+    },
+    "swresample-5.dll": {
+      "version": "5.3.100",
+      "license": "LGPL version 2.1 or later",
+      "imports": [
+        "avutil-59.dll",
+        "KERNEL32.dll"
+      ],
+      "configuration": "--prefix=/CivicCast/FFmpeg --ld=./civiccast-mslink --x86asmexe='nasm --reproducible' --toolchain=msvc --arch=x86_64 --target-os=win64 --enable-shared --disable-static --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-network --disable-everything --disable-avdevice --enable-avcodec --enable-avfilter --enable-avformat --enable-avutil --enable-swresample --enable-swscale --enable-decoder='h264,aac' --enable-encoder=aac --enable-parser='h264,aac,aac_latm' --enable-filter='null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink' --extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro"
+    },
+    "swscale-8.dll": {
+      "version": "8.3.100",
+      "license": "LGPL version 2.1 or later",
+      "imports": [
+        "avutil-59.dll",
+        "KERNEL32.dll"
+      ],
+      "configuration": "--prefix=/CivicCast/FFmpeg --ld=./civiccast-mslink --x86asmexe='nasm --reproducible' --toolchain=msvc --arch=x86_64 --target-os=win64 --enable-shared --disable-static --disable-programs --disable-doc --disable-debug --disable-autodetect --disable-network --disable-everything --disable-avdevice --enable-avcodec --enable-avfilter --enable-avformat --enable-avutil --enable-swresample --enable-swscale --enable-decoder='h264,aac' --enable-encoder=aac --enable-parser='h264,aac,aac_latm' --enable-filter='null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink' --extra-cflags='/Brepro @civiccast-cl.rsp' --extra-ldflags=/Brepro"
+    }
+  },
+  "registries": {
+    "av_codec_iterate": [
+      {
+        "name": "aac",
+        "av_codec_is_decoder": false,
+        "av_codec_is_encoder": true
+      },
+      {
+        "name": "h264",
+        "av_codec_is_decoder": true,
+        "av_codec_is_encoder": false
+      },
+      {
+        "name": "aac",
+        "av_codec_is_decoder": true,
+        "av_codec_is_encoder": false
+      }
+    ],
+    "av_demuxer_iterate": [],
+    "av_muxer_iterate": [],
+    "av_filter_iterate": [
+      {
+        "name": "null"
+      },
+      {
+        "name": "psnr"
+      },
+      {
+        "name": "scale"
+      },
+      {
+        "name": "ssim"
+      },
+      {
+        "name": "yadif"
+      },
+      {
+        "name": "nullsrc"
+      },
+      {
+        "name": "nullsink"
+      },
+      {
+        "name": "abuffer"
+      },
+      {
+        "name": "buffer"
+      },
+      {
+        "name": "abuffersink"
+      },
+      {
+        "name": "buffersink"
+      }
+    ],
+    "protocols-0": [],
+    "protocols-1": []
+  }
+}

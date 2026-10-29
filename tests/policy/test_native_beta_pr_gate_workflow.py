@@ -18,7 +18,7 @@ LINT = ROOT / ".github" / "workflows" / "ci-lint.yml"
 BASE_BRANCH = "release/native-beta-1.0.0-beta.1-rc1"
 SOURCE_SHA = "${{ github.event.pull_request.head.sha }}"
 CHECKOUT_REF = "${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}"
-FRONTEND_RUNNER = "${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-latest' }}"
+FRONTEND_RUNNER = "${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-24.04' }}"
 REQUIRED_GATE_JOBS = ["native-beta-pack-contract", "native-beta-installer"]
 PACK_TESTS = (
     "tests/native",

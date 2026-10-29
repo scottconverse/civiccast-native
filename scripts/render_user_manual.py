@@ -30,7 +30,7 @@ REQUIRED = (
 
 # Matches both a bare version ("v1.0.0"), prerelease versions ("v1.0.0-rc18"
 # and "v1.0.0-beta.5"), and one embedded in prose.
-_VERSION_TOKEN_RE = re.compile(r"v\d+\.\d+\.\d+(?:-(?:rc\d+|beta\.\d+))?")
+_VERSION_TOKEN_RE = re.compile(r"v\d+\.\d+\.\d+(?:-(?:rc\.?\d+|beta\.\d+))?")
 
 
 def _source_version_token(text: str) -> str:

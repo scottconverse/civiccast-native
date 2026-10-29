@@ -11,6 +11,24 @@ from typing import Any
 
 import yaml
 
+from scripts import check_pip_audit_allowlist
+
+
+def test_pip_audit_only_permits_own_editable_source_marker(tmp_path, monkeypatch):
+    monkeypatch.setattr(check_pip_audit_allowlist, "load_allowlist", lambda: set())
+    report = tmp_path / "audit.json"
+    own = {"name": "civiccast", "skip_reason": "distribution marked as editable"}
+    dependency = {"name": "requests", "version": "2.32.0", "vulns": []}
+
+    def check(entries):
+        report.write_text(json.dumps({"dependencies": entries}))
+        return check_pip_audit_allowlist.main(["check", str(report)])
+
+    assert check([own, dependency]) == 0
+    assert check([own]) == 2
+    assert check([{**own, "name": "third-party"}, dependency]) == 2
+    assert check([own, {**dependency, "vulns": [{"id": "CVE-named-defect"}]}]) == 1
+
 
 def _load_workflow() -> dict[str, Any]:
     return yaml.safe_load(

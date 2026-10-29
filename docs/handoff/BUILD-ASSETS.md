@@ -29,7 +29,7 @@ checkout. This handoff does not launch that workflow.
 | Embedded Python | `scripts/build_native_app_payload.py`, Python.org 3.12.10 embeddable ZIP | Distinct from build Python; 11,133,606 bytes, SHA-256 `4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3` |
 | Runtime archives | `native-windows-runtime-dependencies.lock.json`; `scripts/provision_native_runtime_dependencies.py` | Upstream URLs and exact sizes/hashes pinned; use local mirror first if available |
 | GStreamer closure | `scripts/build_native_runtime_closure.py` and `civiccast/native/runtime_closure.py`; pinned upstream wheels | Recreated from the build recipe, not an undocumented local tree |
-| Reviewed PyAV wheel | Release asset `av-18.0.0-cp311-abi3-win_amd64.whl` on `v1.0.0-beta.20`; details below | Published as its own small CI provenance asset; prefer exact reviewed wheel reuse over cross-machine recompilation |
+| Reviewed PyAV wheel | Local reviewed runtime-artifact mirror; details below | Current patched wheel is transferred to hosted reproducibility as a one-day workflow artifact; historical Beta20 asset is preserved |
 | Whistle engine/model | `scripts/provision_native_whistle_assets.py`; `civiccast/native/app_payload.py` and existing station bundle | Pinned upstream assets; optional old `build/native-whistle-cache` is a cache |
 | Whisper caption models | `civiccast/native/app_payload.py`, `civiccast/native/caption_tiers.py`; existing caption/station packs or pinned model repository | Large model bytes are not Git source; preserve revisions and hashes |
 | Ollama product models | `native-windows-ollama-models.lock.json` and `native-windows-ollama-manifests/`; existing signed station bundle or registry through provisioners | Includes Gemma and TranslateGemma; unrelated to the coding agent's model |
@@ -67,23 +67,29 @@ current Beta20 source. The current checkout has no `build/` directory to transfe
 
 ## Reuse the reviewed PyAV wheel
 
-The current pins are:
+The current security-patched pins are:
 
 - Name: `av-18.0.0-cp311-abi3-win_amd64.whl`
-- Bytes: `4347090`
-- SHA-256: `0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce`
+- Bytes: `4348926`
+- SHA-256: `5ab3fae3f85d4121919f70643e026452eb2a678b4a3f557b9ca487724c1399f0`
 
-The wheel is published as its own asset, `av-18.0.0-cp311-abi3-win_amd64.whl`,
-on the Beta20 release. It is a CI provenance/reuse asset, not part of the
-installable kit, and no installation path requires it. The repository workflows'
-reuse step downloads exactly that asset, checks its size and SHA-256 against the
-source constants in `scripts/build_native_pyav_wheel.py`, and supplies
-`CIVICCAST_REVIEWED_PYAV_WHEEL`. Use the existing workflow input
-`reviewed_pyav_release_tag: v1.0.0-beta.20` when a later authorized candidate
-build needs it. For local packaging, download the same asset and pass
-`--reviewed-pyav-wheel` to the app-pack builder. Never relax the pin just because
-local compilation differs, and preserve this asset across future revisions of the
-release rather than replacing it with a rebuilt wheel.
+Stage these reviewed bytes in
+`C:\CivicCastTester\runtime-artifact-mirror` before starting the candidate or
+reproducibility workflow. The self-hosted candidate lane uses this file when
+`reviewed_pyav_release_tag` is empty and checks its exact identity against the
+builder constants. The reproducibility workflow independently checks the two
+reviewed mirror inputs (this wheel and the pinned interpreter ZIP), transfers
+them through a one-day same-run workflow artifact, and rechecks identity and
+embedded provenance on the hosted runner before its two independent builds.
+The transfer never checks out repository source on the internal runner and is
+limited to internal pull requests and manual runs.
+
+The Beta20 release asset remains historical evidence; it predates the required
+FFmpeg security backports and fails the current pin. Preserve it. An explicit
+`reviewed_pyav_release_tag` is still supported for an authorized release containing
+the exact current wheel, but this acquisition flow publishes no asset or tag.
+For local packaging, pass the reviewed mirror file with `--reviewed-pyav-wheel`.
+Never relax the identity checks because a local recompilation differs.
 See [PyAV reproducibility](../process/pyav-wheel-reproducibility.md).
 
 ## Existing release assets (not Git LFS)

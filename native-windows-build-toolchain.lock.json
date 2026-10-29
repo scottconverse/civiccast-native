@@ -2,14 +2,17 @@
   "artifacts": {
     "msvc": {
       "bytes": 5781504,
+      "cmake_version": "4.2.3-msvc3",
       "compiler_version": "19.50.35730",
       "components": [
         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
         "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
-        "Microsoft.VisualStudio.Component.Windows11SDK.26100"
+        "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+        "Microsoft.VisualStudio.Component.VC.CMake.Project"
       ],
       "filename": "vs_BuildTools-18.5.2.exe",
       "linker_version": "14.50.35730.0",
+      "ninja_version": "1.12.1",
       "sha256": "97b2740209702f310a53d1e92ce971e86aafbde916a4d6cd087464e98ff61e2b",
       "url": "https://download.visualstudio.microsoft.com/download/pr/ef8a1da5-1f31-4995-8be6-cb9800f90516/97b2740209702f310a53d1e92ce971e86aafbde916a4d6cd087464e98ff61e2b/vs_BuildTools.exe",
       "version": "18.5.2+11723.231"

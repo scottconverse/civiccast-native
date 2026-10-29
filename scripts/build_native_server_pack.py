@@ -72,6 +72,12 @@ from civiccast.native.runtime_licenses import (  # noqa: E402
     classify_server_pack_file,
     is_gpl_license,
 )
+from scripts.native_openssl_overlay import (  # noqa: E402
+    secured_postgres_sources as openssl_postgres_sources,
+)
+from scripts.native_security_overlay import (  # noqa: E402
+    secured_postgres_sources as library_postgres_sources,
+)
 from scripts.provision_native_runtime_dependencies import (  # noqa: E402
     LOCK_PATH,
     fetch_locked_artifact,
@@ -79,8 +85,12 @@ from scripts.provision_native_runtime_dependencies import (  # noqa: E402
     safe_extract_zip,
 )
 
-_REPARSE_POINT: Final[int] = 0x400
 
+def secured_postgres_sources(sources: dict[str, Path], cache: Path) -> dict[str, Path]:
+    return library_postgres_sources(openssl_postgres_sources(sources, cache), cache)
+
+
+_REPARSE_POINT: Final[int] = 0x400
 #: Upstream component versions this builder was reviewed against -- SAME
 #: pins as ``native-windows-runtime-dependencies.lock.json``'s ``postgres``/
 #: ``tsduck`` entries (``--acquire`` fetches exactly those). Not
@@ -88,7 +98,7 @@ _REPARSE_POINT: Final[int] = 0x400
 #: asserts the loaded lock's ``version`` fields equal these before fetching,
 #: so a lock file edited out from under this builder fails loud instead of
 #: silently shipping an unreviewed version.
-POSTGRES_VERSION: Final[str] = "17.10-2"
+POSTGRES_VERSION: Final[str] = "17.11-2"
 TSDUCK_VERSION: Final[str] = "3.44-4676"
 
 
@@ -137,22 +147,13 @@ class ServerPackBuildError(RuntimeError):
 #: not run today -- a later work package that adds them re-derives their
 #: pins the same way this file does, never inherits an unreviewed default).
 POSTGRES_BIN_PINS: Final[dict[str, tuple[int, str]]] = {
-    "initdb.exe": (244_736, "2556d079888bf9ebba6b8ba7d3e8c08c947e6e564ceb73054fe1929611c87d48"),
-    "postgres.exe": (
-        9_918_464,
-        "882a5a073a88817f6c6d4c8827df1e4269ff226d52cf6f47c9883e91088c6345",
-    ),
-    "pg_ctl.exe": (132_096, "abe89b0767a8cd0f956059aa5a5a93cd1042efc6194d000c2501da3e23babbd2"),
-    "pg_dump.exe": (613_376, "e01d19b862085eb1fe12c54cdfd07fd691533e5fe8363ae6cf27a423fffd815a"),
-    "pg_dumpall.exe": (
-        194_560,
-        "935a34cd3e873d2deea0dc98705ee0902c9d5bb095c4d69327159b8988ed3ffa",
-    ),
-    "pg_restore.exe": (
-        370_688,
-        "900de0096d68993acd46b25db1cd909e8a197760b56b7f12f7a631be1fbedf64",
-    ),
-    "psql.exe": (633_344, "e43adb9c5032e7efc63eebb44c5d32b142b34e5f4207666fed2dc7a51d43b630"),
+    "initdb.exe": (245248, "537a0801bb41d1a560e0bfb2bec0a4e344dc4ad034ed61648fdf542746e3f649"),
+    "postgres.exe": (9939456, "3204f6811b3e1f8bb89ad94ca7dd7bcb38c7f665c50d532bce463650c4e7d2c5"),
+    "pg_ctl.exe": (132096, "23f114eaa965f41c65ca5c1c7d147afc87750f80fd9c2386c6658d7be20d7bf7"),
+    "pg_dump.exe": (613888, "4c36682e3ad65e3f85e2643690c4209533be7d872e1a977b11a2dcedb3c203f2"),
+    "pg_dumpall.exe": (194560, "aef9fa80e0f92aeb37bcc08b7600494d9d7d05a97d42ce3d015c10f62392d715"),
+    "pg_restore.exe": (371200, "06a1af33738f49724342b66183d68837d0eb2c227bce0829c84884db6443d558"),
+    "psql.exe": (635392, "54ea051e4e57bc2361b5081f522a2a3f51d5ddaf75e83543e70bd62f86be6299"),
 }
 
 #: The bundled runtime DLLs the seven binaries above actually import,
@@ -166,40 +167,28 @@ POSTGRES_BIN_PINS: Final[dict[str, tuple[int, str]]] = {
 #: upstream ``bin/`` tree but not imported by any of the selected
 #: executables.
 POSTGRES_BIN_DLL_PINS: Final[dict[str, tuple[int, str]]] = {
-    "icudt67.dll": (
-        28_399_104,
-        "5ff9c8026344e886f280ddfa235a1e16e1bcd396e90f9ed600b6f71d9d881ae8",
-    ),
-    "icuin67.dll": (
-        2_674_176,
-        "23d5914acf071f566df19aaf404373e5c73c9910c370e728976f6202c04cf6c3",
-    ),
-    "icuuc67.dll": (
-        1_906_688,
-        "2fb4007a1f1089a0807cc1abde5443f5c3b0865ecfd80344b6ad165f1fe53ade",
-    ),
+    "icudt67.dll": (28399104, "5ff9c8026344e886f280ddfa235a1e16e1bcd396e90f9ed600b6f71d9d881ae8"),
+    "icuin67.dll": (2674176, "23d5914acf071f566df19aaf404373e5c73c9910c370e728976f6202c04cf6c3"),
+    "icuuc67.dll": (1906688, "2fb4007a1f1089a0807cc1abde5443f5c3b0865ecfd80344b6ad165f1fe53ade"),
     "libcrypto-3-x64.dll": (
-        4_704_256,
-        "ef9cfc17dc0069ea86fcc731305f61540aab8078178006c62b58df729ee1f417",
+        5714432,
+        "2049826335e37848b25a9668b6e4e46030569f00e1a8bcc300c1c2fdedc4445f",
     ),
-    "libiconv-2.dll": (
-        1_850_401,
-        "3ee9786ab3eb8dfd791bdbd17c7e791dbe025734befcded0ee4170e1089f79df",
-    ),
-    "libintl-9.dll": (475_769, "1125ac8dc0c4f5c3ed4712e0d8ad29474099fcb55bb0e563a352ce9d03ef1d78"),
-    "liblz4.dll": (128_000, "096af775241b3bd4b1c3d79c83b103bb8f02da54ec4cd76c5d49eef61a68ad01"),
-    "libpq.dll": (351_232, "66859f7f4b0eeb5ce50b7df8aaabb0b92c2073f584f49f15a3101f5fba167113"),
+    "libiconv-2.dll": (1850401, "3ee9786ab3eb8dfd791bdbd17c7e791dbe025734befcded0ee4170e1089f79df"),
+    "libintl-9.dll": (475769, "1125ac8dc0c4f5c3ed4712e0d8ad29474099fcb55bb0e563a352ce9d03ef1d78"),
+    "liblz4.dll": (128000, "096af775241b3bd4b1c3d79c83b103bb8f02da54ec4cd76c5d49eef61a68ad01"),
+    "libpq.dll": (351232, "70ff879a56eb9e39e15e386f0b72e9cc80c62c4284b3eb72fe73648ae23595d9"),
     "libssl-3-x64.dll": (
-        779_776,
-        "0da042f7021d8910966643c1c7da86d7bb555eb1aca0fbaaaad9a30d95187dc1",
+        1313280,
+        "f5a703416d879b082556787733383bae2cef18e8e55c0415cc873e623f898956",
     ),
     "libwinpthread-1.dll": (
-        52_736,
+        52736,
         "ffe2d56375bb4e8bdee9037df6befc5016ddd8871d0d85027314dd5792f8fdc9",
     ),
-    "libxml2.dll": (1_230_848, "fa13b5d8bdc8254a6a7f0bc9b26331fa6badf096334bb912e7dc6928206a74a0"),
-    "libzstd.dll": (727_040, "287e7e474961e8886a3d961e2c07da647a7ac8d60d97023545f3a3ecf604daba"),
-    "zlib1.dll": (91_648, "890afa7a17fb66308e0026631070409138b157ef2773c0a41d22a76943f7aedf"),
+    "libxml2.dll": (1230848, "fa13b5d8bdc8254a6a7f0bc9b26331fa6badf096334bb912e7dc6928206a74a0"),
+    "libzstd.dll": (727040, "287e7e474961e8886a3d961e2c07da647a7ac8d60d97023545f3a3ecf604daba"),
+    "zlib1.dll": (91648, "890afa7a17fb66308e0026631070409138b157ef2773c0a41d22a76943f7aedf"),
 }
 
 #: ``lib/`` selection, in three groups. LESSON (Sandbox matrix row 1 run 2,
@@ -229,112 +218,105 @@ POSTGRES_BIN_DLL_PINS: Final[dict[str, tuple[int, str]]] = {
 #: + ``to_tsvector`` against exactly this selection on every pack build, so
 #: the NEXT missing file fails the build -- never a station install.
 POSTGRES_LIB_PINS: Final[dict[str, tuple[int, str]]] = {
-    # Group 1: encoding-conversion modules (complete family).
     "cyrillic_and_mic.dll": (
-        20_480,
-        "a0ffea13b3aec8000ada34ab06050dae74aaa6a25983cb7af5b4df90ff5bcdef",
+        20480,
+        "edcb320775f4bddc6577426a5cf78458fa2cd5e59a0fdba1e260f93336db7d9c",
     ),
     "euc2004_sjis2004.dll": (
-        16_896,
-        "fd85a9d4f67df8d90414cd7cb028a69355c5ee2444c041b9d74517296140082e",
+        16896,
+        "a6fd7c7f289114e9fa520741ca21dcd9cd759a99cbb8574df714ab674adf0e36",
     ),
     "euc_cn_and_mic.dll": (
-        15_872,
-        "a7403ebff7c092fb063de8fefe8edad58042cab10e35c5e46586b516377e2b86",
+        15872,
+        "cff9cc37f24714c91956b4037847d4931ae57b5795721e662a21c5517ce05319",
     ),
     "euc_jp_and_sjis.dll": (
-        23_040,
-        "42398e11a0068d2f759f6b90f17cfd70d072751f18adc4ec6afc776fd1887ee3",
+        23040,
+        "694e7a3dc1583cecf57d3c39154f3dc71befe99a1b61df67d42f75d645848905",
     ),
     "euc_kr_and_mic.dll": (
-        15_872,
-        "bf71dc21591912f84262f4403855ceefc51acccb6e6ff4ac0390fb4efc05bbab",
+        15872,
+        "70655d556c7496f77e49d7c25ef958906cf49eeafe2f0371ff9b4cf210e3f2fd",
     ),
     "euc_tw_and_big5.dll": (
-        22_528,
-        "4d806f12ebdfbc9a566d28508fd823f61b84007a539dfb6db7e7c9de3854ee7b",
+        22528,
+        "5c7abf78aea12b5e5dc1b212fdb24617569439192c849c82b1f6f08c8a673f1e",
     ),
     "latin2_and_win1250.dll": (
-        16_384,
-        "c1a0a45a66d764bb2f4e066c07cbe4e071a3660e1c89d9c71168f97d2dbacd14",
+        16384,
+        "3e602f2cf6366ae87c801338b14d6bdaf7b7cb8acec1477f7a6e395db8b7a284",
     ),
     "latin_and_mic.dll": (
-        15_872,
-        "ea22ecdd239992c9260cfb9ae22ded71da27cbc623cc4dacbc46a4d41c5ac7aa",
+        15872,
+        "bdd06e14526545a3cbb8016b575d69852f4ea99fddf222c80b274feb1b0d801e",
     ),
     "utf8_and_big5.dll": (
-        129_024,
-        "253254404d378ab07484948b4b98fc8c4526cf3f528580998bd7b5ca02268da7",
+        129024,
+        "78b9a1fafb63dbf9f3d2e8becc2b909e0791f15a760ba4a3b672d57af034f75c",
     ),
     "utf8_and_cyrillic.dll": (
-        20_480,
-        "d063f4732a07554b16ec24ed8a9137403f0927a2991ba10f0c9ca44778a3caa2",
+        20480,
+        "21cb4abd0f4b9c1bbdc0df40766971f99318b632ddba14439f7bba34b65a7477",
     ),
     "utf8_and_euc2004.dll": (
-        219_136,
-        "33f4012bf8e47fb318caab2f4ca1d9b1a3146f33652e06ae21b084cbab8fa8b2",
+        219136,
+        "dcd2cee63d24a53b014ebbc241a7a1c24b5c11d14c790fdf9755422c35e4a5ab",
     ),
     "utf8_and_euc_cn.dll": (
-        89_600,
-        "90a68b52cdad241d35bb70e6bd2800daa21341c839125629036fd0b40522aa00",
+        89600,
+        "02e8e1ee047165b4b5c5fa7ed17d620a9fc779ec397bbc56853e85764f4574e3",
     ),
     "utf8_and_euc_jp.dll": (
-        165_376,
-        "a27ad7ae429419eb79c313991c9594227e4fad727fe1e5ded4fbd881dd0d513e",
+        165376,
+        "fc6aed99965654c5d6f5a159b4b009257df8263f0dae33b09198b7235dea3b7f",
     ),
     "utf8_and_euc_kr.dll": (
-        117_248,
-        "773da9c1ad60a9fdfc023b0836525f5a2486578c9fc3a098f22fae6fb69b5cd8",
+        117248,
+        "0c10826e805adbbb524dd8583633aa4766df0373aa5fafacdcf140fe1b9e2099",
     ),
     "utf8_and_euc_tw.dll": (
-        214_016,
-        "8d6a2f7dd637a7a448731e510d54a0ec23addb1e0bd14446308cf1cf6481407e",
+        214016,
+        "0ebca9b503d56fadb444bbf0cccd4f970913b4b4cb351301c8180a69cfc918d6",
     ),
     "utf8_and_gb18030.dll": (
-        275_456,
-        "3faa094d4e10b6445c0dcdcf2b945339d09be81a4ecc938611eae3fcb00b32da",
+        275456,
+        "49a835bb66cfec5215409a852193c6bcf75db63a86820efa5a8344826ecb75be",
     ),
     "utf8_and_gbk.dll": (
-        160_768,
-        "849128133e046d9cc32eca1694164736e3468c8e204b9182d64ed477665386fd",
+        160768,
+        "a7e98aa2d3af35fff0c7e52ed96312caf6f1401c7573622deeafdc73826960d2",
     ),
     "utf8_and_iso8859.dll": (
-        36_864,
-        "3c9c88fd8c042247bbff07f3d87981ec52bf9ba9b3fae60da902d64c80482263",
+        36864,
+        "0e24ae331a770fefe76dea8a5bc62b06a422bcce87a2d77cff097ac842627dc9",
     ),
     "utf8_and_iso8859_1.dll": (
-        15_360,
-        "aadfc8042ef2f591a230f6b1ab1944db457a00d5b5245f8e5d1d3560b1cee893",
+        15360,
+        "81801569ae20a0d26638e3c776d10bfe2ab9dff8d7d429610d1d1d2a45820083",
     ),
     "utf8_and_johab.dll": (
-        176_128,
-        "906920275f408d98e1a37e1b4b981ba905d672d210ca7dd21da74f50a370e342",
+        176128,
+        "42244412274fddc9a46ddae40ae1020e599f5b01b7e310d1c302fb288b2196c0",
     ),
     "utf8_and_sjis.dll": (
-        95_744,
-        "ee5a5cefc2e3bccabead23f2b5bbf1690b3d9388b18dbb36548fbd3b13a00747",
+        95744,
+        "66551a3e218a16d3a1c2c681bd3bfd849804fc75b7c9b474522a185ad0a8bd18",
     ),
     "utf8_and_sjis2004.dll": (
-        140_800,
-        "19c157fd9ead7816fb731560fd8883235ebd582dc48b1cb12a3f4daadf6ab489",
+        140800,
+        "9aa8f115f77e8c652043b6f4b2432ef7e9dd125a982e125d83e2628a09a66c0e",
     ),
     "utf8_and_uhc.dll": (
-        181_760,
-        "aff3f00f06b2337d57e126387d4d3d7028e3dc13c76644965a34bda429e48906",
+        181760,
+        "f502f21661bc79f9d7fabd3be9caf50e389a744decc438be594d6c090b28e122",
     ),
-    "utf8_and_win.dll": (
-        39_936,
-        "326866ed0be41d021901eac7d4cd6998c8e53ddd6e0d3e387eca3767e3521c78",
-    ),
-    # Group 2: core PL / dictionary modules the bootstrap + shipped share/
-    # scripts load.
-    "plpgsql.dll": (195_072, "0cb9cf979f53f416daea5e222f1fc1a1e6ce61615581c8eb08368abd2051b26c"),
+    "utf8_and_win.dll": (39936, "16d28c9b3afeca906bf9467da6a47e4440f30a8da6ad00e4f3251edbbccc3d91"),
+    "plpgsql.dll": (195072, "df17cda37ca71c408b44f652ac7e27cacbfda0144368f44a2018f14545fc74d0"),
     "dict_snowball.dll": (
-        648_704,
-        "ef01094f6e8eb8f27f4e1e5f879f1c8a8a735ac4ee95d1ddbc906466f40401ff",
+        648704,
+        "84f1aee536bed200aff148be4d64f10855d56fbc92528ee2caceb9fb0bd95acf",
     ),
-    # Group 3: the one product-installed extension.
-    "btree_gist.dll": (75_776, "d30056c80ba6a649aecec2cd9e1811340322b3d375a90bffb6300bc37d5f4ada"),
+    "btree_gist.dll": (80384, "d0ed3e8a8287b5a92615b428dab42c4e8eaf278c5919de1da16d2c2b32a76613"),
 }
 
 #: ``initdb`` reads the bootstrap catalog + SQL scripts and copies the
@@ -939,7 +921,9 @@ def prove_postgres_bootstrap(
     happens on every real CLI pack build).
     """
 
-    sources = _postgres_sources(postgres_root)
+    sources = secured_postgres_sources(
+        _postgres_sources(postgres_root), postgres_root.parent / "openssl-security-cache"
+    )
     with tempfile.TemporaryDirectory(
         prefix="civiccast-pack-bootstrap-proof-", ignore_cleanup_errors=True
     ) as temporary:
@@ -1039,6 +1023,10 @@ def prove_postgres_bootstrap(
                     "CREATE EXTENSION btree_gist;",
                     "--command",
                     "SELECT to_tsvector('english', 'pack bootstrap proof');",
+                    "--command",
+                    "DO $$ BEGIN IF xpath_exists('/agenda/item[@id=\"1\"]', "
+                    "XMLPARSE(DOCUMENT '<agenda><item id=\"1\">ready</item></agenda>')) "
+                    "IS NOT TRUE THEN RAISE EXCEPTION 'pack XML parser failed'; END IF; END $$;",
                 ],
             )
         finally:
@@ -1095,7 +1083,9 @@ def build_server_pack(
         raise ServerPackBuildError("source SHA must be exactly 40 lowercase hexadecimal characters")
 
     sources = {
-        **_postgres_sources(postgres_root),
+        **secured_postgres_sources(
+            _postgres_sources(postgres_root), postgres_root.parent / "openssl-security-cache"
+        ),
         **_tsduck_sources(tsduck_root),
     }
 

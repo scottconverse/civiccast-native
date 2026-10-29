@@ -34,15 +34,21 @@ def _powershell_lines(script: str) -> tuple[str, ...]:
 
 def _assert_cpython_handoff(job: dict[str, object]) -> None:
     steps = {step["name"]: step for step in job["steps"]}
-    assignment = (
-        '$pythonEmbedZip = Join-Path $env:RUNNER_TEMP "civiccast-python-3.12.10-embed-amd64.zip"'
-    )
+    filename = "python-3.12.16-civiccast-embed-amd64.zip"
     producer = _powershell_lines(steps["Acquire the pinned CPython payload interpreter"]["run"])
     consumer = _powershell_lines(steps["Build and verify signed component packs"]["run"])
 
-    assert producer.count(assignment) == 1
-    assert "-OutFile $pythonEmbedZip" in producer
-    assert consumer.count(assignment) == 1
+    assert f'$filename = "{filename}"' in producer
+    assert "$pythonEmbedZip = Join-Path $env:RUNNER_TEMP $filename" in producer
+    assert "Copy-Item -LiteralPath $mirror -Destination $pythonEmbedZip" in producer
+    assert any("runtime-artifact-mirror" in line for line in producer)
+    assert any("11474063" in line for line in producer)
+    assert any(
+        "b06074f51101293e2d81059dde190ba9325665e926e4e2a16c0e3916c49be9db" in line
+        for line in producer
+    )
+    assert "Invoke-WebRequest" not in "\n".join(producer)
+    assert consumer.count(f'$pythonEmbedZip = Join-Path $env:RUNNER_TEMP "{filename}"') == 1
     assert "--interpreter-zip $pythonEmbedZip `" in consumer
 
 
@@ -1480,3 +1486,20 @@ def test_local_station_reuse_skips_acquisition_and_keeps_existing_verification()
         in steps["Resolve build target and local candidate root"]["run"]
     )
     assert "if" not in steps["Verify the signed station bundle and write checksums"]
+
+
+def test_candidate_reuses_reviewed_local_pyav_without_release_publication() -> None:
+    _, workflow = _workflow()
+    steps = {step["name"]: step for step in workflow["jobs"]["build-native-beta"]["steps"]}
+    reuse = steps["Reuse the exact pinned PyAV wheel from an existing release"]
+    assert (
+        reuse["if"] == "inputs.reviewed_pyav_release_tag != '' || env.BUILD_TARGET == 'self-hosted'"
+    )
+    assert "if ($env:REVIEWED_RELEASE)" in reuse["run"]
+    assert "runtime-artifact-mirror" in reuse["run"]
+    assert "Copy-Item -LiteralPath $mirrorWheel -Destination $reuse" in reuse["run"]
+    assert "EXPECTED_WHEEL_BYTES" in reuse["run"] and "EXPECTED_WHEEL_SHA256" in reuse["run"]
+    pack = steps["Build and verify signed component packs"]["run"]
+    assert (
+        'if ($env:BUILD_TARGET -eq "self-hosted" -and !$env:CIVICCAST_REVIEWED_PYAV_WHEEL)' in pack
+    )

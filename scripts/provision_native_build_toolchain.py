@@ -180,10 +180,13 @@ def validate_lock(lock: Mapping[str, Any]) -> None:
         raise ToolchainProvisionError("MSVC compiler version drifted")
     if msvc.get("linker_version") != "14.50.35730.0":
         raise ToolchainProvisionError("MSVC linker version drifted")
+    if msvc.get("cmake_version") != "4.2.3-msvc3" or msvc.get("ninja_version") != "1.12.1":
+        raise ToolchainProvisionError("MSVC CMake/Ninja versions drifted")
     if msvc.get("components") != [
         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
         "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
         "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+        "Microsoft.VisualStudio.Component.VC.CMake.Project",
     ]:
         raise ToolchainProvisionError("MSVC component selection drifted")
 
@@ -599,13 +602,40 @@ def assert_msvc_version_output(
         )
 
 
+def verify_msvc_cmake_tools(
+    install_root: Path,
+    versions: Mapping[str, str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, Path]:
+    """Use only the CMake component belonging to the selected MSVC installation."""
+    root = install_root / "Common7/IDE/CommonExtensions/Microsoft/CMake"
+    paths = {"cmake": root / "CMake/bin/cmake.exe", "ninja": root / "Ninja/ninja.exe"}
+    for name, path in paths.items():
+        if not path.is_file():
+            raise ToolchainProvisionError(f"Pinned MSVC {name} is missing: {path}")
+        completed = runner(
+            [str(path), "--version"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        lines = completed.stdout.splitlines()
+        expected = f"cmake version {versions[name]}" if name == "cmake" else versions[name]
+        if not lines or lines[0].strip() != expected:
+            raise ToolchainProvisionError(f"Pinned MSVC {name} is not reviewed {versions[name]}")
+    return paths
+
+
 def verify_msvc_installation(
     install_root: Path,
     msvc: Mapping[str, Any],
     *,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
-    """Load one explicit Build Tools root and verify cl/link before use."""
+    """Verify compiler, linker and OCR build tools from one explicit installation."""
 
     vcvarsall = install_root / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
     if not vcvarsall.is_file():
@@ -640,6 +670,11 @@ def verify_msvc_installation(
         f"{compiler.stdout}\n{compiler.stderr}",
         f"{linker.stdout}\n{linker.stderr}",
         msvc,
+    )
+    verify_msvc_cmake_tools(
+        install_root,
+        {name: str(msvc[f"{name}_version"]) for name in ("cmake", "ninja")},
+        runner=runner,
     )
 
 

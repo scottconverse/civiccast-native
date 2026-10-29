@@ -1213,8 +1213,9 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # installed runtime is absent, and both native lanes forbid skips.
     # Re-derived by an actual collect-only run on this tree, not by
     # arithmetic: (2084, 2326) -> (2085, 2327).
-    # Current native cases: CI collection is 2085 pure tests, 2327 total.
-    assert (collect("not windows_only"), collect()) == (2085, 2327)
+    # RC1 native packaging/security regressions: actual collection is 2144 pure,
+    # 2386 total. Executed lanes retain the standard maximum 50-test floor margin.
+    assert (collect("not windows_only"), collect()) == (2144, 2386)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

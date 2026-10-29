@@ -23,6 +23,18 @@ from typing import Any
 from filelock import FileLock
 
 
+def agenda_snapshot_lock(root: Path) -> FileLock:
+    """Short, reentrant cross-process gate for durable agenda mutations/backups."""
+    root.mkdir(parents=True, exist_ok=True)
+    return FileLock(str(root / ".snapshot.lock"), is_singleton=True)
+
+
+def checkpoint_snapshot_lock(path: Path) -> FileLock:
+    """Locate the managed root for current and legacy retained checkpoints."""
+    root = path.parents[3] if path.parent.parent.name == "versions" else path.parent.parent
+    return agenda_snapshot_lock(root)
+
+
 @dataclass(frozen=True)
 class RetainedDocument:
     document_id: str
@@ -125,7 +137,7 @@ class DocumentStore:
                 # Preserve the legacy v1 manifest when a fresh revision replaces
                 # the current pointer; its original/checkpoint remain untouched.
                 if refresh and metadata.get("storage_key") is None:
-                    _write_json(folder / "legacy-manifest.json", metadata)
+                    _write_json(folder / "legacy-manifest.json", metadata, snapshot_root=self.root)
             if not manifest.exists() or refresh:
                 partial = folder / "download.part"
                 try:
@@ -162,15 +174,20 @@ class DocumentStore:
                         # Adopt only identical bytes; preserve the old checkpoint too.
                         temporary_checkpoint = checkpoint.with_suffix(".tmp")
                         shutil.copyfile(previous_checkpoint, temporary_checkpoint)
-                        temporary_checkpoint.replace(checkpoint)
-                    _write_json(version / "manifest.json", metadata)
-                    _write_json(manifest, metadata)
+                        with agenda_snapshot_lock(self.root):
+                            temporary_checkpoint.replace(checkpoint)
+                    _write_json(version / "manifest.json", metadata, snapshot_root=self.root)
+                    _write_json(manifest, metadata, snapshot_root=self.root)
                 finally:
                     partial.unlink(missing_ok=True)
             yield RetainedDocument(key, original, checkpoint, metadata)
 
 
-def _write_json(path: Path, metadata: dict[str, Any]) -> None:
+def _write_json(path: Path, metadata: dict[str, Any], *, snapshot_root: Path | None = None) -> None:
+    if snapshot_root is not None:
+        with agenda_snapshot_lock(snapshot_root):
+            _write_json(path, metadata)
+        return
     temporary = path.with_suffix(".tmp")
     with temporary.open("w", encoding="utf-8") as stream:
         json.dump(metadata, stream)

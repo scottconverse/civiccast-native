@@ -862,3 +862,125 @@ class TestImportPreview:
         assert preview["status"] == "failed"
         assert preview["source_doc_url"] is None
         assert store.list_items("ag-1") == []
+
+
+class TestSavedAgendaSourceSettings:
+    def test_admin_save_survives_new_store_and_takes_effect_without_restart(
+        self, monkeypatch, tmp_path
+    ):
+        from civiccast.agenda_import.settings import AgendaSourceSettingsStore
+
+        path = tmp_path / "agenda-import-settings.json"
+        monkeypatch.setattr(
+            agenda_import_router, "default_agenda_import_settings_path", lambda: path
+        )
+        monkeypatch.setenv("CIVICCAST_AGENDA_SOURCE", "off")
+        monkeypatch.setenv("CIVICCAST_AGENDA_SOURCE_TOKEN", "legacy-secret")
+        agenda_import_router._settings.cache_clear()
+        try:
+            app, _ = _build(scopes=("setup_admin",))
+            app.dependency_overrides.pop(agenda_import_router.get_agenda_import_settings)
+            client = TestClient(app)
+            assert client.get("/api/staff/agenda-sources/settings").json()["source"] == "off"
+            saved = client.put(
+                "/api/staff/agenda-sources/settings",
+                json={
+                    "source": "primegov",
+                    "client_code": "longmont",
+                },
+            )
+            assert saved.status_code == 200
+            assert "legacy-secret" not in saved.text
+            assert "legacy-secret" not in path.read_text()
+            assert AgendaSourceSettingsStore(path).load().client_code == "longmont"
+            assert agenda_import_router.get_agenda_import_settings().source == "primegov"
+            assert agenda_import_router.get_agenda_import_settings().token == "legacy-secret"
+        finally:
+            agenda_import_router._settings.cache_clear()
+
+    @pytest.mark.parametrize(
+        "scopes", [("records_clerk",), ("meeting_operator",), ("support_admin",), None]
+    )
+    def test_only_setup_admin_can_save(self, scopes, monkeypatch, tmp_path):
+        path = tmp_path / "settings.json"
+        monkeypatch.setattr(
+            agenda_import_router, "default_agenda_import_settings_path", lambda: path
+        )
+        app, _ = _build(scopes=scopes)
+        response = TestClient(app).put(
+            "/api/staff/agenda-sources/settings",
+            json={
+                "source": "primegov",
+                "client_code": "longmont",
+            },
+        )
+        assert response.status_code in {401, 403}
+        assert not path.exists()
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"source": "primegov", "client_code": "https://evil.example"},
+            {"source": "primegov"},
+            {"source": "js_portal", "client_code": "city", "portal_url": "http://localhost"},
+            {"source": "primegov", "client_code": "city", "token": "secret"},
+        ],
+    )
+    def test_rejects_invalid_or_secret_settings(self, payload):
+        app, _ = _build(scopes=("setup_admin",))
+        assert (
+            TestClient(app).put("/api/staff/agenda-sources/settings", json=payload).status_code
+            == 422
+        )
+
+    def test_corrupt_settings_report_actionable_failure(self, monkeypatch, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text("not-json")
+        monkeypatch.setattr(
+            agenda_import_router, "default_agenda_import_settings_path", lambda: path
+        )
+        app, _ = _build(scopes=("setup_admin",))
+        response = TestClient(app).get("/api/staff/agenda-sources/settings")
+        assert response.status_code == 503
+        assert "Restore" in response.json()["detail"]
+        assert path.read_text() == "not-json"
+
+    def test_legacy_enabled_provider_without_default_tenant_is_readable(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(
+            agenda_import_router,
+            "default_agenda_import_settings_path",
+            lambda: tmp_path / "settings.json",
+        )
+        monkeypatch.setenv("CIVICCAST_AGENDA_SOURCE", "legistar")
+        monkeypatch.delenv("CIVICCAST_AGENDA_SOURCE_CLIENT", raising=False)
+        app, _ = _build(scopes=("setup_admin",))
+        response = TestClient(app).get("/api/staff/agenda-sources/settings")
+        assert response.status_code == 200
+        assert response.json()["source"] == "legistar"
+        assert response.json()["client_code"] is None
+
+    def test_storage_failure_returns_actionable_save_error(self, monkeypatch, tmp_path):
+        from civiccast.agenda_import.settings import AgendaSourceSettingsStore
+
+        monkeypatch.setattr(
+            agenda_import_router,
+            "default_agenda_import_settings_path",
+            lambda: tmp_path / "settings.json",
+        )
+
+        def fail_save(self, settings):
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(AgendaSourceSettingsStore, "save", fail_save)
+        app, _ = _build(scopes=("setup_admin",))
+        response = TestClient(app).put(
+            "/api/staff/agenda-sources/settings",
+            json={
+                "source": "primegov",
+                "client_code": "longmont",
+            },
+        )
+        assert response.status_code == 503
+        assert "Check station storage" in response.json()["detail"]

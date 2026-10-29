@@ -237,6 +237,8 @@ FACTORY_PLUGIN: Mapping[str, str] = {
     "decodebin": "gstplayback.dll",
     "decodebin3": "gstplayback.dll",
     "uridecodebin": "gstplayback.dll",
+    # PNG rasters are decoded implicitly by decodebin for graphics/boards/EAS.
+    "pngdec": "gstpng.dll",
     "avdec_aac": "gstlibav.dll",
     "avdec_h264": "gstlibav.dll",
     "avenc_aac": "gstlibav.dll",
@@ -286,7 +288,7 @@ FACTORY_PLUGIN: Mapping[str, str] = {
     "hlssink3": "gsthlssink3.dll",
 }
 
-#: The 52 factories the product's pipelines cannot run without. Derived from
+#: The 56 factories the product's pipelines cannot run without. Derived from
 #: the spike's measured closure
 #: (`.agent-runs/native-windows/spike-gstreamer-bundle/evidence/elements-required.txt`)
 #: with deliberate corrections/additions: GPL `x264enc` is dropped (no-ship),
@@ -308,6 +310,7 @@ REQUIRED_FACTORIES = frozenset(
         "avdec_aac",
         "avdec_h264",
         "avenc_aac",
+        "pngdec",
         "capsfilter",
         "cccombiner",
         "ccconverter",

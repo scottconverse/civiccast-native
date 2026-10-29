@@ -1,0 +1,493 @@
+{
+  "schema_version": 1,
+  "reviewed": "2026-10-29",
+  "package": "gstreamer-libsoup",
+  "version": "3.8.1",
+  "source": {
+    "name": "libsoup",
+    "version": "3.8.1",
+    "license": "LGPL-2.0-or-later",
+    "url": "https://download.gnome.org/sources/libsoup/3.8/libsoup-3.8.1.tar.xz",
+    "bytes": 1621608,
+    "sha256": "5013dcef9136f6f861e6529fca578af50c1f52a39219027fb5aff652d1371a04"
+  },
+  "method": "Inspected exact build source, compared implementation files to official upstream tag byte-for-byte, verified fix commits are in tag history; reverse patch checks recorded where unchanged context permits. Later edits were inspected directly; null/false reverse checks are not represented as passes. No new runtime test, scanner run, patch or rebuild.",
+  "tag_commit": "2756d0076654b680d2021a08b9f2bd9d36d7ae1b",
+  "files": [
+    {
+      "path": "NEWS",
+      "sha256": "3092005985692655216ad02a0611f5b5172985a133082bb53c3cd760cf5f5040",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/auth/soup-auth-manager.c",
+      "sha256": "a4857027d8877d3f19bf9e6e726098bafa3ca8c680eef6d4a8fa5d4e33fefaa6",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/content-sniffer/soup-content-sniffer.c",
+      "sha256": "cec192ad872ba70007f74a22f8ae2c890d0ea6415608f3ec39bbce0ef111ba63",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/cookies/soup-cookie-jar.c",
+      "sha256": "91332feb34c864b03d82c5e56126aa263bd8203e6460c791341c9955255dc1f2",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/http1/soup-body-input-stream.c",
+      "sha256": "abb1da86c8d5602b8c75542865ae377b396c2f9fdbf12d30ba8e3f14e69a0c21",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/server/http1/soup-server-message-io-http1.c",
+      "sha256": "78777af0bf3d305b4aca49cddaf8c06cdd2c9da6f7bda1ec5e322c0c6096e50a",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/server/http2/soup-server-message-io-http2.c",
+      "sha256": "e0b6c81d40ecf580ca4491db4bfb4741679ad4f6a9e381d906cdb014ad639078",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/server/soup-auth-domain-digest.c",
+      "sha256": "49f0d4a423bba2d5a5e6705ff4776e65e7743c34bfaa8cafaa609018992b7044",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/server/soup-server-connection.c",
+      "sha256": "82731d63da50cf6c310a6bb0978acfa1e1c8bf5caa99efde2300b7e9d3632cca",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-filter-input-stream.c",
+      "sha256": "f712666f9fcf39d1f7a70647eaaa01d060f40b13204a3c4a32757e40c8c12588",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-headers.c",
+      "sha256": "80b09f3ef065afb98f512c5dd10e44081f8fa1516c802468e0e62dbf3337657e",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-message-headers-private.h",
+      "sha256": "e80ca24385423fda61d68327340f89314cb3dbe57976761b97251f23d51d6467",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-message-headers.c",
+      "sha256": "315dca3d693f7247ece514edddec75c5684ea62155c4658c8c666924cbfc6a01",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-message.c",
+      "sha256": "52a982a0f7cb9d20809308610df945be2359fa705e6b74ca80568cf3c2cb40a8",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-session.c",
+      "sha256": "2da3cd6890d79b3af3c11cb1a0740ad10e2c60f526a95d489e540294538c5a05",
+      "upstream_tag_bytes_equal": true
+    },
+    {
+      "path": "libsoup/soup-uri-utils.c",
+      "sha256": "77d21acf5f769a6e92a641a16f2754d162ec7b766e84189f98e8d1e66158fd5d",
+      "upstream_tag_bytes_equal": true
+    }
+  ],
+  "findings": [
+    {
+      "id": "CVE-2026-12548",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "The upstream fix bounds soup_headers_parse to positive lengths at most MAX_HEADERS_BUFFER_SIZE (256 KiB); the private header defines that bound. This is upstream issue 512 fix, not a claim that the parser ABI changed.",
+      "implementation": {
+        "path": "libsoup/soup-headers.c",
+        "line": 49
+      },
+      "upstream_fixes": [
+        {
+          "commit": "7334c38f1f6aa5e64207cb415cf2509838c52b37",
+          "subject": "Set a maximum size for the headers buffer",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "b1f49e4989f46e5fe003f884c4323515c3908ccfdab22371afadb8c216bc33c7",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/7334c38f1f6aa5e64207cb415cf2509838c52b37"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-12549",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "The later Range regression is fixed: suffix lengths exceeding the resource are clamped to start zero; ERANGE is handled before addition. Upstream explicitly closes issue 516.",
+      "implementation": {
+        "path": "libsoup/soup-message-headers.c",
+        "line": 1307
+      },
+      "upstream_fixes": [
+        {
+          "commit": "e82c13ba03defcee10f981ac964f4d570b21a251",
+          "subject": "message-headers: Fix Range parsing overflows and coalescing cost",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "cd364484f8b0bd3baf09f8ed22e6f7f9d3c9a08230332a9f640fcc274158fa9a",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/e82c13ba03defcee10f981ac964f4d570b21a251"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-1467",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "URL-decoded hostnames are validated character by character (with explicit IP and IDNA handling) before accepting the URI, preventing CRLF in the proxy Host value.",
+      "implementation": {
+        "path": "libsoup/soup-uri-utils.c",
+        "line": 254
+      },
+      "upstream_fixes": [
+        {
+          "commit": "167ef0c6817658c1a089c75c462482209e207db4",
+          "subject": "uri-utils: do host validation when checking if a GUri is valid",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "2e96b0b362badef1a5aa864be0f3e4601a0e8932a0d9235d9fd022faa5a5ab52",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/167ef0c6817658c1a089c75c462482209e207db4"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-1536",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Content-Disposition uses set_content_foo, whose final replacement is SOUP_HEADER_VALUE_UNTRUSTED; the common append rejects CR or LF. Filename sanitization is also present.",
+      "implementation": {
+        "path": "libsoup/soup-message-headers.c",
+        "line": 1818
+      },
+      "upstream_fixes": [
+        {
+          "commit": "5c1a2e9c06a834eb715f60265a877f5b882cc1b1",
+          "subject": "Always validate the headers value when coming from untrusted source",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "47cb195ba3a20d80bc1deafa6d5586df15f8e70d3692d10c9ca547c53a61e436",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/5c1a2e9c06a834eb715f60265a877f5b882cc1b1"
+        },
+        {
+          "commit": "9e1570c914fa6638913cec4e9dbd8aff11b8dab4",
+          "subject": "Sanitize filename of content disposition header values",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "94d45604db4224017536995d46cf6de7241e14e8c89d3c64e61db05a6276f9e3",
+          "implementation_reverse_patch_check": null,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/9e1570c914fa6638913cec4e9dbd8aff11b8dab4"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-1539",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Cross-origin redirect handling explicitly removes Proxy-Authorization as well as Authorization; later auth-manager cached-proxy origin scoping is retained.",
+      "implementation": {
+        "path": "libsoup/soup-session.c",
+        "line": null
+      },
+      "upstream_fixes": [
+        {
+          "commit": "98c1285d9d78662c38bf14b4a128af01ccfdb446",
+          "subject": "Also remove Proxy-Authorization header on cross origin redirect",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "87f9fd58e3ace0056e7d22f7f9ca9b0f43cacb071828eae4e27f58328a26101c",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/98c1285d9d78662c38bf14b4a128af01ccfdb446"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-1801",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Chunk-size lines are read with the literal CRLF boundary rather than accepting bare LF; missing/incomplete line delimiters are rejected.",
+      "implementation": {
+        "path": "libsoup/http1/soup-body-input-stream.c",
+        "line": 187
+      },
+      "upstream_fixes": [
+        {
+          "commit": "b9a1c0663ff8ab6e79715db4b35b54f560416ddd",
+          "subject": "Use CRLF as line boundary when parsing chunked enconding data",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "af7baff4f9844fb949a62c14a8ae39e6ff3a94ee34705546edf69e6bbbdd79b9",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/b9a1c0663ff8ab6e79715db4b35b54f560416ddd"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-2369",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Content sniffing checks that resource_length is nonzero before subtracting one, fixing the zero-length resource underflow (issue 498).",
+      "implementation": {
+        "path": "libsoup/content-sniffer/soup-content-sniffer.c",
+        "line": 527
+      },
+      "upstream_fixes": [
+        {
+          "commit": "b91bbd7d7888c85b17a8b33173caa806dff51681",
+          "subject": "sniffer: Handle potential underflow",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "ae6bfcd1e06cefec9371b3d3e5e71d16acfe59374f36228281c02d11d9e56653",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/b91bbd7d7888c85b17a8b33173caa806dff51681"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-2436",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "The TLS handshake completion error path does not disconnect a canceled operation, avoiding use of the destroyed server connection (issue 501).",
+      "implementation": {
+        "path": "libsoup/server/soup-server-connection.c",
+        "line": 453
+      },
+      "upstream_fixes": [
+        {
+          "commit": "e9b681a5b23f8259a5e29c5351a5284ae5cd1189",
+          "subject": "server-connection: check for cancellation in handshake callback",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "a62eda71a8b7e6ebf07238088fbe009e03d41babe0e394bae0fbb30b0a8ac98b",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/e9b681a5b23f8259a5e29c5351a5284ae5cd1189"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-2443",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "The current Range parser bounds overflowing starts, clamps overflowing ends and oversized suffixes, rejects end-before-start and unsatisfiable ranges, and caps/coalesces ranges. This includes the subsequent 12549 regression correction.",
+      "implementation": {
+        "path": "libsoup/soup-message-headers.c",
+        "line": 1297
+      },
+      "upstream_fixes": [
+        {
+          "commit": "e82c13ba03defcee10f981ac964f4d570b21a251",
+          "subject": "message-headers: Fix Range parsing overflows and coalescing cost",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "cd364484f8b0bd3baf09f8ed22e6f7f9d3c9a08230332a9f640fcc274158fa9a",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/e82c13ba03defcee10f981ac964f4d570b21a251"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-2708",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Duplicate Content-Length values must parse without overflow/trailing junk and be byte-identical; conflicting values are rejected. The later identical-duplicate allowance preserves this protection.",
+      "implementation": {
+        "path": "libsoup/soup-message-headers.c",
+        "line": 285
+      },
+      "upstream_fixes": [
+        {
+          "commit": "e032d3e9b0a27d10597398023532dd8f9b6654cf",
+          "subject": "Do not allow adding multiple content length values to headers",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "4339619a407bbc646d952853ee28bd6e58aea2e7dfca850ffedafa27cad6431e",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/e032d3e9b0a27d10597398023532dd8f9b6654cf"
+        },
+        {
+          "commit": "c9f892186110c9abf9291a14e01fbdacd9e7fa8a",
+          "subject": "message-headers: Keep duplicate Content-Length headers if identical",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "f1121a75af0deee5b33d83ede0f7072df1c942eef1b71ad0ccc3de04c92d042d",
+          "implementation_reverse_patch_check": null,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/c9f892186110c9abf9291a14e01fbdacd9e7fa8a"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-3099",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Server Digest auth tracks issued nonces with expiry and maximum nonce count under a mutex; unknown/expired/replayed counts are rejected and successful counts advance.",
+      "implementation": {
+        "path": "libsoup/server/soup-auth-domain-digest.c",
+        "line": 298
+      },
+      "upstream_fixes": [
+        {
+          "commit": "437c5d45daba48aa23b408dc9ac16d8b9ffdd64f",
+          "subject": "auth-domain-digest: Check nonce validity",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "99a9b96318d4fd841981c1bf0380ccb115af0e15fe73cbcef9d675cc2e7f95ae",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/437c5d45daba48aa23b408dc9ac16d8b9ffdd64f"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-3632",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Client URI hostnames pass strict is_host_valid validation; server Host values additionally reject controls, whitespace, percent encoding and URI delimiters before URI construction. This is source validation of both paths, not a blanket client-only exemption.",
+      "implementation": {
+        "path": "libsoup/soup-uri-utils.c",
+        "line": 254
+      },
+      "upstream_fixes": [
+        {
+          "commit": "167ef0c6817658c1a089c75c462482209e207db4",
+          "subject": "uri-utils: do host validation when checking if a GUri is valid",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "2e96b0b362badef1a5aa864be0f3e4601a0e8932a0d9235d9fd022faa5a5ab52",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/167ef0c6817658c1a089c75c462482209e207db4"
+        },
+        {
+          "commit": "51216512b2afcd2fca0e2467a31a32d0c19d8b81",
+          "subject": "server: Reject Host headers containing URI delimiters",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "948f23c5220a0b31f3db6af8eae968d04b4d382497b2de9479d235c92920605d",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/51216512b2afcd2fca0e2467a31a32d0c19d8b81"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-3633",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "HTTP methods must conform to RFC 9110 token syntax; constructors and method setter call method_is_valid, rejecting CRLF.",
+      "implementation": {
+        "path": "libsoup/soup-message.c",
+        "line": 3130
+      },
+      "upstream_fixes": [
+        {
+          "commit": "7f2013d874f005035f2245e382ec82823a439926",
+          "subject": "soup-message: Reject CRLF injection in HTTP method",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "0bef1441cf933adc0898873df284ded05281a0a026a0ab0df401b52b1a6a7409",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/7f2013d874f005035f2245e382ec82823a439926"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-3634",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Content-Type uses set_content_foo with SOUP_HEADER_VALUE_UNTRUSTED, reaching the common CR/LF rejection rather than bypassing validation.",
+      "implementation": {
+        "path": "libsoup/soup-message-headers.c",
+        "line": 1818
+      },
+      "upstream_fixes": [
+        {
+          "commit": "5c1a2e9c06a834eb715f60265a877f5b882cc1b1",
+          "subject": "Always validate the headers value when coming from untrusted source",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "47cb195ba3a20d80bc1deafa6d5586df15f8e70d3692d10c9ca547c53a61e436",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/5c1a2e9c06a834eb715f60265a877f5b882cc1b1"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-4271",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "The server HTTP/2 message I/O protects the nghttp2 session across reads/writes and defers destruction while protected; upstream explicitly closes issue 496.",
+      "implementation": {
+        "path": "libsoup/server/http2/soup-server-message-io-http2.c",
+        "line": null
+      },
+      "upstream_fixes": [
+        {
+          "commit": "489affa74c8a229b8a4dd541710d4a5debedb7b4",
+          "subject": "server: protect message io while reading and writing",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "2e3a3b015db83f3608b35c280fee6ac44ae6210491e0f2a49c59afdeeeb1ec84",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/489affa74c8a229b8a4dd541710d4a5debedb7b4"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-5119",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Cookie insertion is gated by allow_cookies_for_request, excluding HTTPS proxy CONNECT requests. The 3.8.1 follow-up releases the acquired connection reference without removing the gate.",
+      "implementation": {
+        "path": "libsoup/cookies/soup-cookie-jar.c",
+        "line": 899
+      },
+      "upstream_fixes": [
+        {
+          "commit": "b0626fff8538e3dd4a52f148d91c8348d51d64d1",
+          "subject": "cookies: do not send cookies to a HTTP proxy for a HTTPS request",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "0d9c3f8fcba2fb5223583d66bace37f10e04358e4de02d2141437e5654aa2dc7",
+          "implementation_reverse_patch_check": false,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/b0626fff8538e3dd4a52f148d91c8348d51d64d1"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-66337",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Boundary scanning is skipped when buffered bytes are shorter than the boundary, preventing unsigned subtraction underflow and client multipart over-read.",
+      "implementation": {
+        "path": "libsoup/soup-filter-input-stream.c",
+        "line": 320
+      },
+      "upstream_fixes": [
+        {
+          "commit": "f973bd140d5c9742a8db573b950c43cf5166ac1c",
+          "subject": "filter-input-stream: Fix underflow when less data than the boundary is buffered",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "5b12dc0b40b6c4588a63e442540554f81a69456c2cf90804056179a555644a25",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/f973bd140d5c9742a8db573b950c43cf5166ac1c"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-66338",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Chunk size requires a leading hex digit and rejects trailing non-hex data; whitespace, plus prefixes and malformed suffixes no longer pass the numeric parser.",
+      "implementation": {
+        "path": "libsoup/http1/soup-body-input-stream.c",
+        "line": 212
+      },
+      "upstream_fixes": [
+        {
+          "commit": "875e34cf70968ac2fcf210e8ebf4b7021999b3e5",
+          "subject": "body-input-stream: Require chunk-size to begin with a hex digit",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "533729f4314116d7d438d657991f7be26ffd65c40591532597999cb087df4a69",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/875e34cf70968ac2fcf210e8ebf4b7021999b3e5"
+        },
+        {
+          "commit": "96ac392b444d01bd5de1d1276b187c3ed49d048c",
+          "subject": "server: improve parsing of chunked request body",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "139becf87ca7a167bb1e2ef58613997ec1cab37cdb4ef280846f693da39b1ae1",
+          "implementation_reverse_patch_check": null,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/96ac392b444d01bd5de1d1276b187c3ed49d048c"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2026-66339",
+      "disposition": "fixed_in_exact_shipped_source",
+      "reason": "Proxy authentication is skipped for an established CONNECT tunnel and any Proxy-Authorization request header is cleared before sending to the origin.",
+      "implementation": {
+        "path": "libsoup/auth/soup-auth-manager.c",
+        "line": null
+      },
+      "upstream_fixes": [
+        {
+          "commit": "6ed1711ae498f91c78fc12d960f1298c32c5d01d",
+          "subject": "auth: Don't send Proxy-Authorization through an established tunnel",
+          "in_upstream_3_8_1_history": true,
+          "patch_sha256": "6e0e2e80ea2f4a0c5044ccb3dcf70439e03961513e6a09a281bff01f6ae5493c",
+          "implementation_reverse_patch_check": true,
+          "url": "https://gitlab.gnome.org/GNOME/libsoup/-/commit/6ed1711ae498f91c78fc12d960f1298c32c5d01d"
+        }
+      ]
+    }
+  ]
+}

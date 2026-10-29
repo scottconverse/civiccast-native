@@ -436,20 +436,29 @@ You should see the item in the **Agenda items** table. Use **Edit** on a row to 
 
 > **Known issue (beta.11):** The **Order** box starts at 0 every time. If you add a second item without changing it, the station refuses with "Another agenda item already occupies (agenda_id='…', order=0)." Change **Order** to the next free number (0, 1, 2, and so on) for each new item.
 
-> **Known issue (beta.11):** The timecode must be typed as seconds. The screen does not accept hours and minutes.
-
 ### Fill the agenda automatically
 
 The **Bulk actions** section has four ways to fill an agenda without typing each item.
 
 - **Sync from chapters** makes an item for each eligible *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). The result shows the number of source chapters, new items and skipped items with their reasons. Source chapter times are converted to the trimmed playback timeline: a marker at source 32 seconds with a 2-second trim-in becomes a 30-second agenda link. Markers outside the selected trim are omitted. Existing occupied positions are preserved; repeated synchronization does not duplicate them. If you change a trim after synchronization, review and update the existing agenda times before publishing; re-sync does not overwrite your agenda edits. A zero-new-item result therefore explains whether chapters were absent or their positions were already occupied.
 - **Import from doc (paste plain-text agenda, one item per line)**: paste the agenda text and click **Import**. Each non-blank line becomes one draft item. A leading number such as "3.a" or "VII" becomes the **Number**. It reads "Imported N item(s)." and the help line says "Taken literally, one item per line — nothing to review." Lines whose position already has an item are skipped.
-- **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." A PDF that is a scan of paper, with no text in it, finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
-- **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and import it. See the Known issue below.
+- **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." This direct upload action reads the PDF text layer and does not use the external-preview OCR workflow. A scan with no text layer finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
+- **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and preview it. See the setup and review steps below.
 
 > **Warning:** Importing a PDF or an external meeting into an agenda that is already **published** moves it back to **draft**. Review it and publish again.
 
-> **Known issue (beta.11):** The **Import from an external agenda system** block is shown on every station but is **switched off** unless your IT person turns it on. If it is off, **Find meetings** answers in a yellow banner: "Agenda import is not enabled. Set CIVICCAST_AGENDA_SOURCE to 'legistar', 'primegov', 'civicclerk', or 'js_portal' to turn it on." You cannot fix that from this screen. Ask your IT person. "Tenant / site code" is the short name your city has in that system (the screen's example is `longmont`). The JS-portal choice also needs an optional add-on; if it is missing, the screen says "JS-portal runtime: not installed." and **Find meetings** is grey.
+### Set up and review a PrimeGov meeting
+
+A station administrator opens **Agendas**, then **Agenda source setup**, chooses **Use Longmont / PrimeGov** (or PrimeGov and the municipality's **Tenant / site code**), then clicks **Save agenda source**. Public PrimeGov agendas need no password. Saving applies immediately and survives a restart; no service restart or environment editing is needed. Only a setup administrator can save these settings. Records clerks and meeting operators can then use the saved defaults.
+
+Choose or create the recording's agenda, set the meeting date filter and click **Find meetings**. Select the intended meeting explicitly. If only part of the meeting list could be retrieved, read the warning before selecting. A connection error does not mean there are no meetings: check the tenant, date and network connection, then retry. Other supported providers remain available; JS-rendered portals still require their optional runtime.
+
+PrimeGov uses an agenda first when available. Choose the packet option when you need the full meeting packet. Start the preview and leave it to read the retained original. Large packets and scanned pages can take minutes. **Cancel** stops processing without importing items; **Resume** reuses completed pages from the same retained original. A changed document gets its own revision.
+
+Review the numbered titles, parent/child order and warnings. Load the **original PDF** and use the source-page links to inspect the matching pages. Loading a large original may take time. Previewing does not write agenda items. Only **Confirm** applies a complete preview; partial, failed or cancelled previews cannot be confirmed. Review the resulting draft and publish separately. Import confirmation can reopen a published agenda as a draft.
+
+RC1 includes offline English OCR for scanned pages. It does not send page images to a provider. If text extraction and OCR cannot recover a page within the processing limits, the preview remains incomplete. Keep the original, inspect the indicated pages and obtain a legible replacement or enter reviewed items manually. A warning is not a claim that an unreadable page was recovered.
+
 
 > **For IT staff:** turning on agenda import is covered in [Part II, Integrations](#ch-integrations).
 
