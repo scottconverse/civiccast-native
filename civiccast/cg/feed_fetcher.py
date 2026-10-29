@@ -27,13 +27,14 @@ import hashlib
 import ipaddress
 import json
 import socket
-import xml.etree.ElementTree as ET  # parsing is DTD-guarded by _reject_dtd
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import cast
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
 from civiccast.cg.board_models import CgFeedSource
 from civiccast.cg.board_store import CgBoardStore
@@ -141,8 +142,7 @@ def _clip(value: str | None, length: int) -> str | None:
 
 
 def _reject_dtd(text: str) -> None:
-    # Guard against XML entity-expansion (billion-laughs) and external-entity
-    # tricks before handing the document to ElementTree.
+    # Early diagnostic only; the parser below rejects DTDs at any input offset.
     head = text[:4096].upper()
     if "<!DOCTYPE" in head or "<!ENTITY" in head:
         raise ValueError("feed XML with a DTD/entity declaration is rejected")
@@ -183,7 +183,7 @@ def parse_rss(text: str) -> list[CgFeedItem]:
     """Parse RSS ``<item>`` or Atom ``<entry>`` elements into feed items."""
 
     _reject_dtd(text)
-    root = ET.fromstring(text)  # noqa: S314 - DTD-guarded by _reject_dtd  # nosec B314
+    root = safe_xml_fromstring(text, forbid_dtd=True, forbid_entities=True)
     items: list[CgFeedItem] = []
 
     rss_items = root.findall(".//item")

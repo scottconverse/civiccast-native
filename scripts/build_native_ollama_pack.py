@@ -44,7 +44,7 @@ from scripts.provision_native_runtime_dependencies import (  # noqa: E402
 )
 
 OLLAMA_RUNTIME_COMPONENT: Final[str] = "native-ollama-runtime"
-OLLAMA_VERSION: Final[str] = "0.30.6"
+OLLAMA_VERSION: Final[str] = "0.40.13"
 OLLAMA_SPDX_LICENSE: Final[str] = "MIT"
 OLLAMA_EXECUTABLES: Final[tuple[str, ...]] = ("ollama.exe",)
 _REPARSE_POINT: Final[int] = 0x400

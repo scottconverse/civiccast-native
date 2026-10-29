@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "components": {
+    "zlib": {
+      "version": "1.3.2.1",
+      "source": {
+        "version": "1.3.2.1",
+        "directory": "zlib-6be4bcda3da1d28b18a081c884b141a88a7cb84d",
+        "url": "https://codeload.github.com/madler/zlib/tar.gz/6be4bcda3da1d28b18a081c884b141a88a7cb84d",
+        "sha256": "791d3769f92102b4b83a790971d400c8440e0cbe4823276319a1bdad32551a15"
+      }
+    },
+    "libpng": {
+      "version": "1.6.57",
+      "source": {
+        "version": "1.6.57",
+        "directory": "libpng-1.6.57",
+        "url": "https://codeload.github.com/pnggroup/libpng/tar.gz/refs/tags/v1.6.57",
+        "sha256": "4cbb7b0746edc1683c9581b373365e955133b7f1243f171b7d1535b4415dfedb"
+      }
+    },
+    "libxml2": {
+      "version": "2.15.4",
+      "source": {
+        "version": "2.15.4",
+        "directory": "libxml2-2.15.4",
+        "url": "https://download.gnome.org/sources/libxml2/2.15/libxml2-2.15.4.tar.xz",
+        "sha256": "98087fd181d9070724f3fbc65c7377db03038eb92bd882374daff44940138821"
+      }
+    },
+    "harfbuzz": {
+      "version": "15.0.0",
+      "source": {
+        "version": "15.0.0",
+        "directory": "harfbuzz-15.0.0",
+        "url": "https://github.com/harfbuzz/harfbuzz/releases/download/15.0.0/harfbuzz-15.0.0.tar.xz",
+        "sha256": "968536e9abd782f07f7954044c0c4020199fcdd39b41d221ec42d2a3be4a44df"
+      }
+    },
+    "sqlite": {
+      "version": "3.54.1",
+      "source": {
+        "version": "3.54.1",
+        "directory": "sqlite-amalgamation-3540100",
+        "url": "https://sqlite.org/2026/sqlite-amalgamation-3540100.zip",
+        "sha256": "0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9"
+      }
+    },
+    "security-libraries-build": {
+      "version": "1",
+      "sha256": "731d942dd38e732c758f2edcded3b21b68e3c583308952250dcc5ec0aa4ad18e"
+    }
+  },
+  "files": {
+    "z-1.dll": {
+      "sha256": "438af8cc37c493a8ab83845a97e23fc442a5f359d0a78627eda2da9305ed2f51",
+      "bytes": 224768,
+      "component": "zlib",
+      "license": "Zlib AND LicenseRef-Microsoft-VCRedist",
+      "gstreamer": "bin/z-1.dll",
+      "postgres": "bin/zlib1.dll"
+    },
+    "png16.dll": {
+      "sha256": "f7bd62b253d8cf2d7ae010c6cab9c408a91c02f447abc6b55af50a44338a630e",
+      "bytes": 368640,
+      "component": "libpng",
+      "license": "Libpng AND LicenseRef-Microsoft-VCRedist",
+      "gstreamer": "bin/png16.dll"
+    },
+    "libxml2.dll": {
+      "sha256": "c875973d99e8cc71131dc54908e95a3a058e2f1d1f960040806e7f8c316cbb98",
+      "bytes": 1413120,
+      "component": "libxml2",
+      "license": "MIT AND LicenseRef-Microsoft-VCRedist",
+      "postgres": "bin/libxml2.dll"
+    },
+    "harfbuzz.dll": {
+      "sha256": "e8541d81d0043157f49ebd04cb2319e242668790ebda0339e5017ff496944ff3",
+      "bytes": 1546752,
+      "component": "harfbuzz",
+      "license": "MIT AND LicenseRef-Microsoft-VCRedist",
+      "gstreamer": "bin/harfbuzz.dll"
+    },
+    "sqlite3-0.dll": {
+      "sha256": "59a953b939a1f99fd7f4e7e6b82c03c0a03c548da3bb721bfdad33def5236c37",
+      "bytes": 1801728,
+      "component": "sqlite",
+      "license": "blessing AND LicenseRef-Microsoft-VCRedist",
+      "gstreamer": "bin/sqlite3-0.dll"
+    },
+    "zlib-LICENSE.txt": {
+      "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+      "bytes": 1002,
+      "component": "zlib",
+      "license": "Zlib",
+      "gstreamer": "licenses/security-libs/zlib-LICENSE.txt",
+      "postgres": "licenses/security-libs/zlib-LICENSE.txt"
+    },
+    "libpng-LICENSE.txt": {
+      "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526",
+      "bytes": 5345,
+      "component": "libpng",
+      "license": "Libpng",
+      "gstreamer": "licenses/security-libs/libpng-LICENSE.txt"
+    },
+    "libxml2-LICENSE.txt": {
+      "sha256": "5d4873884a890122a4b9b20ad56ac6f7da1d796a5bfcf04a427970ac96217626",
+      "bytes": 1314,
+      "component": "libxml2",
+      "license": "MIT",
+      "postgres": "licenses/security-libs/libxml2-LICENSE.txt"
+    },
+    "harfbuzz-LICENSE.txt": {
+      "sha256": "ba8f810f2455c2f08e2d56bb49b72f37fcf68f1f4fade38977cfd7372050ad64",
+      "bytes": 1971,
+      "component": "harfbuzz",
+      "license": "MIT",
+      "gstreamer": "licenses/security-libs/harfbuzz-LICENSE.txt"
+    },
+    "sqlite-LICENSE.txt": {
+      "sha256": "592db1199aab67aafe4515db9808b420db122083807c5329b2f061951e79acbe",
+      "bytes": 244,
+      "component": "sqlite",
+      "license": "blessing",
+      "gstreamer": "licenses/security-libs/sqlite-LICENSE.txt"
+    },
+    "LicenseRef-Microsoft-VCRedist.txt": {
+      "sha256": "84e6678fc347644a24c605d172355f7529c07243a9a10152d939b1ffafcf535d",
+      "bytes": 1965,
+      "component": "security-libraries-build",
+      "license": "LicenseRef-Microsoft-VCRedist",
+      "gstreamer": "licenses/security-libs/LicenseRef-Microsoft-VCRedist.txt",
+      "postgres": "licenses/security-libs/LicenseRef-Microsoft-VCRedist.txt"
+    },
+    "provenance.json": {
+      "sha256": "f7a7a9e64f3f122a09b204b17ddbefccdefa0d5482c3a7dcd4bc96132157656a",
+      "bytes": 2685,
+      "component": "security-libraries-build",
+      "license": "Apache-2.0",
+      "gstreamer": "licenses/security-libs/provenance.json",
+      "postgres": "licenses/security-libs/provenance.json"
+    }
+  },
+  "archive": {
+    "filename": "civiccast-rc1-security-libraries-windows-x64.zip",
+    "sha256": "6545e5f76472135310815f68296b427a8efc9810ba28a4c4c919241cfd04e683",
+    "bytes": 2666766
+  }
+}

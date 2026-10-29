@@ -14,7 +14,10 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from xml.etree import ElementTree as ET  # parsing is hardened below (defensive try/except)
+from xml.etree import ElementTree as ET
+
+from defusedxml.common import DefusedXmlException
+from defusedxml.ElementTree import fromstring as safe_xml_fromstring
 
 from civiccast.eas.models import (
     EasCapAlert,
@@ -72,8 +75,8 @@ def parse_cap_xml(xml_text: str, *, source_id: str) -> list[EasCapAlert]:
     first info for the display fields and union all ``<area>`` geocodes. Returns ``[]``
     for an empty/garbage document (the worker maps that to source-health-down)."""
     try:
-        root = ET.fromstring(xml_text)  # noqa: S314 — feeds are operator-configured endpoints  # nosec B314
-    except ET.ParseError:
+        root = safe_xml_fromstring(xml_text, forbid_dtd=True, forbid_entities=True)
+    except (ET.ParseError, DefusedXmlException):
         return []
     ns = _CAP12_NS if _CAP12_NS in (root.tag or "") else _CAP11_NS
     if "alert" not in (root.tag or ""):

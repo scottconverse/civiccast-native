@@ -335,7 +335,7 @@ is not included in the published Beta 19 package.
 
 ## External agenda import
 
-The agenda screen can look up a meeting in an outside agenda system and import it. This is **off by default**. To turn it on, set `CIVICCAST_AGENDA_SOURCE` to `legistar`, `primegov`, `civicclerk` or `js_portal`, then restart the service. The other settings are `CIVICCAST_AGENDA_SOURCE_CLIENT`, `CIVICCAST_AGENDA_SOURCE_TOKEN` and `CIVICCAST_AGENDA_SOURCE_TIMEOUT_S` (default 10 seconds). A value other than those (or `off`) is rejected with a message listing the allowed values.
+Agenda import starts disabled. A setup administrator enables it in **Agendas**, then **Agenda source setup**, chooses the provider and saves the tenant/site code. **Use Longmont / PrimeGov** supplies the Longmont defaults; **Save agenda source** persists them and applies immediately without a restart. Existing environment-based settings remain a compatibility fallback until settings are saved. Legacy Legistar credentials remain protected and are never returned in the setup response. Public PrimeGov requires no credentials. Staff must still choose the meeting and confirm its complete preview; setup never imports or publishes records automatically.
 
 The tenant or site code that staff type on the screen must be 1 to 64 letters, digits, hyphens or underscores. The portal address for a `js_portal` source must not carry a user name or password, and must not point at a private or local address. A `js_portal` source also needs an optional add-on; the screen reports "JS-portal runtime: not installed." when it is missing.
 

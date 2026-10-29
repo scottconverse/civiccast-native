@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-beta.20"
+    "version": "1.0.0-rc.1"
   },
   "paths": {
     "/health": {
@@ -25951,6 +25951,106 @@
         ]
       }
     },
+    "/api/staff/agenda-sources/settings": {
+      "get": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Read Agenda Source Settings",
+        "operationId": "read_agenda_source_settings_api_staff_agenda_sources_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaSourceSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Save Agenda Source Settings",
+        "operationId": "save_agenda_source_settings_api_staff_agenda_sources_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaSourceSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaSourceSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/agenda/{agenda_id}/import-external": {
       "post": {
         "tags": [
@@ -35255,6 +35355,124 @@
           "content"
         ],
         "title": "AgendaMinutesEditRequest"
+      },
+      "AgendaSourceSettings": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "off",
+              "legistar",
+              "primegov",
+              "civicclerk",
+              "js_portal"
+            ],
+            "title": "Source",
+            "default": "off"
+          },
+          "client_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Code"
+          },
+          "portal_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Url"
+          },
+          "portal_vendor_hint": {
+            "type": "string",
+            "enum": [
+              "civicplus",
+              "granicus",
+              "legistar_js",
+              "primegov_js",
+              "generic"
+            ],
+            "title": "Portal Vendor Hint",
+            "default": "generic"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout Seconds",
+            "default": 10.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AgendaSourceSettings"
+      },
+      "AgendaSourceSettingsUpdate": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "off",
+              "legistar",
+              "primegov",
+              "civicclerk",
+              "js_portal"
+            ],
+            "title": "Source",
+            "default": "off"
+          },
+          "client_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Code"
+          },
+          "portal_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Url"
+          },
+          "portal_vendor_hint": {
+            "type": "string",
+            "enum": [
+              "civicplus",
+              "granicus",
+              "legistar_js",
+              "primegov_js",
+              "generic"
+            ],
+            "title": "Portal Vendor Hint",
+            "default": "generic"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout Seconds",
+            "default": 10.0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AgendaSourceSettingsUpdate"
       },
       "AiDefaultSelection": {
         "properties": {

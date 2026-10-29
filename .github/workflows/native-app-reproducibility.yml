@@ -8,6 +8,7 @@ on:
       - "native-windows-build-toolchain.lock.json"
       - "native-windows-ollama-models.lock.json"
       - "native-windows-runtime-dependencies.lock.json"
+      - "native-windows-ocr.lock.json"
       - "pyproject.toml"
       - "uv.lock"
       - "README.md"
@@ -37,7 +38,51 @@ permissions:
   contents: read
 
 jobs:
+  stage-reviewed-inputs:
+    name: Transfer verified reviewed inputs
+    # Never check out or execute PR source on the internal runner. Forks cannot use it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ${{ fromJSON('["self-hosted","windows","sandbox-lab"]') }}
+    timeout-minutes: 10
+    concurrency:
+      group: sandbox-lab
+      cancel-in-progress: false
+    steps:
+      - name: Copy and independently verify immutable mirror inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mirror = 'C:\CivicCastTester\runtime-artifact-mirror'
+          $destination = Join-Path $env:RUNNER_TEMP 'native-app-reviewed-inputs'
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          $inputs = @(
+            @{ Name = 'python-3.12.16-civiccast-embed-amd64.zip'; Bytes = 11474063; SHA256 = 'b06074f51101293e2d81059dde190ba9325665e926e4e2a16c0e3916c49be9db' },
+            @{ Name = 'av-18.0.0-cp311-abi3-win_amd64.whl'; Bytes = 4348926; SHA256 = '5ab3fae3f85d4121919f70643e026452eb2a678b4a3f557b9ca487724c1399f0' }
+          )
+          foreach ($inputFile in $inputs) {
+            $source = Join-Path $mirror $inputFile.Name
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) { throw "Reviewed mirror input missing: $source. Stage the reviewed file before retrying." }
+            $target = Join-Path $destination $inputFile.Name
+            Copy-Item -LiteralPath $source -Destination $target
+            if ((Get-Item -LiteralPath $target).Length -ne $inputFile.Bytes) { throw "Reviewed input size mismatch: $target" }
+            $actual = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $inputFile.SHA256) { throw "Reviewed input SHA-256 mismatch: $target" }
+          }
+      - name: Transfer reviewed input bytes to hosted build
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-app-reviewed-inputs
+          path: |
+            ${{ runner.temp }}/native-app-reviewed-inputs/python-3.12.16-civiccast-embed-amd64.zip
+            ${{ runner.temp }}/native-app-reviewed-inputs/av-18.0.0-cp311-abi3-win_amd64.whl
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   repeat-build:
+    needs: stage-reviewed-inputs
     name: Two independent Windows workspaces
     # workflow-cost: windows-pr-justification -- native payload byte equality requires Windows tooling.
     runs-on: windows-latest
@@ -78,42 +123,46 @@ jobs:
             --output toolchain `
             --msvc-install msvc-build-tools
 
-      - name: Acquire pinned payload interpreter
-        shell: pwsh
-        run: |
-          $destination = "python-3.12.10-embed-amd64.zip"
-          $url = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
-          Invoke-WebRequest -Uri $url -OutFile $destination
-          $size = (Get-Item -LiteralPath $destination).Length
-          if ($size -ne 11133606) {
-            throw "Embeddable Python size $size does not match reviewed 11133606"
-          }
-          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash.ToLowerInvariant()
-          $expected = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
-          if ($actual -ne $expected) {
-            throw "Embeddable Python SHA-256 $actual does not match reviewed $expected"
-          }
+      - name: Download reviewed inputs from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: native-app-reviewed-inputs
+          path: reviewed-inputs
 
-      - name: Reuse the exact pinned PyAV wheel from an existing release
-        timeout-minutes: 10
+      - name: Recheck source pins and embedded provenance on hosted runner
         shell: pwsh
-        working-directory: workspace-a
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REVIEWED_RELEASE: v1.0.0-beta.20
-          REVIEWED_WHEEL_NAME: av-18.0.0-cp311-abi3-win_amd64.whl
         run: |
-          $ErrorActionPreference = 'Stop'
-          $reuse = Join-Path $env:RUNNER_TEMP 'reviewed-pyav-reuse'
-          New-Item -ItemType Directory -Path $reuse | Out-Null
-          # The exact reviewed wheel is published as its own small provenance asset on
-          # that release (see docs/handoff/BUILD-ASSETS.md). It is not part of the
-          # installable kit, so this reuse path never depends on a mutable product pack.
-          gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern $env:REVIEWED_WHEEL_NAME --dir $reuse
-          if ($LASTEXITCODE -ne 0) { throw 'Reviewed PyAV wheel asset download failed.' }
-          python -c "import ast,hashlib,pathlib,sys;_MATCH=lambda n,name:(isinstance(n,ast.AnnAssign) and isinstance(n.target,ast.Name) and n.target.id==name) or (isinstance(n,ast.Assign) and len(n.targets)==1 and isinstance(n.targets[0],ast.Name) and n.targets[0].id==name);_CONST=lambda t,name:next(ast.literal_eval(n.value) for n in t.body if _MATCH(n,name));app=ast.parse(pathlib.Path('scripts/build_native_app_payload.py').read_text(encoding='utf-8'));pyav=ast.parse(pathlib.Path('scripts/build_native_pyav_wheel.py').read_text(encoding='utf-8'));wheel_name=_CONST(app,'REVIEWED_PYAV_WHEEL_NAME');wheel_bytes=_CONST(pyav,'EXPECTED_WHEEL_BYTES');wheel_sha=_CONST(pyav,'EXPECTED_WHEEL_SHA256');p=pathlib.Path(sys.argv[1])/wheel_name;assert p.is_file(),p;data=p.read_bytes();assert len(data)==wheel_bytes and hashlib.sha256(data).hexdigest()==wheel_sha,'Reviewed wheel identity mismatch'" $reuse
-          if ($LASTEXITCODE -ne 0) { throw 'Published wheel asset does not match the unchanged reviewed pin.' }
-          "CIVICCAST_REVIEWED_PYAV_WHEEL=$reuse\av-18.0.0-cp311-abi3-win_amd64.whl" | Out-File $env:GITHUB_ENV -Encoding utf8 -Append
+          @'
+          import ast, hashlib, json, pathlib, runpy, zipfile
+          root = pathlib.Path('workspace-a')
+          def constant(path, name):
+              tree = ast.parse((root / path).read_text(encoding='utf-8'))
+              for node in tree.body:
+                  targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets if isinstance(node, ast.Assign) else []
+                  if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                      return ast.literal_eval(node.value)
+              raise ValueError(f'Missing reviewed constant: {name}')
+          app = 'civiccast/native/app_payload.py'
+          runtime = 'civiccast/native/python_runtime.py'
+          pyav = runpy.run_path(str(root / 'scripts/build_native_pyav_wheel.py'))
+          inputs = pathlib.Path('reviewed-inputs').resolve()
+          interpreter = inputs / 'python-3.12.16-civiccast-embed-amd64.zip'
+          wheel = inputs / 'av-18.0.0-cp311-abi3-win_amd64.whl'
+          for path, size, digest in (
+              (interpreter, constant(app, 'INTERPRETER_ZIP_BYTES'), constant(app, 'INTERPRETER_SHA256')),
+              (wheel, pyav['EXPECTED_WHEEL_BYTES'], pyav['EXPECTED_WHEEL_SHA256']),
+          ):
+              data = path.read_bytes()
+              assert len(data) == size and hashlib.sha256(data).hexdigest() == digest, f'Reviewed input identity mismatch: {path}'
+          with zipfile.ZipFile(interpreter) as archive:
+              provenance = archive.read(constant(runtime, 'PROVENANCE_PATH'))
+              assert hashlib.sha256(provenance).hexdigest() == constant(runtime, 'PROVENANCE_SHA256'), 'Interpreter provenance mismatch'
+          with zipfile.ZipFile(wheel) as archive:
+              assert json.loads(archive.read(pyav['_PROVENANCE'])) == pyav['ffmpeg_provenance'](), 'PyAV source/security-patch provenance mismatch'
+          with pathlib.Path(__import__('os').environ['GITHUB_ENV']).open('a', encoding='utf-8') as env:
+              env.write(f'CIVICCAST_INTERPRETER_ZIP={interpreter}\nCIVICCAST_REVIEWED_PYAV_WHEEL={wheel}\n')
+          '@ | python -I -B -
+          if ($LASTEXITCODE -ne 0) { throw 'Reviewed input or provenance verification failed.' }
 
       - name: Build twice and require byte equality
         shell: pwsh
@@ -128,7 +177,7 @@ jobs:
             --scratch-a scratch-a `
             --scratch-b scratch-b `
             --toolchain toolchain `
-            --interpreter-zip python-3.12.10-embed-amd64.zip `
+            --interpreter-zip "$env:CIVICCAST_INTERPRETER_ZIP" `
             --reviewed-pyav-wheel "$env:CIVICCAST_REVIEWED_PYAV_WHEEL" `
             --receipt evidence/native-app-reproducibility.json
 

@@ -34,16 +34,40 @@ def main(argv: list[str]) -> int:
 
     report_path = Path(argv[1])
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    dependencies = report.get("dependencies")
+    if not isinstance(dependencies, list) or not dependencies:
+        print(
+            "pip-audit did not return a dependency scan; refusing an empty/error report.",
+            file=sys.stderr,
+        )
+        return 2
     allowlist = load_allowlist()
 
     unallowed: list[str] = []
-    for dependency in report.get("dependencies", []):
+    audited_count = 0
+    for dependency in dependencies:
+        if (
+            dependency.get("name") == "civiccast"
+            and dependency.get("skip_reason") == "distribution marked as editable"
+            and not dependency.get("vulns")
+        ):
+            # This repository's own editable source has no published PyPI release
+            # to audit. Its code is covered by the source checks; no third-party
+            # skip or vulnerability is permitted by this exception.
+            continue
+        if "skip_reason" in dependency or "vulns" not in dependency:
+            print(f"pip-audit did not audit {dependency.get('name', '?')}", file=sys.stderr)
+            return 2
+        audited_count += 1
         package = dependency.get("name", "")
         for vuln in dependency.get("vulns", []):
             vuln_id = vuln.get("id", "")
             if (package, vuln_id) not in allowlist:
                 unallowed.append(f"{package} {dependency.get('version', '?')}: {vuln_id}")
 
+    if audited_count == 0:
+        print("pip-audit did not audit any third-party dependencies.", file=sys.stderr)
+        return 2
     if unallowed:
         print("pip-audit found findings not in security/pip-audit-allowlist.json:", file=sys.stderr)
         for line in unallowed:

@@ -81,6 +81,7 @@ from civiccast.native.app_payload import (  # noqa: E402
     CIVICCAST_CONSOLE_LAUNCHERS,
     CIVICCAST_DISTRIBUTION,
     CIVICCAST_RETAINED_WHEEL_PATH,
+    EMBEDDED_FFMPEG_BINARY_LICENSE,
     EMBEDDED_FFMPEG_LICENSE,
     INTERPRETER_DISTRIBUTION,
     INTERPRETER_LICENSE,
@@ -111,6 +112,7 @@ from civiccast.native.whistle_assets import (  # noqa: E402
     WhistleAssetError,
     stage_engine_library,
 )
+from scripts.build_native_ocr import stage_offline_ocr  # noqa: E402
 from scripts.build_native_pyav_wheel import (  # noqa: E402
     EXPECTED_WHEEL_BYTES as REVIEWED_PYAV_WHEEL_BYTES,
 )
@@ -130,7 +132,9 @@ DEFAULT_WHISTLE_ENGINE_CACHE = ROOT / "build" / "native-whistle-cache"
 #: Where the pinned interpreter zip is cached (git-ignored). The build verifies
 #: its bytes against INTERPRETER_SHA256 before extracting -- a cached file with
 #: the wrong hash is refused, so the cache can never poison the payload.
-DEFAULT_INTERPRETER_ZIP = ROOT / "build" / "native-app-cache" / "python-3.12.10-embed-amd64.zip"
+DEFAULT_INTERPRETER_ZIP = (
+    ROOT / "build" / "native-app-cache" / "python-3.12.16-civiccast-embed-amd64.zip"
+)
 
 REQUIRED_RUNTIME_IMPORTS = frozenset(
     {
@@ -708,8 +712,9 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
     """
     if not zip_path.is_file():
         _fail(
-            f"interpreter zip not found at {zip_path}. Download it from "
-            f"{INTERPRETER_SOURCE_URL} (cached, git-ignored) before building."
+            f"interpreter zip not found at {zip_path}. Provision the reviewed source-built "
+            "archive from the local runtime-artifact-mirror; do not download a source tarball "
+            "as an embeddable archive."
         )
     actual = _sha256_file(zip_path)
     if actual != INTERPRETER_SHA256:
@@ -721,7 +726,12 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
     if size != INTERPRETER_ZIP_BYTES:
         _fail(f"interpreter zip size mismatch: expected {INTERPRETER_ZIP_BYTES}, got {size}")
 
+    from civiccast.native.python_runtime import verify_runtime_files
+
     with zipfile.ZipFile(zip_path) as archive:
+        problems = verify_runtime_files(archive.read)
+        if problems:
+            _fail("interpreter provenance: " + "; ".join(problems))
         archive.extractall(out)
 
     # Make the site-packages we are about to populate importable. The default
@@ -741,7 +751,7 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
     lines = ["import site" if line.strip() == "#import site" else line for line in lines]
     if "import site" not in [line.strip() for line in lines]:
         lines.append("import site")
-    pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    pth.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     (out / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
 
 
@@ -2042,7 +2052,10 @@ def render_app_license_bom(entries: Sequence[AppFileEntry]) -> str:
     for entry in ordered:
         component = entry.distribution
         version = entry.version
-        if entry.distribution == "av" and entry.license == EMBEDDED_FFMPEG_LICENSE:
+        if entry.distribution == "av" and entry.license in (
+            EMBEDDED_FFMPEG_LICENSE,
+            EMBEDDED_FFMPEG_BINARY_LICENSE,
+        ):
             component = "av (embedded FFmpeg)"
             version = component_version_for_payload_path(
                 entry.distribution,
@@ -2162,6 +2175,7 @@ def build(
         msvc_runtime.resolve() if msvc_runtime is not None else locate_msvc_runtime(),
     )
     external_license_index = place_external_license_artifacts(out)
+    external_license_index.update(stage_offline_ocr(out, scratch / "offline-ocr"))
     external_license_index.update(place_whistle_engine(site_packages))
     print("      Binding the required signed large-v3 caption-pack contract ...")
     runtime_report = run_payload_runtime_probe(out)

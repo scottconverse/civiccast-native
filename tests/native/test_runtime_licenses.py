@@ -43,12 +43,17 @@ def test_ffmpeg_libs_resolve_to_lgpl_from_direct_runtime_probe() -> None:
     # avutil_license()/avcodec_license()/avformat_license()/avfilter_license()
     # all returned "LGPL version 2.1 or later" when queried directly against
     # the shipped DLLs (evidence memo, FFmpeg section).
-    assert classify_shipped_file("bin/avutil-59.dll") == "LGPL-2.1-or-later"
-    assert classify_shipped_file("bin/avcodec-61.dll") == "LGPL-2.1-or-later"
-    assert classify_shipped_file("bin/avformat-61.dll") == "LGPL-2.1-or-later"
-    assert classify_shipped_file("bin/avfilter-10.dll") == "LGPL-2.1-or-later"
-    assert classify_shipped_file("bin/swresample-5.dll") == "LGPL-2.1-or-later"
-    assert classify_shipped_file("bin/swscale-8.dll") == "LGPL-2.1-or-later"
+    # RC1's minimal same-ABI build also links the Microsoft CRT statically.
+    expected = "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist"
+    for name in (
+        "avutil-59.dll",
+        "avcodec-61.dll",
+        "avformat-61.dll",
+        "avfilter-10.dll",
+        "swresample-5.dll",
+        "swscale-8.dll",
+    ):
+        assert classify_shipped_file(f"bin/{name}") == expected
 
 
 def test_gstreamer_plugin_dlls_resolve_per_direct_plugin_sweep() -> None:

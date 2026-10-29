@@ -708,14 +708,18 @@ def reuse_station_bundle(
     signing_key_id: str,
     product_version: str,
     channel: str,
+    signing_private_key: Ed25519PrivateKey | None = None,
+    compatible_core: str | None = None,
+    created_epoch: int | None = None,
 ) -> dict[str, object]:
-    """Verify and link a complete unchanged local bundle without provisioning."""
+    """Verify local model packs; regenerate signed core/index for a new version."""
+    compatible_core = compatible_core or product_version
     index = verify_station_media(
         source / STATION_INDEX_FILENAME,
         public_key=public_key,
         expected_channel=channel,
-        expected_product_version=product_version,
-        expected_compatible_core=product_version,
+        expected_product_version=product_version if signing_private_key is None else None,
+        expected_compatible_core=compatible_core if signing_private_key is None else None,
         expected_signing_key_id=signing_key_id,
     )
     source = index.path.parent
@@ -723,9 +727,15 @@ def reuse_station_bundle(
     # hashes, stable identities, and current pinned model/Whistle contracts.
     for pack in index.packs:
         identity = (
-            product_version if pack.component == "core" else STATION_MODEL_PACK_PRODUCT_VERSION
+            index.product_version
+            if pack.component == "core"
+            else STATION_MODEL_PACK_PRODUCT_VERSION
         )
-        core = product_version if pack.component == "core" else STATION_MODEL_PACK_COMPATIBLE_CORE
+        core = (
+            index.compatible_core
+            if pack.component == "core"
+            else STATION_MODEL_PACK_COMPATIBLE_CORE
+        )
         verify_native_pack(
             source / pack.filename,
             public_key=public_key,
@@ -733,6 +743,16 @@ def reuse_station_bundle(
             expected_product_version=identity,
             expected_compatible_core=core,
             expected_signing_key_id=signing_key_id,
+        )
+    regenerate = (
+        index.product_version != product_version or index.compatible_core != compatible_core
+    )
+    if regenerate and (
+        signing_private_key is None
+        or signing_private_key.public_key().public_bytes_raw() != public_key.public_bytes_raw()
+    ):
+        raise StationBundleBuildError(
+            "cross-version reuse requires the trusted signing private key"
         )
     output_dir = output_dir.expanduser().resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -743,9 +763,50 @@ def reuse_station_bundle(
     temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.reuse-", dir=output_dir.parent))
     try:
         for pack in index.packs:
+            if regenerate and pack.component == "core":
+                continue
             # Explicit same-volume reuse; do not silently duplicate tens of GB.
             os.link(source / pack.filename, temporary / pack.filename)
-        shutil.copyfile(index.path, temporary / STATION_INDEX_FILENAME)
+        if regenerate:
+            assert signing_private_key is not None
+            core_sources = _core_placeholder_sources(temporary, product_version=product_version)
+            build_native_pack(
+                output=temporary / "core.ccpack",
+                component="core",
+                product_version=product_version,
+                compatible_core=compatible_core,
+                sources=core_sources,
+                signing_private_key=signing_private_key,
+                signing_key_id=signing_key_id,
+                metadata={"payload": "placeholder-only; see NOTICE.txt"},
+            )
+            # This is a new signed distribution, never a relabelled old core.
+            _build_station_index(
+                output=temporary / STATION_INDEX_FILENAME,
+                channel=channel,
+                product_version=product_version,
+                compatible_core=compatible_core,
+                signing_key_id=signing_key_id,
+                created_epoch=created_epoch if created_epoch is not None else int(time.time()),
+                packs={
+                    pack.component: temporary
+                    / ("core.ccpack" if pack.component == "core" else pack.filename)
+                    for pack in index.packs
+                },
+                signing_private_key=signing_private_key,
+            )
+            (temporary / "core-notice.txt").unlink()
+            output_index = verify_station_media(
+                temporary / STATION_INDEX_FILENAME,
+                public_key=public_key,
+                expected_channel=channel,
+                expected_product_version=product_version,
+                expected_compatible_core=compatible_core,
+                expected_signing_key_id=signing_key_id,
+            )
+        else:
+            shutil.copyfile(index.path, temporary / STATION_INDEX_FILENAME)
+            output_index = index
         packs = {
             pack.component: {
                 "filename": pack.filename,
@@ -753,18 +814,18 @@ def reuse_station_bundle(
                 "sha256": pack.sha256,
                 "required": pack.required,
             }
-            for pack in index.packs
+            for pack in output_index.packs
         }
         report = {
             "schema_version": 1,
             "product": DISTRIBUTION_PRODUCT,
-            "product_version": index.product_version,
-            "compatible_core": index.compatible_core,
-            "channel": index.channel,
-            "signing_key_id": index.signing_key_id,
-            "created_epoch": index.created_epoch,
+            "product_version": output_index.product_version,
+            "compatible_core": output_index.compatible_core,
+            "channel": output_index.channel,
+            "signing_key_id": output_index.signing_key_id,
+            "created_epoch": output_index.created_epoch,
             "packs": packs,
-            "total_pack_bytes": sum(pack.bytes for pack in index.packs),
+            "total_pack_bytes": sum(pack.bytes for pack in output_index.packs),
             "station_index": STATION_INDEX_FILENAME,
             "reused_from": str(source),
         }
@@ -818,7 +879,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reuse-station-dir",
         type=Path,
-        help="Verify and hardlink a complete same-version signed station directory instead of provisioning",
+        help="Verify and hardlink signed local model packs without provisioning; "
+        "sign a new core/index when the product version changes",
     )
     parser.add_argument(
         "--allow-development-key",
@@ -843,6 +905,9 @@ def main(argv: list[str] | None = None) -> int:
                 signing_key_id=args.signing_key_id,
                 product_version=args.product_version,
                 channel=args.channel,
+                signing_private_key=key,
+                compatible_core=args.compatible_core,
+                created_epoch=args.created_epoch,
             )
         else:
             result = build_station_bundle(

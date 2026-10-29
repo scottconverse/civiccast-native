@@ -158,6 +158,7 @@ class TestUserManualVersionHeaderConsistency:
         (
             ("v1.0.0", "v1.0.0"),
             ("v1.0.0-rc18", "v1.0.0-rc18"),
+            ("v1.0.0-rc.1", "v1.0.0-rc.1"),
             ("v1.0.0-beta.5", "v1.0.0-beta.5"),
         ),
     )

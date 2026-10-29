@@ -48,10 +48,10 @@ def test_supply_inputs_and_toolchain_are_exactly_pinned() -> None:
     )
     assert builder.PYAV_SDIST_URL.startswith("https://files.pythonhosted.org/")
 
-    assert builder.FFMPEG_COMMIT == "8c9502e9b048e21e1cae96477e338ac0635645ba"
-    assert builder.FFMPEG_SOURCE_BYTES == 16_902_915
+    assert builder.FFMPEG_COMMIT == "611cec792aa54e2e53dbc1be95dcf5955d9a99ba"
+    assert builder.FFMPEG_SOURCE_BYTES == 16_923_579
     assert builder.FFMPEG_SOURCE_SHA256 == (
-        "97da8d05b040186096349179bd349168609235781776acee37015e87f8e898fc"
+        "d6228fe2111721062178221edf9b4c449b66fc9b06c1fd15eb14c97537daa559"
     )
     assert builder.FFMPEG_SOURCE_URL.endswith(f"{builder.FFMPEG_COMMIT}.tar.gz")
     assert builder.MSYS2_BASE_BYTES == 53_555_380
@@ -66,9 +66,9 @@ def test_supply_inputs_and_toolchain_are_exactly_pinned() -> None:
     assert builder.MSVC_COMPILER_VERSION == "19.50.35730"
     assert builder.MSVC_LINKER_VERSION == "14.50.35730.0"
     assert builder.SOURCE_DATE_EPOCH == 1_704_067_200
-    assert builder.EXPECTED_WHEEL_BYTES == 4_347_090
+    assert builder.EXPECTED_WHEEL_BYTES == 4_348_926
     assert builder.EXPECTED_WHEEL_SHA256 == (
-        "0f9427a4e2e46944d87a21df6c9d6daeb15363001e8bf371a2d10155ed2a4fce"
+        "5ab3fae3f85d4121919f70643e026452eb2a678b4a3f557b9ca487724c1399f0"
     )
 
 
@@ -610,3 +610,52 @@ def test_wheel_policy_requires_the_complete_ffmpeg_dll_set(tmp_path: Path) -> No
 
     with pytest.raises(builder.PyAvWheelBuildError, match="missing FFmpeg DLL"):
         builder.validate_wheel_layout(wheel)
+
+
+def test_security_backports_are_pinned_and_preserve_release_library_versions() -> None:
+    patches = builder.ffmpeg_provenance()["security_patches"]
+    assert [(patch["commit"], patch["bytes"], patch["sha256"]) for patch in patches] == [
+        (
+            "969c7eb091989a664cb7bf66a1f02051cc46cb52",
+            1207,
+            "594a0cbca9527bc1edab7f76679af5a73cee23aadc878e2cc6a9001e22742c45",
+        ),
+        (
+            "2c2f6e96e31795ae95a8f8323a493ffbc493111f",
+            2179,
+            "fb9d5c7625495040858ef316396d10d8be62c514187d0e19cc455410dbce79a9",
+        ),
+        (
+            "d1434518fbd03789e3e5dc0657a7a9f1123ce074",
+            7774,
+            "1fd3c8a2b37bb24fe4c8500422090453e18a06634e2647d8fb50216beb5332b8",
+        ),
+        (
+            "71403a21b02a92b925e26e609e9bd3e48df451cf",
+            4810,
+            "af4bf01465777b2b8d159e8cd8a2185f155a0db39baa7fc2c0e6acf4d5f734b8",
+        ),
+    ]
+    assert "libavformat/mov.c" in patches[3]["included_paths"]
+    assert all("libavutil/version.h" not in patch["included_paths"] for patch in patches)
+    assert builder.FFMPEG_BUILD == "611cec792a-security1-minimal-msvc"
+
+
+def test_security_patch_context_failure_refuses_build_before_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        builder, "acquire_verified_artifact", lambda *args, **kwargs: tmp_path / "patch"
+    )
+    calls = []
+
+    def runner(arguments, **kwargs):
+        calls.append(arguments)
+        raise subprocess.CalledProcessError(1, arguments)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        builder.apply_ffmpeg_security_patches(
+            tmp_path / "source", cache_dir=tmp_path, runner=runner
+        )
+    assert len(calls) == 1
+    assert "--check" in calls[0]

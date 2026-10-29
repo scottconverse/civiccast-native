@@ -221,6 +221,22 @@ export interface AgendaMinutesEditRequest {
   content: MinutesContent
 }
 
+export interface AgendaSourceSettings {
+  source?: 'off' | 'legistar' | 'primegov' | 'civicclerk' | 'js_portal'
+  client_code?: string | null
+  portal_url?: string | null
+  portal_vendor_hint?: 'civicplus' | 'granicus' | 'legistar_js' | 'primegov_js' | 'generic'
+  timeout_seconds?: number
+}
+
+export interface AgendaSourceSettingsUpdate {
+  source?: 'off' | 'legistar' | 'primegov' | 'civicclerk' | 'js_portal'
+  client_code?: string | null
+  portal_url?: string | null
+  portal_vendor_hint?: 'civicplus' | 'granicus' | 'legistar_js' | 'primegov_js' | 'generic'
+  timeout_seconds?: number
+}
+
 export interface AiDefaultSelection {
   summary_model: string
   translate_model: string

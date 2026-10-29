@@ -133,6 +133,8 @@ def _make_fixture_roots(tmp_path: Path) -> tuple[Path, Path, dict[str, tuple[int
 
 
 def _patch_minimal_pins(monkeypatch: pytest.MonkeyPatch, pins: dict) -> None:
+    # These are text fixture bytes, not PE consumers; the overlay has its own tests.
+    monkeypatch.setattr(builder, "secured_postgres_sources", lambda sources, cache: sources)
     monkeypatch.setattr(builder, "POSTGRES_BIN_PINS", pins["bin"])
     monkeypatch.setattr(builder, "POSTGRES_BIN_DLL_PINS", pins["bin_dll"])
     monkeypatch.setattr(builder, "POSTGRES_LIB_PINS", pins["lib"])

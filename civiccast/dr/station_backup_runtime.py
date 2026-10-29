@@ -19,6 +19,8 @@ from civiccast.native.station_secrets import (
 )
 
 if TYPE_CHECKING:
+    from filelock import FileLock
+
     from civiccast.native.supervisor.install_layout import InstallLayout
     from civiccast.native.upgrade.pg_lifecycle import PgLifecyclePaths
 
@@ -49,6 +51,9 @@ _SERVICE_ENVIRONMENT_ALLOWLIST = frozenset(
         "CIVICCAST_IA_ITEM_PREFIX",
         "CIVICCAST_INTERNET_ARCHIVE_ACCESS_KEY",
         "CIVICCAST_AGENDA_SOURCE_TOKEN",
+        "CIVICCAST_AGENDA_SOURCE",
+        "CIVICCAST_AGENDA_SOURCE_CLIENT",
+        "CIVICCAST_AGENDA_SOURCE_TIMEOUT_S",
         "CIVICCAST_PROVIDER_API_KEY",
         "CIVICCAST_YOUTUBE_CLIENT_ID",
         "CIVICCAST_YOUTUBE_CLIENT_SECRET",
@@ -110,6 +115,22 @@ def build_station_backup_service() -> StationBackupService:
         / "station-state.json"
     ).expanduser()
     backup_state = root / "config" / "station-backups.json"
+    # Resolve from the installed service environment, including for an elevated
+    # offline CLI whose own profile/upload environment belongs to another user.
+    agenda_root = (
+        Path(
+            path_environment.get("CIVICCAST_AGENDA_DOCUMENT_DIR")
+            or Path(path_environment.get("CIVICCAST_UPLOAD_DIR") or root / "data" / "uploads")
+            / "agenda-import"
+        )
+        .expanduser()
+        .absolute()
+    )
+
+    def agenda_snapshot() -> FileLock:
+        from civiccast.agenda_import.documents import agenda_snapshot_lock
+
+        return agenda_snapshot_lock(agenda_root)
 
     def config_files() -> list[Path]:
         environment = _service_environment()
@@ -170,6 +191,8 @@ def build_station_backup_service() -> StationBackupService:
         destination=root / "backups",
         config_paths=config_files(),
         config_paths_provider=config_files,
+        managed_roots={"agenda-import": agenda_root},
+        snapshot_guard=agenda_snapshot,
         state_path=root / "config" / "station-backups.json",
         credential_exporter=export_credentials,
         credential_importer=import_credentials,

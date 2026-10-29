@@ -1,0 +1,106 @@
+{
+  "archive": {
+    "bytes": 1968427,
+    "name": "ffmpeg-7.1.5-security1-gstreamer-windows-x64.zip",
+    "sha256": "40cf143eda356ea14573323c8dcfbd4c4e33c83a2510e50bbaae95912b143246"
+  },
+  "files": {
+    "COPYING.LGPLv2.1": {
+      "bytes": 26517,
+      "sha256": "246041b6ecf9bc32d718a62c57877c78b5eb397b6467e74ed7ae2626ab189c30"
+    },
+    "avcodec-61.dll": {
+      "bytes": 2211840,
+      "sha256": "4c6bf6d6bfc93534c9697030140c3d602a737bdc24544f6a546aecd4ede038a6"
+    },
+    "avfilter-10.dll": {
+      "bytes": 322560,
+      "sha256": "0335667d21812d629b4550e4024dd742082fc4762f49c78c3b1582f50fc951ef"
+    },
+    "avformat-61.dll": {
+      "bytes": 338432,
+      "sha256": "7fcb7f80d620e80b8214fdc1f70254380fe41f05f8d3c1299f68909d235989cf"
+    },
+    "avutil-59.dll": {
+      "bytes": 1140224,
+      "sha256": "aa19b89eeaa2c8b3f86fcbf3c05c7baa4f85fdbc68763970efeaa2fe613c7d12"
+    },
+    "provenance.json": {
+      "bytes": 2282,
+      "sha256": "5e8daed90e773f7963ef514d663f88eaf14a20133b59d9987585456273851f2e"
+    },
+    "swresample-5.dll": {
+      "bytes": 232448,
+      "sha256": "94e72e76529e0b2c34f455bc31473d5d23d5a433dd4269912eff04c28ce904d4"
+    },
+    "swscale-8.dll": {
+      "bytes": 747008,
+      "sha256": "55f71e4facbb77786c441f144b38e3f23a88eac72703627b70204c3150a60eb9"
+    }
+  },
+  "provenance": {
+    "compiler": "19.50.35730",
+    "component": "FFmpeg",
+    "configure_options": [
+      "--toolchain=msvc",
+      "--arch=x86_64",
+      "--target-os=win64",
+      "--enable-shared",
+      "--disable-static",
+      "--disable-programs",
+      "--disable-doc",
+      "--disable-debug",
+      "--disable-autodetect",
+      "--disable-network",
+      "--disable-everything",
+      "--disable-avdevice",
+      "--enable-avcodec",
+      "--enable-avfilter",
+      "--enable-avformat",
+      "--enable-avutil",
+      "--enable-swresample",
+      "--enable-swscale",
+      "--enable-decoder=h264,aac",
+      "--enable-encoder=aac",
+      "--enable-parser=h264,aac,aac_latm",
+      "--enable-filter=null,psnr,scale,ssim,yadif,nullsrc,nullsink,abuffer,buffer,abuffersink,buffersink",
+      "--extra-cflags=/Brepro @civiccast-cl.rsp",
+      "--extra-ldflags=/Brepro"
+    ],
+    "crt_license": "LicenseRef-Microsoft-VCRedist",
+    "crt_linkage": "static",
+    "external_libraries": [],
+    "license": "LGPL-2.1-or-later",
+    "linkage": "shared DLLs",
+    "linker": "14.50.35730.0",
+    "relinking": "Replace these DLLs with interface-compatible modified builds; preserve DLL filenames expected by gstlibav.dll.",
+    "schema_version": 1,
+    "security_patches": [
+      {
+        "bytes": 1207,
+        "commit": "969c7eb091989a664cb7bf66a1f02051cc46cb52",
+        "included_paths": [
+          "libavutil/encryption_info.c"
+        ],
+        "sha256": "594a0cbca9527bc1edab7f76679af5a73cee23aadc878e2cc6a9001e22742c45",
+        "url": "https://github.com/FFmpeg/FFmpeg/commit/969c7eb091989a664cb7bf66a1f02051cc46cb52.patch"
+      },
+      {
+        "bytes": 2179,
+        "commit": "2c2f6e96e31795ae95a8f8323a493ffbc493111f",
+        "included_paths": [
+          "libavutil/hdr_dynamic_metadata.c"
+        ],
+        "sha256": "fb9d5c7625495040858ef316396d10d8be62c514187d0e19cc455410dbce79a9",
+        "url": "https://github.com/FFmpeg/FFmpeg/commit/2c2f6e96e31795ae95a8f8323a493ffbc493111f.patch"
+      }
+    ],
+    "source_bytes": 15948907,
+    "source_commit": "98581d546ff453ce1f29c4af8448996d6ac992f7",
+    "source_sha256": "52d7ba800ee2adbbbb4c57130ac0cd0dfb18369a3d36a049648ec673af8df4c5",
+    "source_url": "https://github.com/FFmpeg/FFmpeg/archive/98581d546ff453ce1f29c4af8448996d6ac992f7.tar.gz",
+    "version": "7.1.5-security1"
+  },
+  "schema_version": 1,
+  "version": "7.1.5-security1"
+}

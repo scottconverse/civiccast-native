@@ -530,6 +530,11 @@ def check_manifest_verification(tree: Path) -> CheckResult:
         # would report a crash rather than a verdict, and a verdict is what an
         # operator staring at a failed install actually needs.
         return CheckResult(name="manifest_verification", status="FAIL", detail=f"{exc}")
+    if "security_overlays" in manifest:
+        try:
+            verify_security_overlays(tree, manifest["security_overlays"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return CheckResult(name="manifest_verification", status="FAIL", detail=str(exc))
     return CheckResult(
         name="manifest_verification",
         status="PASS",
@@ -538,6 +543,35 @@ def check_manifest_verification(tree: Path) -> CheckResult:
             "(sibling trust artifacts excluded)"
         ),
     )
+
+
+def verify_security_overlays(tree: Path, declared: dict[str, str]) -> None:
+    """Reconcile RC1 shared-library inventory with actual final bytes.
+
+    Older signed manifests remain verifiable. RC1's builder emits all four
+    reviewed lock identities and this check requires their exact complete set.
+    """
+    from scripts import (
+        native_glib_soup_overlay,
+        native_gstreamer_ffmpeg_overlay,
+        native_openssl_overlay,
+        native_security_overlay,
+    )
+
+    modules = (
+        native_openssl_overlay,
+        native_glib_soup_overlay,
+        native_gstreamer_ffmpeg_overlay,
+        native_security_overlay,
+    )
+    expected = {
+        module.LOCK_PATH.name: hashlib.sha256(module.LOCK_PATH.read_bytes()).hexdigest()
+        for module in modules
+    }
+    if declared != expected:
+        raise ValueError("native security overlay inventory differs from reviewed source locks")
+    for module in modules:
+        module.verify_overlay(tree)
 
 
 def check_cli_consumer_verification(tree: Path) -> CheckResult:

@@ -799,7 +799,7 @@ def test_pyav_wrapper_and_embedded_ffmpeg_files_have_distinct_licenses() -> None
             "av",
             "Lib/site-packages/av.libs/avcodec-62-test.dll",
         )
-        == "LGPL-2.1-or-later"
+        == "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist"
     )
     assert (
         builder.license_for_payload_path(
@@ -1246,7 +1246,13 @@ def _entry(path: str, data: bytes, dist: str, version: str, lic: str) -> object:
 
 def test_manifest_is_sorted_and_carries_the_interpreter_pin() -> None:
     entries = [
-        _entry("python.exe", b"exe", "cpython-embeddable", "3.12.10", "PSF-2.0"),
+        _entry(
+            "python.exe",
+            b"exe",
+            builder.INTERPRETER_DISTRIBUTION,
+            builder.INTERPRETER_VERSION,
+            "PSF-2.0",
+        ),
         _entry("Lib/site-packages/civiccast/__init__.py", b"x", "civiccast", "1.0", "Apache-2.0"),
     ]
     manifest = builder.build_app_manifest(
@@ -1288,7 +1294,14 @@ def test_sha256sums_lines_match_the_entries() -> None:
     assert text == f"{hashlib.sha256(b'bb').hexdigest()}  b.txt\n"
 
 
-def test_license_bom_splits_pyav_wrapper_from_embedded_ffmpeg() -> None:
+@pytest.mark.parametrize(
+    "binary_license",
+    [
+        "LGPL-2.1-or-later",
+        "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
+    ],
+)
+def test_license_bom_splits_pyav_wrapper_from_embedded_ffmpeg(binary_license: str) -> None:
     entries = [
         _entry(
             "Lib/site-packages/av/__init__.py",
@@ -1302,7 +1315,7 @@ def test_license_bom_splits_pyav_wrapper_from_embedded_ffmpeg() -> None:
             b"ff",
             "av",
             "18.0.0",
-            "LGPL-2.1-or-later",
+            binary_license,
         ),
     ]
 
@@ -1310,7 +1323,7 @@ def test_license_bom_splits_pyav_wrapper_from_embedded_ffmpeg() -> None:
 
     assert "| av | 18.0.0 | BSD-3-Clause | 1 | 1 |" in text
     assert (
-        "| av (embedded FFmpeg) | 8c9502e9b0-minimal-msvc | LGPL-2.1-or-later | 1 | 2 |"
+        f"| av (embedded FFmpeg) | 611cec792a-security1-minimal-msvc | {binary_license} | 1 | 2 |"
     ) in text
 
 
@@ -1343,8 +1356,20 @@ def _write_minimal_payload(tree: Path) -> None:
     wheel_bytes = wheel_path.read_bytes()
 
     entries = [
-        _entry("python.exe", b"MZ-fake-exe", "cpython-embeddable", "3.12.10", "PSF-2.0"),
-        _entry("python312.dll", b"fake-dll", "cpython-embeddable", "3.12.10", "PSF-2.0"),
+        _entry(
+            "python.exe",
+            b"MZ-fake-exe",
+            builder.INTERPRETER_DISTRIBUTION,
+            builder.INTERPRETER_VERSION,
+            "PSF-2.0",
+        ),
+        _entry(
+            "python312.dll",
+            b"fake-dll",
+            builder.INTERPRETER_DISTRIBUTION,
+            builder.INTERPRETER_VERSION,
+            "PSF-2.0",
+        ),
         _entry(
             "Lib/site-packages/civiccast/__init__.py",
             b"print('hi')",
@@ -1485,7 +1510,14 @@ def test_verifier_rejects_forged_clean_source_identity(
     assert "checkout identity" in result.detail
 
 
-def test_verifier_passes_on_a_faithful_tree(tmp_path: Path) -> None:
+def test_verifier_passes_on_a_faithful_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # This tiny fixture isolates generic tree verification; OCR is checked separately.
+    monkeypatch.setattr(verifier, "OCR_FILES", {})
+    # The synthetic runtime isolates generic/PyAV checks; dedicated runtime tests
+    # exercise the independent pinned provenance and original binary checks.
+    monkeypatch.setattr(verifier, "verify_runtime_files", lambda *a, **kw: [])
     tree = tmp_path / "payload"
     _write_minimal_payload(tree)
     result = verifier.check_app_payload_verification(tree)
@@ -2029,21 +2061,27 @@ def _write_av_wheel(
     provenance = {
         "schema_version": 1,
         "component": "FFmpeg",
+        "build": verifier.ffmpeg_provenance()["build"],
+        "security_patches": verifier.ffmpeg_provenance()["security_patches"],
         "source_archive_sha256": (
             source_archive_sha256
             if source_archive_sha256 is not None
-            else verifier.FFMPEG_SOURCE_SHA256
+            else verifier.ffmpeg_provenance()["source_archive_sha256"]
         ),
         "source_archive_bytes": (
             source_archive_bytes
             if source_archive_bytes is not None
-            else verifier.FFMPEG_SOURCE_BYTES
+            else verifier.ffmpeg_provenance()["source_archive_bytes"]
         ),
         "pyav_sdist_sha256": (
-            pyav_sdist_sha256 if pyav_sdist_sha256 is not None else verifier.PYAV_SDIST_SHA256
+            pyav_sdist_sha256
+            if pyav_sdist_sha256 is not None
+            else verifier.ffmpeg_provenance()["pyav_sdist_sha256"]
         ),
         "pyav_sdist_bytes": (
-            pyav_sdist_bytes if pyav_sdist_bytes is not None else verifier.PYAV_SDIST_BYTES
+            pyav_sdist_bytes
+            if pyav_sdist_bytes is not None
+            else verifier.ffmpeg_provenance()["pyav_sdist_bytes"]
         ),
     }
     provenance_bytes = json.dumps(provenance).encode("utf-8")
@@ -2132,7 +2170,7 @@ def _finish_av_manifest(
     if include_provenance:
         # A path license_for_payload_path() classifies as EMBEDDED_FFMPEG_
         # LICENSE (LGPL) records the FFmpeg component's OWN build identity
-        # via component_version_for_payload_path() -- "8c9502e9b0-minimal-
+        # via component_version_for_payload_path() -- "611cec792a-minimal-
         # msvc" (EMBEDDED_FFMPEG_BUILD in civiccast/native/app_payload.py),
         # never PyAV's own "18.0.0" -- matching the house convention already
         # used elsewhere in this file (see test_pyav_wrapper_and_embedded_
@@ -2142,7 +2180,7 @@ def _finish_av_manifest(
                 "Lib/site-packages/av-18.0.0.dist-info/FFMPEG-PROVENANCE.json",
                 json.dumps(provenance).encode("utf-8"),
                 "av",
-                "8c9502e9b0-minimal-msvc",
+                "611cec792a-security1-minimal-msvc",
                 "LGPL-2.1-or-later",
             )
         )
@@ -2174,6 +2212,10 @@ def test_advisory_pyav_wheel_hash_authorizes_a_build_provenance_matching_av_whee
     embedded FFMPEG-PROVENANCE.json correctly names the pinned, hash-
     verified PyAV sdist and FFmpeg source it was built from -- authorized."""
     tree = tmp_path / "payload"
+    monkeypatch.setattr(verifier, "OCR_FILES", {})
+    # The synthetic runtime isolates generic/PyAV checks; dedicated runtime tests
+    # exercise the independent pinned provenance and original binary checks.
+    monkeypatch.setattr(verifier, "verify_runtime_files", lambda *a, **kw: [])
     _write_minimal_payload(tree)
     wheel, av_source, provenance = _write_av_wheel(tree, wheel_bytes_suffix=b"self-hosted-build")
     fake_lock, fake_lock_hash = _fake_lock_with_wrong_av_hash(tmp_path)
@@ -2186,6 +2228,31 @@ def test_advisory_pyav_wheel_hash_authorizes_a_build_provenance_matching_av_whee
     result = verifier.check_app_payload_verification(tree, advisory_pyav_wheel_hash=True)
 
     assert result.status == "PASS", result.detail
+
+
+@pytest.mark.parametrize("tamper", ["missing", "hash", "paths", "order", "build"])
+def test_pyav_provenance_refuses_missing_or_changed_security_backports(
+    tmp_path: Path, tamper: str
+) -> None:
+    provenance = verifier.ffmpeg_provenance()
+    if tamper == "missing":
+        provenance.pop("security_patches")
+    elif tamper == "hash":
+        provenance["security_patches"][0]["sha256"] = "0" * 64
+    elif tamper == "paths":
+        provenance["security_patches"][0]["included_paths"] = []
+    elif tamper == "order":
+        provenance["security_patches"].reverse()
+    else:
+        provenance["build"] = "unpatched-minimal-msvc"
+    wheel = tmp_path / "av.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("av-18.0.0.dist-info/FFMPEG-PROVENANCE.json", json.dumps(provenance))
+    problems = verifier._pyav_build_provenance_problems(wheel, version="18.0.0")
+    assert problems
+    assert any(
+        ("build=" if tamper == "build" else "security_patches=") in item for item in problems
+    )
 
 
 def test_pyav_wheel_hash_mismatch_still_fails_without_the_advisory_flag(

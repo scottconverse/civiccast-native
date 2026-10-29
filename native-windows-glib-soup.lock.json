@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "name": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later",
+      "url": "https://download.gnome.org/sources/glib/2.88/glib-2.88.4.tar.xz",
+      "bytes": 5797568,
+      "sha256": "25fd169f3b2f91fe2391ad297883ce0fcf30c69fc789ffd1c9672d1332b1c5a8"
+    },
+    {
+      "name": "libsoup",
+      "version": "3.8.1",
+      "license": "LGPL-2.0-or-later",
+      "url": "https://download.gnome.org/sources/libsoup/3.8/libsoup-3.8.1.tar.xz",
+      "bytes": 1621608,
+      "sha256": "5013dcef9136f6f861e6529fca578af50c1f52a39219027fb5aff652d1371a04"
+    },
+    {
+      "name": "nghttp2",
+      "version": "1.70.0",
+      "license": "MIT",
+      "url": "https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.xz",
+      "bytes": 2018996,
+      "sha256": "e05cb1388eaca3830aded4ccf20044b6e1ac1a61411dcca11b0437c4285c8bc2"
+    }
+  ],
+  "sdk_sha256": "e4c41ee6ee9c6c32a45d198463ec08d79bac3bd5fa58adc93d13fe4a08abc9d9",
+  "archive": {
+    "filename": "glib-2.88.4-libsoup-3.8.1-nghttp2-1.70.0-civiccast-windows-x64.zip",
+    "bytes": 1966069,
+    "sha256": "34da86644a17511887de4f01b7ea18708f07c15e1f92f1448dda68166eebe6b9"
+  },
+  "files": {
+    "glib-2.0-0.dll": {
+      "bytes": 1375232,
+      "sha256": "3a46671c60980d49d266ee1e3f9b96376adee2a1d3a539933627ab4fb7f13d07",
+      "component": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later"
+    },
+    "gobject-2.0-0.dll": {
+      "bytes": 331776,
+      "sha256": "7f0a4a8ca0160722174adc337a36f1855889180cde6fa4b3ef54c2358a311f56",
+      "component": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later"
+    },
+    "gmodule-2.0-0.dll": {
+      "bytes": 18944,
+      "sha256": "9d6f3a35f139039e814904b7de95fc18bf94823953fc734b0765702897641f22",
+      "component": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later"
+    },
+    "gio-2.0-0.dll": {
+      "bytes": 1678848,
+      "sha256": "661e70564b360d9b9a3fdd5312a4a4b7b524547991b631e432814a7bfedd130a",
+      "component": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later"
+    },
+    "gthread-2.0-0.dll": {
+      "bytes": 10240,
+      "sha256": "b39dd5dd4a70848657fc675af61d1f45a9154e79d623fbf394dc8f13eb6f4845",
+      "component": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later"
+    },
+    "glib-COPYING.txt": {
+      "bytes": 25967,
+      "sha256": "fa6f36630bb1e0c571d34b2bbdf188d08495c9dbf58f28cac112f303fc1f58fb",
+      "component": "glib",
+      "version": "2.88.4",
+      "license": "LGPL-2.1-or-later"
+    },
+    "soup-3.0-0.dll": {
+      "bytes": 545280,
+      "sha256": "3dd422313507e1c9086744531b5f0ce2f9ba8fbf114ed183e2816049cd1935af",
+      "component": "libsoup",
+      "version": "3.8.1",
+      "license": "LGPL-2.0-or-later"
+    },
+    "libsoup-COPYING.txt": {
+      "bytes": 25383,
+      "sha256": "b7993225104d90ddd8024fd838faf300bea5e83d91203eab98e29512acebd69c",
+      "component": "libsoup",
+      "version": "3.8.1",
+      "license": "LGPL-2.0-or-later"
+    },
+    "nghttp2.dll": {
+      "bytes": 153600,
+      "sha256": "0c7feda85effa4aca3694b28fbf716509f90b1369cafe2780b65d9b485ac463c",
+      "component": "nghttp2",
+      "version": "1.70.0",
+      "license": "MIT"
+    },
+    "nghttp2-COPYING.txt": {
+      "bytes": 1156,
+      "sha256": "6b94f3abc1aabd0c72a7c7d92a77f79dda7c8a0cb3df839a97890b4116a2de2a",
+      "component": "nghttp2",
+      "version": "1.70.0",
+      "license": "MIT"
+    },
+    "provenance.json": {
+      "bytes": 367944,
+      "sha256": "b8728fae8ed16617e500fbd9e233dc7a1e70415576581c3c37283f950620bd6d",
+      "component": "glib-libsoup-nghttp2-build",
+      "version": "1",
+      "license": "Apache-2.0"
+    }
+  },
+  "components": {
+    "glib": {
+      "version": "2.88.4",
+      "source": {
+        "name": "glib",
+        "version": "2.88.4",
+        "license": "LGPL-2.1-or-later",
+        "url": "https://download.gnome.org/sources/glib/2.88/glib-2.88.4.tar.xz",
+        "bytes": 5797568,
+        "sha256": "25fd169f3b2f91fe2391ad297883ce0fcf30c69fc789ffd1c9672d1332b1c5a8"
+      }
+    },
+    "libsoup": {
+      "version": "3.8.1",
+      "source": {
+        "name": "libsoup",
+        "version": "3.8.1",
+        "license": "LGPL-2.0-or-later",
+        "url": "https://download.gnome.org/sources/libsoup/3.8/libsoup-3.8.1.tar.xz",
+        "bytes": 1621608,
+        "sha256": "5013dcef9136f6f861e6529fca578af50c1f52a39219027fb5aff652d1371a04"
+      }
+    },
+    "nghttp2": {
+      "version": "1.70.0",
+      "source": {
+        "name": "nghttp2",
+        "version": "1.70.0",
+        "license": "MIT",
+        "url": "https://github.com/nghttp2/nghttp2/releases/download/v1.70.0/nghttp2-1.70.0.tar.xz",
+        "bytes": 2018996,
+        "sha256": "e05cb1388eaca3830aded4ccf20044b6e1ac1a61411dcca11b0437c4285c8bc2"
+      }
+    }
+  }
+}

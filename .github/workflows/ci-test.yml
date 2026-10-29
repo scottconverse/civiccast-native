@@ -537,8 +537,56 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
+  stage-native-runtime-inputs:
+    name: Transfer verified native runtime inputs
+    # No checkout or PR code runs on this runner. Forks cannot use the local mirror.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON('["self-hosted","windows","sandbox-lab"]') }}
+    timeout-minutes: 10
+    concurrency:
+      group: sandbox-lab
+      cancel-in-progress: false
+    steps:
+      - name: Copy and independently verify reviewed native runtime archives
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mirror = 'C:\CivicCastTester\runtime-artifact-mirror'
+          $destination = Join-Path $env:RUNNER_TEMP 'native-runtime-reviewed-inputs'
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          $inputs = @(
+            @{ Name = 'openssl-3.5.9-civiccast-windows-x64.zip'; Bytes = 2805153; SHA256 = '062f6d64ae51eb970e46422e6791bced241867574179aa278a82a08245f82491' },
+            @{ Name = 'glib-2.88.4-libsoup-3.8.1-nghttp2-1.70.0-civiccast-windows-x64.zip'; Bytes = 1966069; SHA256 = '34da86644a17511887de4f01b7ea18708f07c15e1f92f1448dda68166eebe6b9' },
+            @{ Name = 'ffmpeg-7.1.5-security1-gstreamer-windows-x64.zip'; Bytes = 1968427; SHA256 = '40cf143eda356ea14573323c8dcfbd4c4e33c83a2510e50bbaae95912b143246' },
+            @{ Name = 'civiccast-rc1-security-libraries-windows-x64.zip'; Bytes = 2666766; SHA256 = '6545e5f76472135310815f68296b427a8efc9810ba28a4c4c919241cfd04e683' }
+          )
+          foreach ($inputFile in $inputs) {
+            $source = Join-Path $mirror $inputFile.Name
+            if (!(Test-Path -LiteralPath $source -PathType Leaf)) { throw "Reviewed mirror input missing: $source. Stage the reviewed archive before retrying." }
+            $target = Join-Path $destination $inputFile.Name
+            Copy-Item -LiteralPath $source -Destination $target
+            if ((Get-Item -LiteralPath $target).Length -ne $inputFile.Bytes) { throw "Reviewed runtime archive size mismatch: $target" }
+            $actual = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $inputFile.SHA256) { throw "Reviewed runtime archive SHA-256 mismatch: $target" }
+          }
+      - name: Transfer reviewed native runtime bytes to hosted runner
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-runtime-reviewed-inputs
+          path: |
+            ${{ runner.temp }}/native-runtime-reviewed-inputs/openssl-3.5.9-civiccast-windows-x64.zip
+            ${{ runner.temp }}/native-runtime-reviewed-inputs/glib-2.88.4-libsoup-3.8.1-nghttp2-1.70.0-civiccast-windows-x64.zip
+            ${{ runner.temp }}/native-runtime-reviewed-inputs/ffmpeg-7.1.5-security1-gstreamer-windows-x64.zip
+            ${{ runner.temp }}/native-runtime-reviewed-inputs/civiccast-rc1-security-libraries-windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   # Native media uses the product GStreamer closure, without station/model packs.
   windows-native:
+    needs: stage-native-runtime-inputs
     name: WS4 dual-runtime guard (real Windows probes)
     # workflow-cost: windows-pr-justification -- Windows registry, process-table, and WSL probes require a hosted Windows runner.
     # slice:ws4-dual-runtime-guard -- SDR-001's point that fixture-only proof
@@ -566,6 +614,38 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Download reviewed native runtime archives from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: native-runtime-reviewed-inputs
+          path: native-runtime-reviewed-inputs
+
+      - name: Recheck reviewed native runtime archives against source locks
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, json, os
+          from pathlib import Path
+          inputs = Path('native-runtime-reviewed-inputs').resolve()
+          reviewed = (
+              ('native-windows-openssl.lock.json', 'openssl-3.5.9-civiccast-windows-x64.zip', 'CIVICCAST_OPENSSL_RUNTIME_ZIP'),
+              ('native-windows-glib-soup.lock.json', 'glib-2.88.4-libsoup-3.8.1-nghttp2-1.70.0-civiccast-windows-x64.zip', 'CIVICCAST_GLIB_SOUP_RUNTIME_ZIP'),
+              ('native-windows-gstreamer-ffmpeg.lock.json', 'ffmpeg-7.1.5-security1-gstreamer-windows-x64.zip', 'CIVICCAST_GSTREAMER_FFMPEG_RUNTIME_ZIP'),
+              ('native-windows-security-libraries.lock.json', 'civiccast-rc1-security-libraries-windows-x64.zip', 'CIVICCAST_SECURITY_LIBRARIES_ZIP'),
+          )
+          environment = []
+          for lockfile, filename, variable in reviewed:
+              pin = json.loads(Path(lockfile).read_text(encoding='utf-8'))['archive']
+              assert pin.get('filename', pin.get('name')) == filename, f'Reviewed archive filename mismatch: {lockfile}'
+              archive = inputs / filename
+              data = archive.read_bytes()
+              assert len(data) == pin['bytes'] and hashlib.sha256(data).hexdigest() == pin['sha256'], f'Reviewed archive identity mismatch: {filename}'
+              environment.append(f'{variable}={archive}\n')
+          with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
+              output.writelines(environment)
+          '@ | python -I -B -
+          if ($LASTEXITCODE -ne 0) { throw 'Native runtime archive verification against committed locks failed.' }
 
       - name: Install ffmpeg for native media tests
         timeout-minutes: 10

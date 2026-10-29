@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "components": {
+    "tesseract": {
+      "version": "5.5.4",
+      "url": "https://codeload.github.com/tesseract-ocr/tesseract/zip/refs/tags/5.5.4",
+      "sha256": "82e6e01fc48368c149efd4e6f3b861983bd8a4553ed86bd240276cb74e6bb8ca",
+      "bytes": 2547284,
+      "source_directory": "tesseract-5.5.4",
+      "license_file": "LICENSE",
+      "license": "Apache-2.0"
+    },
+    "leptonica": {
+      "version": "1.87.0",
+      "url": "https://codeload.github.com/DanBloomberg/leptonica/zip/refs/tags/1.87.0",
+      "sha256": "2cfb7ebe6036f3d017280fa9a000c9699ab28be8dff8be8e2e948e2c79917eda",
+      "bytes": 14280212,
+      "source_directory": "leptonica-1.87.0",
+      "license_file": "leptonica-license.txt",
+      "license": "BSD-2-Clause"
+    },
+    "tessdata-fast-eng": {
+      "version": "87416418657359cb625c412a48b6e1d6d41c29bd",
+      "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/eng.traineddata",
+      "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+      "bytes": 4113088,
+      "license": "Apache-2.0"
+    }
+  },
+  "build": {
+    "cmake": "4.2.3-msvc3",
+    "ninja": "1.12.1",
+    "compiler": "19.50.35730",
+    "linker": "14.50.35730.0",
+    "static_runtime": true,
+    "image_format": "BMP",
+    "disabled_dependencies": ["zlib", "libpng", "libjpeg", "libtiff", "giflib", "libwebp", "openjpeg", "libarchive", "libcurl", "openmp"]
+  }
+}

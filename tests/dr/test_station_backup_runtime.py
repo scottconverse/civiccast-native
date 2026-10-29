@@ -14,6 +14,34 @@ from civiccast.dr.station_backup_runtime import build_station_backup_service
 from civiccast.native.station_secrets import StationSecretVault
 
 
+@pytest.mark.parametrize("override", ["default", "uploads", "documents"])
+def test_managed_agenda_root_uses_replacement_service_paths(tmp_path, monkeypatch, override):
+    from civiccast.native.supervisor import install_layout
+
+    root = tmp_path / "replacement"
+    environment = {"CIVICCAST_STATION_STATE_PATH": str(root / "profile" / "station-state.json")}
+    expected = root / "data" / "uploads" / "agenda-import"
+    if override in {"uploads", "documents"}:
+        environment["CIVICCAST_UPLOAD_DIR"] = str(root / "custom-uploads")
+        expected = root / "custom-uploads" / "agenda-import"
+    if override == "documents":
+        environment["CIVICCAST_AGENDA_DOCUMENT_DIR"] = str(root / "custom-agendas")
+        expected = root / "custom-agendas"
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///unused.db")
+    monkeypatch.setenv("CIVICCAST_AGENDA_DOCUMENT_DIR", str(tmp_path / "unrelated-admin-agendas"))
+    monkeypatch.setattr(
+        station_backup_runtime, "_read_installed_service_environment", lambda: environment
+    )
+    monkeypatch.setattr(
+        install_layout,
+        "resolve_install_layout",
+        lambda: SimpleNamespace(civiccast_data_root=root, pg_ctl_path=root / "pg_ctl.exe"),
+    )
+    service = build_station_backup_service()
+    assert service.managed_roots == {"agenda-import": expected}
+    assert service.media_roots == ()
+
+
 def test_portable_service_environment_is_allowlisted_and_excludes_database_url():
     captured = station_backup_runtime._portable_service_environment(
         {
@@ -22,12 +50,19 @@ def test_portable_service_environment_is_allowlisted_and_excludes_database_url()
             "CIVICCAST_STATION_STATE_PATH": r"C:\old\profile\station-state.json",
             "CIVICCAST_SMTP_HOST": "smtp.example.test",
             "CIVICCAST_SMTP_PASSWORD": "smtp-private",
+            "CIVICCAST_AGENDA_SOURCE": "primegov",
+            "CIVICCAST_AGENDA_SOURCE_CLIENT": "example",
+            "CIVICCAST_AGENDA_SOURCE_TIMEOUT_S": "15",
+            "CIVICCAST_AGENDA_DOCUMENT_DIR": r"C:\old\agenda-import",
             "UNRELATED_SECRET": "do-not-backup",
         }
     )
     assert captured == {
         "CIVICCAST_SMTP_HOST": "smtp.example.test",
         "CIVICCAST_SMTP_PASSWORD": "smtp-private",
+        "CIVICCAST_AGENDA_SOURCE": "primegov",
+        "CIVICCAST_AGENDA_SOURCE_CLIENT": "example",
+        "CIVICCAST_AGENDA_SOURCE_TIMEOUT_S": "15",
     }
 
 
@@ -215,6 +250,8 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     state.write_text('{"station_name":"Integration station"}')
     caption_settings = station_config / "offline-caption-settings.json"
     caption_settings.write_text('{"enabled":false,"languages":["en"]}')
+    agenda_settings = station_config / "agenda-import-settings.json"
+    agenda_settings.write_text('{"source":"primegov","client_code":"example"}')
     (config_root / "existing.json").write_text('{"provider":"configured"}')
     database = tmp_path / "station.db"
     with closing(sqlite3.connect(database)) as connection:
@@ -243,6 +280,8 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     service = build_station_backup_service()
     assert state in service.config_paths
     assert caption_settings in service.config_paths
+    assert agenda_settings in service.config_paths
+    assert service.managed_roots == {"agenda-import": root / "data" / "uploads" / "agenda-import"}
     assert config_root / "existing.json" in service.config_paths
     assert not service.has_scheduled_passphrase()
     service.set_scheduled_passphrase("recovery-test-passphrase")

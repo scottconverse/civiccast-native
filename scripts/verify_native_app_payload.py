@@ -63,6 +63,7 @@ from civiccast.native.app_payload import (  # noqa: E402
     CIVICCAST_CONSOLE_LAUNCHERS,
     CIVICCAST_DISTRIBUTION,
     CIVICCAST_RETAINED_WHEEL_PATH,
+    EMBEDDED_FFMPEG_BINARY_LICENSE,
     EMBEDDED_FFMPEG_LICENSE,
     INTERPRETER_DISTRIBUTION,
     INTERPRETER_LICENSE,
@@ -71,6 +72,8 @@ from civiccast.native.app_payload import (  # noqa: E402
     INTERPRETER_VERSION,
     MSVC_RUNTIME_DISTRIBUTION,
     MSVC_RUNTIME_FILES,
+    OCR_FILES,
+    OCR_LOCK_SHA256,
     WHISPER_MODEL_PAYLOAD_DIR,
     WHISTLE_ENGINE_CONTRACT,
     canonical_distribution_name,
@@ -78,11 +81,9 @@ from civiccast.native.app_payload import (  # noqa: E402
     is_prohibited_license,
     license_for_payload_path,
 )
+from civiccast.native.python_runtime import verify_runtime_files  # noqa: E402
 from scripts.build_native_pyav_wheel import (  # noqa: E402
-    FFMPEG_SOURCE_BYTES,
-    FFMPEG_SOURCE_SHA256,
-    PYAV_SDIST_BYTES,
-    PYAV_SDIST_SHA256,
+    ffmpeg_provenance,
 )
 
 _TRUST_ARTIFACTS = frozenset({"app-payload-manifest.json", "SHA256SUMS", "LICENSE-BOM.md"})
@@ -125,7 +126,8 @@ def _render_license_bom(records: list[dict[str, object]]) -> str:
         license_ = str(record["license"])
         component = (
             "av (embedded FFmpeg)"
-            if distribution == "av" and license_ == EMBEDDED_FFMPEG_LICENSE
+            if distribution == "av"
+            and license_ in (EMBEDDED_FFMPEG_LICENSE, EMBEDDED_FFMPEG_BINARY_LICENSE)
             else distribution
         )
         version = component_version_for_payload_path(
@@ -518,7 +520,7 @@ def _pyav_build_provenance_problems(wheel_path: Path, *, version: str) -> list[s
     default `advisory=False` -- a hard failure on every build lane,
     self-hosted included, if either differs from its pin.
 
-    This reads those two identities back out of the wheel's OWN embedded
+    This reads the source identities and ordered security backports out of the wheel's OWN embedded
     `<dist-info>/FFMPEG-PROVENANCE.json` (written by that same script's
     `ffmpeg_provenance()` at build time -- see its docstring, which names
     this function as the reader) and re-asserts them against the SAME
@@ -526,7 +528,8 @@ def _pyav_build_provenance_problems(wheel_path: Path, *, version: str) -> list[s
     module imports directly from `build_native_pyav_wheel.py` -- never
     trusting the wheel's self-report unchecked. A missing, unreadable, or
     mismatched record is a hard failure; only a wheel whose OWN claimed
-    build inputs match the reviewed pins is authorized. Returns the list of
+    build inputs, patch hashes, path selections and build identity match the reviewed pins is
+    authorized. Returns the list of
     PROVENANCE problems (empty means authorized).
     """
     dist_info = f"av-{version}.dist-info"
@@ -551,11 +554,17 @@ def _pyav_build_provenance_problems(wheel_path: Path, *, version: str) -> list[s
     if not isinstance(provenance, dict):
         return [f"PROVENANCE: {provenance_member} root is not an object"]
 
+    reviewed = ffmpeg_provenance()
     expected_upstream_inputs = {
-        "source_archive_sha256": FFMPEG_SOURCE_SHA256,
-        "source_archive_bytes": FFMPEG_SOURCE_BYTES,
-        "pyav_sdist_sha256": PYAV_SDIST_SHA256,
-        "pyav_sdist_bytes": PYAV_SDIST_BYTES,
+        key: reviewed[key]
+        for key in (
+            "build",
+            "source_archive_sha256",
+            "source_archive_bytes",
+            "pyav_sdist_sha256",
+            "pyav_sdist_bytes",
+            "security_patches",
+        )
     }
     return [
         f"PROVENANCE: {provenance_member} {key}={provenance.get(key)!r} does not match "
@@ -846,6 +855,19 @@ def _verify_independent_provenance(
             if record["sha256"] != sha256:
                 problems.append(f"PROVENANCE: {path} does not match its reviewed source hash")
             expected_license = license_
+        elif path in OCR_FILES:
+            owner, version, expected_license = OCR_FILES[path]
+            if recorded != (owner, version):
+                problems.append(f"PROVENANCE: {path} has an unreviewed OCR owner/version")
+            expected_hash = {
+                "OCR/provenance.json": OCR_LOCK_SHA256,
+                "OCR/tessdata/eng.traineddata": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+            }.get(path)
+            if expected_hash and record["sha256"] != expected_hash:
+                problems.append(f"PROVENANCE: {path} does not match its reviewed source hash")
+        elif path.startswith("OCR/"):
+            problems.append(f"PROVENANCE: unreviewed OCR artifact {path}")
+            continue
         elif path.startswith("THIRD-PARTY-LICENSES/"):
             problems.append(f"PROVENANCE: unreviewed external license artifact {path}")
             continue
@@ -1079,6 +1101,11 @@ def check_app_payload_verification(
     if mismatched:
         sections.append("HASH/SIZE MISMATCH:\n  " + "\n  ".join(mismatched))
 
+    sections.extend(
+        "INTERPRETER PROVENANCE: " + problem
+        for problem in verify_runtime_files(lambda name: (tree / name).read_bytes(), installed=True)
+    )
+
     # Interpreter presence (D3 gate precondition).
     for required in _REQUIRED_INTERPRETER_FILES:
         if required not in manifest_by_path:
@@ -1093,6 +1120,10 @@ def check_app_payload_verification(
                 sections.append(f"MISSING MSVC RUNTIME FILE: {required} required by CTranslate2")
 
     # Deny-by-default provenance re-check.
+    for required in OCR_FILES:
+        if required not in manifest_by_path:
+            sections.append(f"MISSING OCR FILE: {required} not in manifest")
+
     named = {
         str(r["distribution"]) for r in records if r["distribution"] != INTERPRETER_DISTRIBUTION
     }

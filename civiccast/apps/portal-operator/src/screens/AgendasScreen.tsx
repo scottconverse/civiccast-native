@@ -1,4 +1,6 @@
 import { AgendaMinutesPanel } from './AgendaMinutesPanel'
+import { AgendaSourceSetup } from './AgendaSourceSetup'
+import { agendaSettingsKey, getAgendaSourceSettings } from '../api/agenda-settings'
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 //
@@ -891,10 +893,16 @@ function ExternalImportSection({
   const idSince = useId()
   const idMeeting = useId()
 
-  const [source, setSource] = useState<AgendaExternalSource>('legistar')
-  const [clientCode, setClientCode] = useState('')
-  const [portalUrl, setPortalUrl] = useState('')
-  const [vendorHint, setVendorHint] = useState('generic')
+  const stationSettings = useQuery({ queryKey: agendaSettingsKey, queryFn: getAgendaSourceSettings, retry: false })
+  const defaults = stationSettings.data
+  const [chosenSource, setSource] = useState<AgendaExternalSource | null>(null)
+  const source = chosenSource ?? (defaults?.source && defaults.source !== 'off' ? defaults.source : 'legistar')
+  const [chosenClientCode, setClientCode] = useState<string | null>(null)
+  const clientCode = chosenClientCode ?? defaults?.client_code ?? ''
+  const [chosenPortalUrl, setPortalUrl] = useState<string | null>(null)
+  const portalUrl = chosenPortalUrl ?? defaults?.portal_url ?? ''
+  const [chosenVendorHint, setVendorHint] = useState<string | null>(null)
+  const vendorHint = chosenVendorHint ?? defaults?.portal_vendor_hint ?? 'generic'
   const [since, setSince] = useState('')
   const [meetings, setMeetings] = useState<ExternalMeetingSummary[] | null>(null)
   const [selectedEventId, setSelectedEventId] = useState('')
@@ -1034,6 +1042,8 @@ function ExternalImportSection({
 
   return (
     <div className="space-y-2 border-t pt-3" style={{ borderColor: 'var(--cc-line)' }}>
+      {stationSettings.isError && <Banner tone="warn">{apiMessage(stationSettings.error, 'Could not load saved agenda settings. Retry after checking the station connection.')}</Banner>}
+      {defaults?.source === 'off' && <Banner tone="info">Agenda import is disabled. A setup administrator can enable it in Agenda source setup above.</Banner>}
       <span className="text-xs font-semibold">
         Import from an external agenda system
       </span>
@@ -1319,10 +1329,12 @@ export function AgendasScreen() {
       </div>
     )
   }
+  const canSetup = hasRole(identityQuery.data, ['setup_admin'])
   const canAuthor = hasRole(identityQuery.data, AUTHOR_ROLES)
   if (!canAuthor) {
     return (
-      <div className="px-6 py-10">
+      <div className="space-y-4 px-6 py-10">
+        {canSetup && <AgendaSourceSetup />}
         <Banner tone="info">
           Agendas require the records clerk or meeting operator role. Ask your station admin
           for access.
@@ -1330,7 +1342,7 @@ export function AgendasScreen() {
       </div>
     )
   }
-  return <AgendasBody />
+  return <><div className="px-6 pt-6">{canSetup && <AgendaSourceSetup />}</div><AgendasBody /></>
 }
 
 function AgendasBody() {

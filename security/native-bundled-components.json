@@ -1,0 +1,458 @@
+{
+  "schema_version": 1,
+  "reviewed": "2026-10-29",
+  "note": "Versions derived from selected DLL PE ProductVersion resources and side-effect-free exported version functions, not inferred from parent package versions. Parent source pins bind these identities; source changes require reconciliation. This supplements PyPI and top-level native component scans; it does not assert every statically linked upstream dependency has published CVE metadata.",
+  "sources": [
+    {
+      "parent": "postgres",
+      "archive_sha256": "2f868d77832f5cbc62182a0ca57f02df14d33d85ce0d0bbaaeb0de3a7029bd2b",
+      "components": [
+        {
+          "name": "postgres-openssl",
+          "version": "3.5.9",
+          "cpe": "openssl:openssl",
+          "files": [
+            "libcrypto-3-x64.dll",
+            "libssl-3-x64.dll"
+          ],
+          "source_lock": "native-windows-openssl.lock.json"
+        },
+        {
+          "name": "postgres-libxml2",
+          "version": "2.15.4",
+          "cpe": "xmlsoft:libxml2",
+          "files": [
+            "libxml2.dll"
+          ],
+          "source_lock": "native-windows-security-libraries.lock.json",
+          "source_component": "libxml2"
+        },
+        {
+          "name": "postgres-icu",
+          "version": "67.1",
+          "cpe": "icu-project:international_components_for_unicode",
+          "files": [
+            "icudt67.dll",
+            "icuin67.dll",
+            "icuuc67.dll"
+          ]
+        },
+        {
+          "name": "postgres-libiconv",
+          "version": "1.15",
+          "cpe": "gnu:libiconv",
+          "files": [
+            "libiconv-2.dll"
+          ]
+        },
+        {
+          "name": "postgres-gettext",
+          "version": "0.19.8",
+          "cpe": "gnu:gettext",
+          "files": [
+            "libintl-9.dll"
+          ]
+        },
+        {
+          "name": "postgres-lz4",
+          "version": "1.10.0",
+          "cpe": "lz4:lz4",
+          "files": [
+            "liblz4.dll"
+          ]
+        },
+        {
+          "name": "postgres-zstd",
+          "version": "1.5.7",
+          "cpe": "facebook:zstandard",
+          "files": [
+            "libzstd.dll"
+          ]
+        },
+        {
+          "name": "postgres-zlib",
+          "version": "1.3.2.1",
+          "cpe": "zlib:zlib",
+          "files": [
+            "zlib1.dll"
+          ],
+          "source_lock": "native-windows-security-libraries.lock.json",
+          "source_component": "zlib"
+        }
+      ]
+    },
+    {
+      "parent": "gstreamer",
+      "requirements_sha256": "76d5baeed64eb7e2c1f8c40218e63d9f06a167a60d56382dcfdac8087408f50c",
+      "components": [
+        {
+          "name": "gstreamer-openssl",
+          "version": "3.5.9",
+          "cpe": "openssl:openssl",
+          "files": [
+            "libcrypto-3-x64.dll",
+            "libssl-3-x64.dll"
+          ],
+          "source_lock": "native-windows-openssl.lock.json"
+        },
+        {
+          "name": "gstreamer-libexpat",
+          "version": "2.7.1",
+          "cpe": "libexpat_project:libexpat",
+          "files": [
+            "libexpat.dll"
+          ]
+        },
+        {
+          "name": "gstreamer-glib",
+          "version": "2.88.4",
+          "cpe": "gnome:glib",
+          "files": [
+            "glib-2.0-0.dll",
+            "gio-2.0-0.dll",
+            "gmodule-2.0-0.dll",
+            "gobject-2.0-0.dll"
+          ],
+          "source_lock": "native-windows-glib-soup.lock.json",
+          "source_component": "glib"
+        },
+        {
+          "name": "gstreamer-libpng",
+          "version": "1.6.57",
+          "cpe": "libpng:libpng",
+          "files": [
+            "png16.dll"
+          ],
+          "source_lock": "native-windows-security-libraries.lock.json",
+          "source_component": "libpng"
+        },
+        {
+          "name": "gstreamer-sqlite",
+          "version": "3.54.1",
+          "cpe": "sqlite:sqlite",
+          "files": [
+            "sqlite3-0.dll"
+          ],
+          "source_lock": "native-windows-security-libraries.lock.json",
+          "source_component": "sqlite"
+        },
+        {
+          "name": "gstreamer-libsoup",
+          "version": "3.8.1",
+          "cpe": "gnome:libsoup",
+          "files": [
+            "soup-3.0-0.dll"
+          ],
+          "source_lock": "native-windows-glib-soup.lock.json",
+          "source_component": "libsoup"
+        },
+        {
+          "name": "gstreamer-freetype",
+          "version": "2.13.3",
+          "cpe": "freetype:freetype2",
+          "files": [
+            "freetype-6.dll"
+          ]
+        },
+        {
+          "name": "gstreamer-nghttp2",
+          "version": "1.70.0",
+          "cpe": "nghttp2:nghttp2",
+          "files": [
+            "nghttp2.dll"
+          ],
+          "source_lock": "native-windows-glib-soup.lock.json",
+          "source_component": "nghttp2"
+        },
+        {
+          "name": "gstreamer-zlib",
+          "version": "1.3.2.1",
+          "cpe": "zlib:zlib",
+          "files": [
+            "z-1.dll"
+          ],
+          "source_lock": "native-windows-security-libraries.lock.json",
+          "source_component": "zlib"
+        },
+        {
+          "name": "gstreamer-cairo",
+          "version": "1.18.4",
+          "cpe": "cairographics:cairo",
+          "files": [
+            "cairo-2.dll",
+            "cairo-gobject-2.dll"
+          ]
+        },
+        {
+          "name": "gstreamer-pango",
+          "version": "1.56.2",
+          "cpe": "gnome:pango",
+          "files": [
+            "pango-1.0-0.dll",
+            "pangocairo-1.0-0.dll",
+            "pangoft2-1.0-0.dll",
+            "pangowin32-1.0-0.dll"
+          ]
+        },
+        {
+          "name": "gstreamer-harfbuzz",
+          "version": "15.0.0",
+          "cpe": "harfbuzz_project:harfbuzz",
+          "files": [
+            "harfbuzz.dll"
+          ],
+          "source_lock": "native-windows-security-libraries.lock.json",
+          "source_component": "harfbuzz"
+        },
+        {
+          "name": "gstreamer-srt",
+          "version": "1.5.5",
+          "cpe": "srt_project:srt",
+          "files": [
+            "srt.dll"
+          ]
+        }
+      ]
+    },
+    {
+      "parent": "wheel:cryptography",
+      "wheel_version": "50.0.2",
+      "wheel_sha256": "7afa5a6602a9f29af1f3a2965f831bae7c9d5d597b7cbb716d41ab3b7d89879c",
+      "evidence": "Exact Windows wheel native version exports: cryptography Binding.OpenSSL_version; Pillow features.version; pypdfium2_raw/version.json. Windows wheels retain upstream third-party licenses.",
+      "components": [
+        {
+          "name": "cryptography-openssl",
+          "version": "4.0.3",
+          "cpe": "openssl:openssl",
+          "files": [
+            "cryptography/hazmat/bindings/_rust.pyd"
+          ]
+        }
+      ]
+    },
+    {
+      "parent": "wheel:pillow",
+      "wheel_version": "13.0.0",
+      "wheel_sha256": "ff3fe9eb621fbb9db4c4be33ab946f6bac5f98ab50ca8d3260503653656c961b",
+      "evidence": "Exact Windows wheel native version exports: cryptography Binding.OpenSSL_version; Pillow features.version; pypdfium2_raw/version.json. Windows wheels retain upstream third-party licenses.",
+      "components": [
+        {
+          "name": "pillow-freetype",
+          "version": "2.14.3",
+          "cpe": "freetype:freetype",
+          "files": [
+            "PIL/_imagingft.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-littlecms",
+          "version": "2.19",
+          "cpe": "littlecms:little_cms",
+          "files": [
+            "PIL/_imagingcms.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-libwebp",
+          "version": "1.6.0",
+          "cpe": "webmproject:libwebp",
+          "files": [
+            "PIL/_webp.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-libavif",
+          "version": "1.4.2",
+          "cpe": "aomedia:libavif",
+          "files": [
+            "PIL/_avif.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-libjpeg-turbo",
+          "version": "3.2.0",
+          "cpe": "libjpeg-turbo:libjpeg-turbo",
+          "files": [
+            "PIL/_imaging.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-zlib-ng",
+          "version": "2.3.3",
+          "cpe": "zlib-ng:zlib-ng",
+          "files": [
+            "PIL/_imaging.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-openjpeg",
+          "version": "2.5.4",
+          "cpe": "uclouvain:openjpeg",
+          "files": [
+            "PIL/_imaging.cp312-win_amd64.pyd"
+          ]
+        },
+        {
+          "name": "pillow-libtiff",
+          "version": "4.7.2",
+          "cpe": "libtiff:libtiff",
+          "files": [
+            "PIL/_imaging.cp312-win_amd64.pyd"
+          ]
+        }
+      ]
+    },
+    {
+      "parent": "wheel:pypdfium2",
+      "wheel_version": "5.14.0",
+      "wheel_sha256": "149fd5c6397b8df8bf7911a93506eff0be874f877afe7ac936cf5d37d21a6a06",
+      "evidence": "Exact Windows wheel native version exports: cryptography Binding.OpenSSL_version; Pillow features.version; pypdfium2_raw/version.json. Windows wheels retain upstream third-party licenses.",
+      "components": [
+        {
+          "name": "pdfium",
+          "version": "156.0.8076.0",
+          "cpe": "google:pdfium",
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ]
+        },
+        {
+          "name": "pdfium-abseil-vendored",
+          "version": "git-435e7d977fb36fb47854a4c552c0706dad0bd7cf",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "435e7d977fb36fb47854a4c552c0706dad0bd7cf",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-agg23-vendored",
+          "version": "git-8ca5b735df4263f43c830479b78213854a392c22",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "8ca5b735df4263f43c830479b78213854a392c22",
+          "version_status": "Vendored directly in the pinned PDFium source tree; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-fast-float-vendored",
+          "version": "git-34164f547b7df3f5d794ff67e9f885c36819ebfc",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "34164f547b7df3f5d794ff67e9f885c36819ebfc",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-freetype-vendored",
+          "version": "git-4800589f76dc62fbe523a74a59e0d4850a5dd7df",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "4800589f76dc62fbe523a74a59e0d4850a5dd7df",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-icu-vendored",
+          "version": "git-8cc91d9b6ab9991802fd208ee03a69714fd0251c",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "8cc91d9b6ab9991802fd208ee03a69714fd0251c",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-lcms-vendored",
+          "version": "git-8ca5b735df4263f43c830479b78213854a392c22",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "8ca5b735df4263f43c830479b78213854a392c22",
+          "version_status": "Vendored directly in the pinned PDFium source tree; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-libjpeg-turbo-vendored",
+          "version": "git-640f254ad0fa03f6b1f29f89b7dd9366f2f6e533",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "640f254ad0fa03f6b1f29f89b7dd9366f2f6e533",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-openjpeg-vendored",
+          "version": "git-8ca5b735df4263f43c830479b78213854a392c22",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "8ca5b735df4263f43c830479b78213854a392c22",
+          "version_status": "Vendored directly in the pinned PDFium source tree; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-libpng-vendored",
+          "version": "git-0179a807421cf96731cdfa10008bba04fda243c1",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "0179a807421cf96731cdfa10008bba04fda243c1",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-llvm-libc-vendored",
+          "version": "git-320824188c37e5c28738b9652a0ca8087c934bc9",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "320824188c37e5c28738b9652a0ca8087c934bc9",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-simdutf-vendored",
+          "version": "git-f7356eed293f8208c40b3c1b344a50bd70971983",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "f7356eed293f8208c40b3c1b344a50bd70971983",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        },
+        {
+          "name": "pdfium-zlib-vendored",
+          "version": "git-285e94b8fa95ad3b7d16b80798ec8dce6febb8c8",
+          "cpe": null,
+          "files": [
+            "pypdfium2_raw/pdfium.dll"
+          ],
+          "upstream_revision": "285e94b8fa95ad3b7d16b80798ec8dce6febb8c8",
+          "version_status": "Vendored fork at DEPS revision; no independently verified upstream release version"
+        }
+      ],
+      "upstream_provenance": {
+        "publisher_release": "https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium/8076",
+        "publisher_attestation_url": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8076/pdfium-attestation.json",
+        "publisher_attestation_sha256": "98ab698094a23f8a8d46b8f333d7f5c114bdb820e64c2a60dae3a3f80ee085a5",
+        "publisher_archive": {
+          "filename": "pdfium-win-x64.tgz",
+          "bytes": 3826721,
+          "sha256": "808d36da9bc5a3104315fb307c80998121f565ee53953633bf33e80d7429e5ac"
+        },
+        "pdfium_dll_sha256": "69f1e860f6742fbaafcc4db80e785eec9a4ee0da36ea6d1dc0867ea0f18baea6",
+        "source_commit": "8ca5b735df4263f43c830479b78213854a392c22",
+        "deps_url": "https://pdfium.googlesource.com/pdfium/+/8ca5b735df4263f43c830479b78213854a392c22/DEPS",
+        "deps_sha256": "3c714a77e05a3dbaf36e0f594a90a326f91a12a1cd25d41ebe44093663e90e19",
+        "scope": "The wheel DLL is byte-identical to the publisher attested archive. Release branch HEAD equals the newest commit named in the publisher release. Vendored forks retain source revision identities rather than invented upstream release/CPE versions; this is inventory evidence, not a claim of complete per-fork CVE coverage.",
+        "attestation_verification": "Publisher release API asset digest and attestation subject digest match downloaded archive. Sigstore certificate/transparency verification was not independently run; no additional signing claim is implied."
+      }
+    }
+  ]
+}

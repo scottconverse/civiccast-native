@@ -63,6 +63,7 @@ __all__ = [
     "CIVICCAST_CONSOLE_LAUNCHERS",
     "CIVICCAST_DISTRIBUTION",
     "CIVICCAST_RETAINED_WHEEL_PATH",
+    "EMBEDDED_FFMPEG_BINARY_LICENSE",
     "EMBEDDED_FFMPEG_BUILD",
     "EMBEDDED_FFMPEG_LICENSE",
     "INTERPRETER_DISTRIBUTION",
@@ -107,7 +108,28 @@ __all__ = [
     "resolve_app_license",
 ]
 
-APP_MANIFEST_SCHEMA_VERSION: Final[int] = 8
+APP_MANIFEST_SCHEMA_VERSION: Final[int] = 9
+OCR_FILES: Final[dict[str, tuple[str, str, str]]] = {
+    "OCR/tesseract.exe": (
+        "tesseract",
+        "5.5.4",
+        "Apache-2.0 AND BSD-2-Clause AND LicenseRef-Microsoft-VCRedist",
+    ),
+    "OCR/provenance.json": ("tesseract", "5.5.4", "Apache-2.0"),
+    "OCR/LICENSES/tesseract.txt": ("tesseract", "5.5.4", "Apache-2.0"),
+    "OCR/LICENSES/leptonica.txt": ("leptonica", "1.87.0", "BSD-2-Clause"),
+    "OCR/LICENSES/tessdata-fast-eng.txt": (
+        "tessdata-fast-eng",
+        "87416418657359cb625c412a48b6e1d6d41c29bd",
+        "Apache-2.0",
+    ),
+    "OCR/tessdata/eng.traineddata": (
+        "tessdata-fast-eng",
+        "87416418657359cb625c412a48b6e1d6d41c29bd",
+        "Apache-2.0",
+    ),
+}
+OCR_LOCK_SHA256: Final[str] = "e388fa7b0b2052eb67848619e35306bda3de095bf97a01096e47996b12f5136b"
 #: The pack "component" identity for the signed native-app-payload
 #: ``.ccpack`` (``scripts/build_native_app_payload_pack.py``): the CPython
 #: 3.12 embeddable interpreter + the ``civiccast`` wheel + its hash-pinned
@@ -253,8 +275,10 @@ CAPTION_PACK_CONTRACT: Final[dict[str, object]] = {
     "self_test_audio_bytes": 352_078,
     "self_test_audio_sha256": ("59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e"),
 }
-EMBEDDED_FFMPEG_BUILD: Final[str] = "8c9502e9b0-minimal-msvc"
+EMBEDDED_FFMPEG_BUILD: Final[str] = "611cec792a-security1-minimal-msvc"
 EMBEDDED_FFMPEG_LICENSE: Final[str] = "LGPL-2.1-or-later"
+# The reviewed MSVC profile uses the static CRT; its redistributable terms also apply.
+EMBEDDED_FFMPEG_BINARY_LICENSE: Final[str] = "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist"
 #: SHA-256 of ``requirements-native-app-build.txt``.
 APP_BUILD_REQUIREMENTS_SHA256: Final[str] = (
     "f532bd87cf32e853111205b569a0cbfd8450d266f343e2da8a1a84835d3a1862"
@@ -321,7 +345,7 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: Re-pinned 2026-10-28: add PDFium 5.14.0 for local PDF recovery/rendering;
 #: all existing distribution versions/hashes, including the LGPL PyAV override, remain.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "a7a1cab876e29fe9fc8492871b6daa5dca6321c0604e53ba482b7f2f42c92b14"
+    "3b1749af9ce5cf54c1073cd7429d119942475753254cbdd2a128f021b249f74e"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).
@@ -357,22 +381,18 @@ APP_EXTERNAL_LICENSE_FILES: Final[dict[str, tuple[str, str, str, str]]] = {
 # The interpreter -- CPython 3.12 Windows x64 EMBEDDABLE distribution
 # ---------------------------------------------------------------------------
 #
-# python.org's purpose-built embeddable zip: a self-contained, redistributable
-# interpreter layout with no installer of its own, no registry/machine state,
-# and a deterministic tree -- the least-surprise fit for "place a CPython beside
-# the tree" that the closure's HOST_PYTHON_REQUIREMENT names. It satisfies that
-# requirement exactly: cp312, so the media closure's `.pyd` files (which link
-# python312.dll) load against it. Pinned by SHA-256; the build verifies the
-# downloaded bytes against this pin before extracting.
+# Official CPython source, built with upstream PCbuild and PC/layout --preset-embed.
+# This preserves the cp312 ABI required by the native wheel closure while shipping
+# the source-only security release. The archive is provisioned from the reviewed
+# local mirror; its embedded provenance binds source/dependency inputs, builder,
+# licenses and original runtime files. No binary download URL is implied.
 
-INTERPRETER_DISTRIBUTION: Final[str] = "cpython-embeddable"
-INTERPRETER_VERSION: Final[str] = "3.12.10"
-INTERPRETER_SOURCE_URL: Final[str] = (
-    "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
-)
-#: SHA-256 of the pinned embeddable zip (verified on download 2026-07-24).
-INTERPRETER_SHA256: Final[str] = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
-INTERPRETER_ZIP_BYTES: Final[int] = 11133606
+INTERPRETER_DISTRIBUTION: Final[str] = "cpython-embeddable-source-build"
+INTERPRETER_VERSION: Final[str] = "3.12.16"
+INTERPRETER_SOURCE_URL: Final[str] = "https://www.python.org/ftp/python/3.12.16/Python-3.12.16.tgz"
+#: Reviewed locally built archive; the URL above identifies its official source.
+INTERPRETER_SHA256: Final[str] = "b06074f51101293e2d81059dde190ba9325665e926e4e2a16c0e3916c49be9db"
+INTERPRETER_ZIP_BYTES: Final[int] = 11474063
 #: PSF License Agreement (the `LICENSE.txt` inside the embeddable zip). Bundled
 #: in the payload's BOM.
 INTERPRETER_LICENSE: Final[str] = "PSF-2.0"
@@ -526,7 +546,13 @@ APP_DISTRIBUTION_LICENSE: Final[dict[str, str]] = {
 #: whose canonical name is not here fails the build even if its license is fine.
 AUTHORIZED_APP_DISTRIBUTIONS: Final[frozenset[str]] = frozenset(APP_DISTRIBUTION_LICENSE)
 AUTHORIZED_NON_WHEEL_COMPONENTS: Final[frozenset[str]] = frozenset(
-    {MSVC_RUNTIME_DISTRIBUTION, WHISPER_MODEL_DISTRIBUTION}
+    {
+        MSVC_RUNTIME_DISTRIBUTION,
+        WHISPER_MODEL_DISTRIBUTION,
+        "tesseract",
+        "leptonica",
+        "tessdata-fast-eng",
+    }
 )
 
 
@@ -625,6 +651,12 @@ def license_for_payload_path(distribution: str, path: str) -> str:
     """Return the reviewed component license for a shipped payload path."""
 
     normalized = path.replace("\\", "/")
+    if (
+        distribution == "av"
+        and normalized.startswith("Lib/site-packages/av.libs/")
+        and normalized.lower().endswith(".dll")
+    ):
+        return EMBEDDED_FFMPEG_BINARY_LICENSE
     if distribution == "av" and (
         normalized.startswith("Lib/site-packages/av.libs/")
         or "/FFMPEG-PROVENANCE.json" in normalized
@@ -641,9 +673,9 @@ def component_version_for_payload_path(
 ) -> str:
     """Return the actual component identity represented by a payload path."""
 
-    if (
-        distribution == "av"
-        and license_for_payload_path(distribution, path) == EMBEDDED_FFMPEG_LICENSE
+    if distribution == "av" and license_for_payload_path(distribution, path) in (
+        EMBEDDED_FFMPEG_LICENSE,
+        EMBEDDED_FFMPEG_BINARY_LICENSE,
     ):
         return EMBEDDED_FFMPEG_BUILD
     return distribution_version

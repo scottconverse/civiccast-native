@@ -230,12 +230,12 @@ SUPPORT_LIBRARY_LICENSE: Final[dict[str, str]] = {
     # version3=disabled; avcodec_find_encoder_by_name() confirms no
     # libx264/libx265/libopenh264/libfdk_aac registered among the build's
     # 673 codecs. See evidence memo "FFmpeg" section for verbatim output.
-    "avutil-59.dll": "LGPL-2.1-or-later",
-    "avcodec-61.dll": "LGPL-2.1-or-later",
-    "avformat-61.dll": "LGPL-2.1-or-later",
-    "avfilter-10.dll": "LGPL-2.1-or-later",
-    "swresample-5.dll": "LGPL-2.1-or-later",
-    "swscale-8.dll": "LGPL-2.1-or-later",
+    "avutil-59.dll": "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
+    "avcodec-61.dll": "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
+    "avformat-61.dll": "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
+    "avfilter-10.dll": "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
+    "swresample-5.dll": "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
+    "swscale-8.dll": "LGPL-2.1-or-later AND LicenseRef-Microsoft-VCRedist",
     # --- Cisco OpenH264 codec library itself (distinct file from the
     # gstopenh264.dll GStreamer plugin wrapper above). BSD-2-Clause per
     # Cisco's own upstream LICENSE, corroborated by the wrapping plugin's
@@ -256,6 +256,7 @@ SUPPORT_LIBRARY_LICENSE: Final[dict[str, str]] = {
     "glib-2.0-0.dll": "LGPL-2.1-or-later",
     "gmodule-2.0-0.dll": "LGPL-2.1-or-later",
     "gobject-2.0-0.dll": "LGPL-2.1-or-later",
+    "gthread-2.0-0.dll": "LGPL-2.1-or-later",
     "gstanalytics-1.0-0.dll": "LGPL-2.1-or-later",
     "gstapp-1.0-0.dll": "LGPL-2.1-or-later",
     "gstaudio-1.0-0.dll": "LGPL-2.1-or-later",
@@ -327,10 +328,10 @@ SUPPORT_LIBRARY_LICENSE: Final[dict[str, str]] = {
     # elections below. See DUAL_LICENSE_ELECTIONS.
     "freetype-6.dll": "FTL",
     "fribidi-0.dll": "LGPL-2.1-or-later",
-    "harfbuzz.dll": "MIT",
+    "harfbuzz.dll": "MIT AND LicenseRef-Microsoft-VCRedist",
     "intl-8.dll": "LGPL-2.1-or-later",
-    "libcrypto-3-x64.dll": "Apache-2.0",
-    "libssl-3-x64.dll": "Apache-2.0",
+    "libcrypto-3-x64.dll": "Apache-2.0 AND LicenseRef-Microsoft-VCRedist",
+    "libssl-3-x64.dll": "Apache-2.0 AND LicenseRef-Microsoft-VCRedist",
     "libexpat.dll": "MIT",
     "nghttp2.dll": "MIT",
     "pango-1.0-0.dll": "LGPL-2.1-or-later",
@@ -339,17 +340,17 @@ SUPPORT_LIBRARY_LICENSE: Final[dict[str, str]] = {
     "pangowin32-1.0-0.dll": "LGPL-2.1-or-later",
     "pcre2-8-0.dll": "BSD-3-Clause",
     "pixman-1-0.dll": "MIT",
-    "png16.dll": "Libpng",
+    "png16.dll": "Libpng AND LicenseRef-Microsoft-VCRedist",
     "psl-5.dll": "MIT",
-    "soup-3.0-0.dll": "LGPL-2.1-or-later",
+    "soup-3.0-0.dll": "LGPL-2.0-or-later",
     # SQLite's own SPDX identifier for its public-domain dedication IS
     # literally "blessing" -- matches the "blessing" term present in the
     # gstreamer_libs wheel's own METADATA aggregate.
-    "sqlite3-0.dll": "blessing",
+    "sqlite3-0.dll": "blessing AND LicenseRef-Microsoft-VCRedist",
     # Haivision SRT: MPL-2.0 per upstream LICENSE, matches "MPL-2.0" in the
     # gstreamer_plugins_libs wheel's own METADATA aggregate.
     "srt.dll": "MPL-2.0",
-    "z-1.dll": "Zlib",
+    "z-1.dll": "Zlib AND LicenseRef-Microsoft-VCRedist",
     # librtmp is genuinely dual-licensed upstream: "GPLv2 or LGPLv2.1" per
     # its own README, redistributor's choice. We elect the LGPL branch --
     # a valid choice under the dual license, not a guess about which
@@ -589,6 +590,17 @@ GENERATED_ARTIFACT_PATHS: Final[frozenset[str]] = frozenset(
 
 PATH_PREFIX_LICENSE: Final[tuple[tuple[str, str], ...]] = (
     ("python/gi/", "LGPL-2.1-or-later"),
+    ("licenses/openssl-3.5.9/LICENSE.txt", "Apache-2.0"),
+    ("licenses/openssl-3.5.9/LicenseRef-Microsoft-VCRedist.txt", "LicenseRef-Microsoft-VCRedist"),
+    ("licenses/glib-soup/glib-COPYING.txt", "LGPL-2.1-or-later"),
+    ("licenses/glib-soup/libsoup-COPYING.txt", "LGPL-2.0-or-later"),
+    ("licenses/glib-soup/nghttp2-COPYING.txt", "MIT"),
+    ("licenses/ffmpeg-7.1.5-security1/COPYING.LGPLv2.1", "LGPL-2.1-or-later"),
+    ("licenses/security-libs/zlib-LICENSE.txt", "Zlib"),
+    ("licenses/security-libs/libpng-LICENSE.txt", "Libpng"),
+    ("licenses/security-libs/harfbuzz-LICENSE.txt", "MIT"),
+    ("licenses/security-libs/sqlite-LICENSE.txt", "blessing"),
+    ("licenses/security-libs/LicenseRef-Microsoft-VCRedist.txt", "LicenseRef-Microsoft-VCRedist"),
     ("licenses/", GENERATED_ARTIFACT_LICENSE),
 )
 
@@ -737,7 +749,7 @@ def license_identifiers_in(license_expression: str) -> tuple[str, ...]:
 #
 # Evidence for every entry below: extracted and inspected directly from the
 # exact pinned upstream archives named in `native-windows-runtime-
-# dependencies.lock.json` (PostgreSQL 17.10-2 Windows x64 binaries,
+# dependencies.lock.json` (PostgreSQL 17.11-2 Windows x64 binaries,
 # TSDuck v3.44-4676 Win64 Portable) --
 # verbatim command output and per-notice SHA-256 recorded in
 # `.agent-runs/native-windows/ws5-installer/evidence/
@@ -812,14 +824,15 @@ SERVER_PACK_BASENAME_LICENSE: Final[dict[str, str]] = {
     "libintl-9.dll": "LGPL-2.1-or-later",  # gettext
     "libiconv-2.dll": "LGPL-2.1-or-later",
     "libwinpthread-1.dll": "LGPL-2.1-or-later",  # winpthreads (MinGW-w64)
-    "libcrypto-3-x64.dll": "Apache-2.0",  # OpenSSL 3.x
-    "libssl-3-x64.dll": "Apache-2.0",
+    # Supported OpenSSL 3.5.9 source overlay links the MSVC CRT statically.
+    "libcrypto-3-x64.dll": "Apache-2.0 AND LicenseRef-Microsoft-VCRedist",
+    "libssl-3-x64.dll": "Apache-2.0 AND LicenseRef-Microsoft-VCRedist",
     "icudt67.dll": "ICU",
     "icuin67.dll": "ICU",
     "icuuc67.dll": "ICU",
     "liblz4.dll": "BSD-2-Clause",
-    "libxml2.dll": "MIT",
-    "zlib1.dll": "Zlib",
+    "libxml2.dll": "MIT AND LicenseRef-Microsoft-VCRedist",
+    "zlib1.dll": "Zlib AND LicenseRef-Microsoft-VCRedist",
     # --- TSDuck: BSD-2-Clause per its own `LICENSE.txt`. `tsp.exe`,
     # `tscore.dll`, and `tsduck.dll` are TSDuck's own first-party code.
     # TSDuck's bundled-third-party notices (`OTHERS.txt`: DTAPI [proprietary,
@@ -887,6 +900,11 @@ SERVER_PACK_BASENAME_LICENSE: Final[dict[str, str]] = {
 #: `licenses/` is this pack builder's own generated upstream-notice
 #: directory (Category 4's `GENERATED_ARTIFACT_LICENSE` convention).
 SERVER_PACK_PATH_PREFIX_LICENSE: Final[tuple[tuple[str, str], ...]] = (
+    ("licenses/security-libs/zlib-LICENSE.txt", "Zlib"),
+    ("licenses/security-libs/libxml2-LICENSE.txt", "MIT"),
+    ("licenses/security-libs/LicenseRef-Microsoft-VCRedist.txt", "LicenseRef-Microsoft-VCRedist"),
+    ("licenses/openssl-3.5.9/LicenseRef-Microsoft-VCRedist.txt", "LicenseRef-Microsoft-VCRedist"),
+    ("licenses/openssl-3.5.9/", "Apache-2.0"),
     ("share/timezone/", "PostgreSQL"),
     ("share/timezonesets/", "PostgreSQL"),
     ("share/extension/", "PostgreSQL"),
@@ -998,13 +1016,13 @@ del _server_pack_basename, _server_pack_license
 FFMPEG_PACK_BASENAME_LICENSE: Final[dict[str, str]] = {
     "ffmpeg.exe": "LGPL-3.0-or-later",
     "ffprobe.exe": "LGPL-3.0-or-later",
-    "avcodec-62.dll": "LGPL-3.0-or-later",
-    "avdevice-62.dll": "LGPL-3.0-or-later",
-    "avfilter-11.dll": "LGPL-3.0-or-later",
-    "avformat-62.dll": "LGPL-3.0-or-later",
-    "avutil-60.dll": "LGPL-3.0-or-later",
-    "swresample-6.dll": "LGPL-3.0-or-later",
-    "swscale-9.dll": "LGPL-3.0-or-later",
+    "avcodec-63.dll": "LGPL-3.0-or-later",
+    "avdevice-63.dll": "LGPL-3.0-or-later",
+    "avfilter-12.dll": "LGPL-3.0-or-later",
+    "avformat-63.dll": "LGPL-3.0-or-later",
+    "avutil-61.dll": "LGPL-3.0-or-later",
+    "swresample-7.dll": "LGPL-3.0-or-later",
+    "swscale-10.dll": "LGPL-3.0-or-later",
 }
 
 #: Generated-directory prefixes, mirroring `SERVER_PACK_PATH_PREFIX_LICENSE`'s

@@ -48,6 +48,18 @@ SELF_HOSTED_ALLOWLIST = {
     ),
 }
 HOSTED_EXPRESSION_ALLOWLIST = {
+    # Source-free transfer of four locally reviewed runtime archives only.
+    # ci-test's Windows tests stay hosted; fork PRs cannot use the mirror job.
+    (
+        "ci-test.yml",
+        '${{ fromJSON(\'["self-hosted","windows","sandbox-lab"]\') }}',
+    ),
+    # Source-free transfer of reviewed immutable inputs from a local-only mirror.
+    # The two reproducibility builds remain on windows-latest; forks skip transfer.
+    (
+        "native-app-reproducibility.yml",
+        '${{ fromJSON(\'["self-hosted","windows","sandbox-lab"]\') }}',
+    ),
     (
         "ci-installer-compile.yml",
         "${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-latest' }}",
