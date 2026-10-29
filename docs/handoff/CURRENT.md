@@ -1,8 +1,49 @@
+# CURRENT — Retained PDF processing and agenda preview — October 28, 2026
+
+Owner resumed implementation after model change. Root owns integration/hard coding;
+Sol 6.1 medium owns the bounded page processor. No DeepSeek. CivicCast Current Coder
+is the fixed-candidate auditor. Two serial PRs, required checks and normal merge;
+stop before L1/L2. Preserve station/data; no installer/release/paid OCR/LFS/reboot.
+
+Candidate A: C:/Dev/cc-pdf-processing, feat/retained-pdf-processing, based on
+main ba808463 (PR278 merge). A: retained disk originals/hash/identity, page checkpoints,
+automatic bounded batches/resume, independent local PDF fallback and local OCR.
+B follows A: agenda-section extraction, source pages, preview/explicit confirmation.
+
+Evidence: actual public archived Longmont meeting3382/template15247 acquired through
+bounded 2026 discovery and streamed disk download: 41,472,505 bytes, SHA256
+b35f5679e9981ec5cb5dc048ae9640f187c2babf5fd1c877c628bdc9e83588a0.
+Original/checkpoints/acceptance work are isolated under monitoring chat work/packet-acceptance.
+Agenda pages1–4 end with item17 ADJOURN; page5 begins older minutes. Prior 210-line
+extraction did not establish semantic correctness. TownReporter source pinned
+e07612de20cd5e035faaf2201d548d4d67da7be3; checkpoint/batch behavior reused conceptually.
+
+Remaining: finish A integration/regressions, actual bounded resume/OCR proof, fixed-SHA
+audit/required CI/merge; then B/parser/preview and complete isolated archive-to-persistence
+workflow with expected titles/order/source verified, audit/checks/merge. No completion
+claim yet. Owned agent: document_processor, Sol6.1 medium, no nested workers; terminate
+through collaboration interrupt if owner stops. No station processes started.
+
+---
+Historical handoff and PR278 receipt follow; preserved from prior candidate.
 # CivicCast current handoff — October 27, 2026
 
 Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
 
-## CURRENT — PHASE 1 REVIEW CORRECTIONS (PR277 follow-up) — October 29, 2026
+## CURRENT — DELIVERED: PR277 REVIEW CORRECTIONS (PR278) — October 28, 2026
+
+DELIVERED. PR #278 https://github.com/scottconverse/civiccast-native/pull/278 merged to
+`main` at 2026-10-28T23:46:47Z: merge commit `ba80846330108bf300e48bb64507b748c099b8d7`,
+merged source head `065599fe4d5e0d6a7e7b1cf339e422a4a73c620d` (ordinary merge, no
+admin/bypass/auto; one ordinary follow-up commit after the bounded review, no force push).
+Required CI on `065599fe`: 20 checks passed, 3 packaging-only checks skipped, none failed
+(Unit tests, claims-evidence verifier, Windows native guard, WS4, Two independent Windows
+workspaces, reproducibility, lint/type, security, operator, a11y, docs, policy). Optional
+agenda-integration and randomized suites also passed; neither is a gate. Main head verified
+as `ba808463` locally and via `git ls-remote`.
+
+This local receipt carries root's earlier local Phase 1 completion record (still below,
+historical) and was not pushed as a bookkeeping-only commit, so CI was not restarted for it.
 
 Owner ordered ONE focused correction PR for three automated-review findings reproduced
 against final PR277 head `3de427a5`. DeepSeek Flash1017-cloud LOW is sole serial executor;
@@ -42,7 +83,7 @@ archived year for discovery, but the import lookup searched only the current yea
 two prior ones, so a meeting discovered with e.g. `since=2023-01-01` in 2026 returned
 not-found. Fix: smallest compatible explicit year context — optional PrimeGov-only
 `archive_year` field on the existing import-external body (rejected 422 for the other
-vendors, rejected when in the future or before 1990), forwarded through the
+vendors or for a future archive year; years 1 through the current UTC year are supported), forwarded through the
 `AgendaSource.fetch_agenda` Protocol keyword (other adapters accept and ignore it), and used
 by `_find_meeting` as the primary archive year (upcoming + that year + current year = at
 most three finite lists). The operator console sends the selected meeting's year (else the
@@ -86,17 +127,12 @@ This correction does not invalidate them: the defaults (500 pages / 2,000,000 ch
 the 258-page packet's "not partial" outcome, and the eight-item extraction are unchanged by
 the budget-check reordering, and no document was downloaded again.
 
-OWNED JOB: required `ci-test` (+ lint/security/operator/docs/policy as applicable) on this
-branch's PR, triggered by the ordinary branch push only. One CI waiter; bounded 5-10 minute
-polls that inspect early failed required jobs first. Expected terminal: required checks
-green -> normal merge (no admin/bypass/auto). Cancellation method if mis-owned or wedged:
-`gh run cancel <run id>` for that specific run only. Exact PR number/SHA/run ids are recorded
-in the executor receipt rather than a second bookkeeping commit, so CI is not restarted for
-documentation.
+OWNED JOBS: none. Final-head required CI40781932797 and companion checks are terminal green; PR278 merged normally. Executor and bounded reviewer are terminal. Root independently verified merged identity and 20 successful/3 expected skipped checks. Regression receipt: coordinator outputs/deepseek-phase1-corrections/result.json; read-only review: outputs/deepseek-phase1-correction-review/result.json. No reruns or station actions.
 
-NEXT ACTION: recheck only the two corrected review findings and the applicable automated PR
-comments on the final head, wait for applicable required checks, then merge and verify the merge
-SHA. Optional agenda-integration and randomized jobs are NOT gates.
+NEXT ACTION: none owed for this correction; await owner direction. Do not start Phase 2,
+packaging, or any station action automatically. No owned job remains (the only owned job was
+the PR278 required-CI run on `065599fe`, which reached its terminal green state; no local
+watcher process is left running).
 
 ---
 
@@ -1529,4 +1565,3 @@ prove that a ~95h soak now stays clean, and no new installer was built, so the
 installed station still carries the unguarded call. Remaining executable action: root
 review of the bounded diff, then commit/PR and a delivered build if the station is to
 carry the fix.
-

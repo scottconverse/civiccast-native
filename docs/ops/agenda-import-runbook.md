@@ -155,7 +155,13 @@ seen before) are added on a re-import.
   `cancellation_notice_only`.
 - **PrimeGov bounded handling**: PDF downloads are capped at 100 MiB / 180 s
   (streamed, checked per chunk) and extraction at 500 pages / 2,000,000
-  characters, with a hard 60 s subprocess kill for a stuck parser. A document
+  characters. The application retains the original on disk, its SHA256 and
+  provider identity, and each successfully extracted page. Processing continues
+  automatically in 12-page batches within a 20-minute attempt; retry resumes
+  unfinished pages from that same retained original. Each local parser attempt
+  has a 45-second killable subprocess budget. Native pypdf extraction falls back
+  to independent PDFium text/rendering and local Tesseract OCR for image-only pages.
+  A document
   over those bounds, an unreadable/encrypted PDF, a page that fails to extract,
   or a PARTIAL extraction is refused with a distinct error
   (`document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`)
@@ -201,3 +207,28 @@ seen before) are added on a re-import.
 - **Legistar token-gated tenants**: confirmed real (NYC). Ask the partner
   station's city IT contact for a token; there is no way around this for a
   gated tenant.
+
+### Retained PDF storage and local OCR
+
+PrimeGov's application adapter streams originals into
+`CIVICCAST_UPLOAD_DIR/agenda-import` (development default: `uploads/agenda-import`).
+`CIVICCAST_AGENDA_DOCUMENT_DIR` overrides that directory for an isolated deployment.
+Each version-1 manifest records provider/tenant/meeting/document/URL, bytes and
+SHA256. `original.pdf` and `pages.json` must be backed up together with that
+managed storage. They contain public meeting material, not provider credentials.
+Existing agenda tables require no migration; the new versioned files are additive.
+Rollback preserves these files; older code ignores them. Do not delete originals
+or checkpoints to retry a read. A changed original is refused rather than silently
+mixed with prior pages. Incomplete download files are removed on failure.
+
+Install a local Tesseract executable and English language data to enable scanned
+page recovery, then set `CIVICCAST_TESSERACT_CMD` to its executable path (or put
+`tesseract` on PATH). No cloud OCR or paid provider is called. Missing OCR, failed
+pages, cancellation and exhausted budgets leave completed pages intact and refuse
+an incomplete agenda import. A visually confirmed white page can count as blank;
+an image containing unreadable content cannot silently count as complete.
+
+The page reader is provider-independent; Longmont's published 258-page packet is
+the large-document acceptance fixture. Complete page extraction alone does not
+establish correct agenda-item interpretation. Agenda-section parsing and operator
+preview/confirmation are the subsequent integration slice.

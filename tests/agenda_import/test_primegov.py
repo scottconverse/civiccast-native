@@ -353,6 +353,31 @@ class TestCompiledDocumentPdf:
     """P1: a PDF document with a null vendor link is fetched from PrimeGov's
     PUBLIC pre-compiled-document endpoint built from templateId + compileOutputType."""
 
+    def test_retained_pipeline_reuses_original_and_recovers_items(self, tmp_path) -> None:
+        from civiccast.agenda_import.documents import DocumentStore
+
+        documents = [{"id": 1, "templateId": 555, "templateName": "Agenda", "compileOutputType": 1}]
+        calls = []
+
+        def handler(request):
+            if "List" in request.url.path:
+                return httpx.Response(200, json=_single_meeting(documents))
+            calls.append(str(request.url))
+            return httpx.Response(200, content=_agenda_pdf(["1. Call to order", "2. Roll call"]))
+
+        source = PrimeGovSource(
+            transport=httpx.MockTransport(handler), document_store=DocumentStore(tmp_path)
+        )
+        first = source.fetch_agenda("example", "777")
+        second = source.fetch_agenda("example", "777")
+        assert [item.title for item in first.items] == ["Call to order", "Roll call"]
+        assert first == second
+        assert len(calls) == 1
+        assert source.last_processing.complete
+        assert source.last_document.metadata["identity"]["event_id"] == "777"
+        assert source.last_document.path.exists()
+        assert source.last_document.checkpoint_path.exists()
+
     def test_pdf_agenda_with_null_link_builds_public_compiled_document_url(self) -> None:
         pdf_bytes = _agenda_pdf(["1. Call to order", "2. Roll call"])
         requested: list[tuple[str | None, str | None]] = []

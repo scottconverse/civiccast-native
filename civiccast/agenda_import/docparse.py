@@ -174,6 +174,23 @@ DEFAULT_MAX_PDF_PAGES = 500
 DEFAULT_MAX_PDF_TEXT_CHARS = 2_000_000
 
 
+def extract_items_from_page_texts(page_texts: list[str]) -> list[ExternalAgendaItem]:
+    """Apply the existing numbered-line interpretation to recovered page text."""
+    items: list[ExternalAgendaItem] = []
+    for text in page_texts:
+        for line in text.splitlines():
+            match = _PDF_NUMBERED_LINE_RE.match(line)
+            if match and match.group("title").strip():
+                items.append(
+                    ExternalAgendaItem(
+                        order=len(items) + 1,
+                        title=match.group("title").strip()[:_ITEM_TITLE_MAX],
+                        number=match.group("number"),
+                    )
+                )
+    return items
+
+
 @dataclass(frozen=True)
 class PdfExtraction:
     """Outcome of a bounded PDF extraction.
