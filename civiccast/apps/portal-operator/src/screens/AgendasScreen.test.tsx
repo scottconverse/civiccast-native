@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import type {
@@ -11,7 +11,10 @@ import type {
   StaffIdentityResponse,
 } from '../types/api.generated'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 vi.mock('../api/client', () => ({
   AGENDA_EXTERNAL_SOURCES: ['legistar', 'primegov', 'civicclerk', 'js_portal'],
@@ -40,6 +43,12 @@ vi.mock('../api/client', () => ({
   getJsPortalPosture: vi.fn(),
   listExternalAgendaMeetings: vi.fn(),
   importExternalAgenda: vi.fn(),
+  startAgendaImportPreview: vi.fn(),
+  getAgendaImportPreview: vi.fn(),
+  resumeAgendaImportPreview: vi.fn(),
+  cancelAgendaImportPreview: vi.fn(),
+  confirmAgendaImportPreview: vi.fn(),
+  staffApiBlobRequest: vi.fn(),
 }))
 
 import {
@@ -52,6 +61,13 @@ import {
   getStaffIdentity,
   importAgendaFromDoc,
   importExternalAgenda,
+  startAgendaImportPreview,
+  getAgendaImportPreview,
+  resumeAgendaImportPreview,
+  cancelAgendaImportPreview,
+  confirmAgendaImportPreview,
+  type AgendaImportPreview,
+  staffApiBlobRequest,
   listAgendaItems,
   listExternalAgendaMeetings,
   listMeetingAgendas,
@@ -112,8 +128,31 @@ function renderScreen() {
   )
 }
 
+function importPreview(overrides: Partial<AgendaImportPreview> = {}): AgendaImportPreview {
+  return {
+    preview_id: 'preview-1', agenda_id: 'council-2026-01', status: 'ready',
+    title: 'City Council', source_doc_url: 'https://example.gov/agenda.pdf',
+    items: [{ order: 1, number: '1', title: 'MEETING CALLED TO ORDER', doc_url: 'https://example.gov/agenda.pdf#page=1' }],
+    agenda_pages: [1, 2], item_pages: { '1': [1] }, pages_read: 4, pages_total: 4,
+    warnings: [], resumable: false, document_id: 'document-1', document_sha256: 'a'.repeat(64),
+    source_document_url: '/api/staff/agenda-documents/document-1/source', cancel_requested: false,
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  sessionStorage.clear()
+  vi.stubGlobal('URL', class extends URL {
+    static createObjectURL = vi.fn(() => 'blob:retained-agenda')
+    static revokeObjectURL = vi.fn()
+  })
+  vi.mocked(staffApiBlobRequest).mockResolvedValue(new Blob(['retained PDF'], { type: 'application/pdf' }))
+  vi.mocked(startAgendaImportPreview).mockResolvedValue(importPreview())
+  vi.mocked(getAgendaImportPreview).mockResolvedValue(importPreview())
+  vi.mocked(resumeAgendaImportPreview).mockResolvedValue(importPreview({ status: 'reading' }))
+  vi.mocked(cancelAgendaImportPreview).mockResolvedValue(importPreview({ status: 'cancelled', resumable: true }))
+  vi.mocked(confirmAgendaImportPreview).mockResolvedValue([item({ item_id: 'confirmed-1' })])
   vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
   vi.mocked(listMeetingAgendas).mockResolvedValue([agenda()])
   vi.mocked(listAgendaMeetings).mockResolvedValue([{
@@ -656,7 +695,7 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
       ],
       partialWarning: null,
     })
-    vi.mocked(importExternalAgenda).mockResolvedValue([item({ item_id: 'item-ext-01' })])
+    vi.mocked(startAgendaImportPreview).mockResolvedValue(importPreview())
     const { findByLabelText, findByRole, findByText } = renderScreen()
     fireEvent.change(await findByLabelText('External agenda source'), {
       target: { value: 'primegov' },
@@ -671,16 +710,17 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
       await findByText(/import is scoped to the selected meeting/i),
     ).toBeTruthy()
 
-    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+    fireEvent.click(await findByRole('button', { name: /preview the selected meeting/i }))
 
     await waitFor(() =>
-      expect(vi.mocked(importExternalAgenda)).toHaveBeenCalledWith('council-2026-01', {
+      expect(vi.mocked(startAgendaImportPreview)).toHaveBeenCalledWith('council-2026-01', {
         source: 'primegov',
         client_code: 'longmont',
         event_id: 'ext-old',
         portal_url: null,
         portal_vendor_hint: null,
         archive_year: 2023,
+        document_kind: 'automatic',
       }),
     )
   })
@@ -701,7 +741,7 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
       ],
       partialWarning: null,
     })
-    vi.mocked(importExternalAgenda).mockResolvedValue([item({ item_id: 'item-ext-01' })])
+    vi.mocked(startAgendaImportPreview).mockResolvedValue(importPreview())
     const { findByLabelText, findByRole } = renderScreen()
     fireEvent.change(await findByLabelText('External agenda source'), {
       target: { value: 'primegov' },
@@ -711,16 +751,17 @@ describe('AgendasScreen external agenda import (Agenda Bridge)', () => {
     })
     fireEvent.click(await findByRole('button', { name: /find meetings/i }))
     await findByLabelText('Meeting to import')
-    fireEvent.click(await findByRole('button', { name: /import the selected meeting/i }))
+    fireEvent.click(await findByRole('button', { name: /preview the selected meeting/i }))
 
     await waitFor(() =>
-      expect(vi.mocked(importExternalAgenda)).toHaveBeenCalledWith('council-2026-01', {
+      expect(vi.mocked(startAgendaImportPreview)).toHaveBeenCalledWith('council-2026-01', {
         source: 'primegov',
         client_code: 'longmont',
         event_id: 'ext-next',
         portal_url: null,
         portal_vendor_hint: null,
         archive_year: null,
+        document_kind: 'automatic',
       }),
     )
   })
@@ -828,5 +869,108 @@ describe('recording marker workflow', () => {
     expect(await findByLabelText('Source recording time (hh:mm:ss)')).toBeTruthy()
     fireEvent.click(await findByRole('button', { name: 'Mark Call to order now' }))
     await waitFor(() => expect(markAgendaItemNow).toHaveBeenCalledWith('council-2026-01', 'item-01'))
+  })
+})
+
+describe('PrimeGov retained import previews', () => {
+  async function openPreview(screen: ReturnType<typeof renderScreen>, packet = false) {
+    fireEvent.change(await screen.findByLabelText('External agenda source'), { target: { value: 'primegov' } })
+    fireEvent.change(await screen.findByLabelText('Tenant / site code'), { target: { value: 'longmont' } })
+    if (packet) fireEvent.click(await screen.findByLabelText('Use full published packet'))
+    fireEvent.click(await screen.findByRole('button', { name: /find meetings/i }))
+    await screen.findByLabelText('Meeting to import')
+    fireEvent.click(await screen.findByRole('button', { name: /preview the selected meeting/i }))
+    return screen.findByRole('region', { name: 'PrimeGov agenda import preview' })
+  }
+
+  it('previews ordered titles and retained-source page links without importing before confirmation', async () => {
+    const screen = renderScreen()
+    const panel = within(await openPreview(screen))
+    expect(await panel.findByText('City Council')).toBeTruthy()
+    expect(await panel.findByText('1. MEETING CALLED TO ORDER')).toBeTruthy()
+    expect(staffApiBlobRequest).not.toHaveBeenCalled()
+    expect(panel.queryByRole('link', { name: 'Page 1' })).toBeNull()
+    fireEvent.click(await panel.findByRole('button', { name: 'Load retained source document' }))
+    expect((await panel.findByRole('link', { name: 'Page 1' })).getAttribute('href'))
+      .toBe('blob:retained-agenda#page=1')
+    expect(staffApiBlobRequest).toHaveBeenCalledExactlyOnceWith('/api/staff/agenda-documents/document-1/source')
+    expect((await panel.findByRole('link', { name: 'Open retained source document' })).getAttribute('href'))
+      .toBe('blob:retained-agenda')
+    expect(await panel.findByText(/4 of 4 document pages read/)).toBeTruthy()
+    expect(importExternalAgenda).not.toHaveBeenCalled()
+    expect(confirmAgendaImportPreview).not.toHaveBeenCalled()
+    fireEvent.click(await panel.findByRole('button', { name: 'Confirm import' }))
+    await waitFor(() => expect(confirmAgendaImportPreview).toHaveBeenCalledWith('council-2026-01', 'preview-1'))
+    expect(await screen.findByText('Imported 1 item.')).toBeTruthy()
+    expect(sessionStorage.getItem('agenda-import-preview:council-2026-01')).toBeNull()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:retained-agenda')
+  })
+
+  it('blocks partial confirmation and resumes retained reading with an actual cancellation action', async () => {
+    const partial = importPreview({ status: 'partial', pages_read: 12, pages_total: 258,
+      warnings: ['Agenda reading is incomplete. Completed pages are retained.'], resumable: true })
+    vi.mocked(startAgendaImportPreview).mockResolvedValue(partial)
+    vi.mocked(getAgendaImportPreview).mockResolvedValue(partial)
+    vi.mocked(resumeAgendaImportPreview).mockResolvedValue({ ...partial, status: 'reading' })
+    vi.mocked(cancelAgendaImportPreview).mockResolvedValue({ ...partial, status: 'cancelled' })
+    const screen = renderScreen()
+    const panel = within(await openPreview(screen))
+    expect((await panel.findByRole('button', { name: 'Confirm import' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(await panel.findByText(/12 of 258 document pages read/)).toBeTruthy()
+    expect(await panel.findByText(/Agenda reading is incomplete/)).toBeTruthy()
+    expect(confirmAgendaImportPreview).not.toHaveBeenCalled()
+    vi.mocked(getAgendaImportPreview).mockResolvedValue({ ...partial, status: 'reading' })
+    fireEvent.click(await panel.findByRole('button', { name: 'Resume reading' }))
+    await waitFor(() => expect(resumeAgendaImportPreview).toHaveBeenCalledWith('council-2026-01', 'preview-1'))
+    vi.mocked(getAgendaImportPreview).mockResolvedValue({ ...partial, status: 'cancelled' })
+    fireEvent.click(await panel.findByRole('button', { name: 'Cancel reading' }))
+    await waitFor(() => expect(cancelAgendaImportPreview).toHaveBeenCalledWith('council-2026-01', 'preview-1'))
+    expect(await panel.findByText(/Preview status: cancelled/)).toBeTruthy()
+    expect(importExternalAgenda).not.toHaveBeenCalled()
+    expect(confirmAgendaImportPreview).not.toHaveBeenCalled()
+  })
+
+  it('offers the published packet only for PrimeGov and sends the explicit selection', async () => {
+    const screen = renderScreen()
+    await screen.findByLabelText('External agenda source')
+    expect(screen.queryByLabelText('Use full published packet')).toBeNull()
+    await openPreview(screen, true)
+    expect(startAgendaImportPreview).toHaveBeenCalledWith('council-2026-01', expect.objectContaining({
+      source: 'primegov', document_kind: 'packet',
+    }))
+  })
+
+  it('loads a remembered preview after reload without starting another read or importing', async () => {
+    sessionStorage.setItem('agenda-import-preview:council-2026-01', 'saved-preview')
+    vi.mocked(getAgendaImportPreview).mockResolvedValue(importPreview({
+      preview_id: 'saved-preview', status: 'partial', resumable: true,
+    }))
+    const screen = renderScreen()
+    expect(await screen.findByRole('button', { name: 'Resume reading' })).toBeTruthy()
+    expect(getAgendaImportPreview).toHaveBeenCalledWith('council-2026-01', 'saved-preview')
+    expect(startAgendaImportPreview).not.toHaveBeenCalled()
+    expect(importExternalAgenda).not.toHaveBeenCalled()
+    expect(confirmAgendaImportPreview).not.toHaveBeenCalled()
+  })
+
+  it('reports a protected source download error without exposing an unauthenticated link', async () => {
+    vi.mocked(staffApiBlobRequest).mockRejectedValue(new ApiError('Request failed: 401', 401, 'Sign in again to read the source document.'))
+    const screen = renderScreen()
+    const panel = within(await openPreview(screen))
+    fireEvent.click(await panel.findByRole('button', { name: 'Load retained source document' }))
+    expect(await panel.findByText('Sign in again to read the source document.')).toBeTruthy()
+    expect(panel.queryByRole('link', { name: 'Open retained source document' })).toBeNull()
+    expect(panel.queryByRole('link', { name: 'Page 1' })).toBeNull()
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(confirmAgendaImportPreview).not.toHaveBeenCalled()
+  })
+
+  it('revokes the loaded Blob URL when the preview is dismissed', async () => {
+    const screen = renderScreen()
+    const panel = within(await openPreview(screen))
+    fireEvent.click(await panel.findByRole('button', { name: 'Load retained source document' }))
+    await panel.findByRole('link', { name: 'Page 1' })
+    fireEvent.click(await panel.findByRole('button', { name: 'Dismiss preview' }))
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:retained-agenda'))
   })
 })

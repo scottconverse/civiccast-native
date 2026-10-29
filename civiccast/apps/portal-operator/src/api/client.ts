@@ -3760,6 +3760,64 @@ export function importExternalAgenda(
   )
 }
 
+export interface AgendaImportPreviewItem {
+  order: number
+  number: string | null
+  title: string
+  doc_url: string | null
+  confidence?: number | null
+}
+
+export interface AgendaImportPreview {
+  preview_id: string
+  agenda_id: string
+  status: 'queued' | 'reading' | 'ready' | 'partial' | 'failed' | 'cancelled' | 'confirmed'
+  title: string | null
+  source_doc_url: string | null
+  items: AgendaImportPreviewItem[]
+  agenda_pages: number[]
+  item_pages: Record<string, number[]>
+  pages_read: number
+  pages_total: number | null
+  warnings: string[]
+  resumable: boolean
+  document_id: string | null
+  document_sha256: string | null
+  source_document_url: string | null
+  cancel_requested: boolean
+}
+
+export type AgendaImportPreviewRequest = AgendaImportExternalRequest & {
+  document_kind?: 'automatic' | 'packet'
+}
+
+function agendaImportPreviewPath(agendaId: string, previewId?: string): string {
+  const base = `/api/staff/agenda/${encodeURIComponent(agendaId)}/import-previews`
+  return previewId ? `${base}/${encodeURIComponent(previewId)}` : base
+}
+
+export function startAgendaImportPreview(
+  agendaId: string, payload: AgendaImportPreviewRequest,
+): Promise<AgendaImportPreview> {
+  return request<AgendaImportPreview>(agendaImportPreviewPath(agendaId), { method: 'POST', body: payload })
+}
+
+export function getAgendaImportPreview(agendaId: string, previewId: string): Promise<AgendaImportPreview> {
+  return request<AgendaImportPreview>(agendaImportPreviewPath(agendaId, previewId))
+}
+
+export function resumeAgendaImportPreview(agendaId: string, previewId: string): Promise<AgendaImportPreview> {
+  return request<AgendaImportPreview>(`${agendaImportPreviewPath(agendaId, previewId)}/resume`, { method: 'POST' })
+}
+
+export function cancelAgendaImportPreview(agendaId: string, previewId: string): Promise<AgendaImportPreview> {
+  return request<AgendaImportPreview>(`${agendaImportPreviewPath(agendaId, previewId)}/cancel`, { method: 'POST' })
+}
+
+export function confirmAgendaImportPreview(agendaId: string, previewId: string): Promise<AgendaItem[]> {
+  return request<AgendaItem[]>(`${agendaImportPreviewPath(agendaId, previewId)}/confirm`, { method: 'POST' })
+}
+
 /**
  * GET /api/staff/agenda-sources/js-portal/posture — whether the optional
  * crawl4ai/Playwright runtime (the `agenda-js-import` extra) is installed on

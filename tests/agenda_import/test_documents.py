@@ -11,6 +11,53 @@ import pytest
 from civiccast.agenda_import.documents import DocumentStore
 
 
+def test_atomic_json_retries_brief_windows_reader_lock(tmp_path, monkeypatch):
+    from civiccast.agenda_import import documents
+
+    target = tmp_path / "preview.json"
+    target.write_text('{"status":"reading"}')
+    replace = Path.replace
+    attempts = []
+    delays = []
+
+    def busy_twice(path, destination):
+        attempts.append(path)
+        if len(attempts) <= 2:
+            assert json.loads(target.read_text())["status"] == "reading"
+            error = PermissionError("reader sharing conflict")
+            error.winerror = 5
+            raise error
+        return replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", busy_twice)
+    monkeypatch.setattr(documents.time, "sleep", delays.append)
+    documents._write_json(target, {"status": "ready"})
+    assert json.loads(target.read_text()) == {"status": "ready"}
+    assert len(attempts) == 3 and delays == [0.01, 0.02]
+
+
+def test_atomic_json_permanent_windows_failure_is_bounded_and_preserves_old(tmp_path, monkeypatch):
+    from civiccast.agenda_import import documents
+
+    target = tmp_path / "preview.json"
+    target.write_text('{"status":"reading"}')
+    attempts = []
+    delays = []
+
+    def denied(path, destination):
+        attempts.append(path)
+        error = PermissionError("persistent denial")
+        error.winerror = 5
+        raise error
+
+    monkeypatch.setattr(Path, "replace", denied)
+    monkeypatch.setattr(documents.time, "sleep", delays.append)
+    with pytest.raises(PermissionError):
+        documents._write_json(target, {"status": "ready"})
+    assert len(attempts) == 6 and sum(delays) == pytest.approx(0.31)
+    assert json.loads(target.read_text()) == {"status": "reading"}
+
+
 def arguments(download):
     return {
         "source": "primegov",

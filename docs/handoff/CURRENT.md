@@ -1,40 +1,72 @@
-# CURRENT — Retained PDF processing and agenda preview — October 28, 2026
+# CURRENT — Agenda packet preview integration — October 28, 2026
 
-Owner resumed implementation after model change. Root owns integration/hard coding;
-Sol 6.1 medium owns the bounded page processor. No DeepSeek. CivicCast Current Coder
-is the fixed-candidate auditor. Two serial PRs, required checks and normal merge;
-stop before L1/L2. Preserve station/data; no installer/release/paid OCR/LFS/reboot.
+Root owns coding and delivery. Current Coder now reports Scott assigned it watching/
+nudging only; it declined final candidate audit execution. Do not wait on that chat
+as an auditor or claim an audit it did not perform. Normal PR review and required CI
+remain applicable. Sol6.1 medium completed bounded processor/parser/UI work; no
+DeepSeek. Preserve station/data, no installer/publication/L1/L2/paid OCR/LFS/reboot.
 
-Candidate A: C:/Dev/cc-pdf-processing, feat/retained-pdf-processing, based on
-main ba808463 (PR278 merge). A: retained disk originals/hash/identity, page checkpoints,
-automatic bounded batches/resume, independent local PDF fallback and local OCR.
-B follows A: agenda-section extraction, source pages, preview/explicit confirmation.
+PR A DELIVERED: PR279 merged normally at 2026-10-29T05:52:48Z, merge
+26c53c6a284ea4c627c48c26f1ac3249db1dbda1, final head25883c90b2a1f97e726e71c8dfbf2725cc596133.
+Applicable CI passed including unit/claims, Windows/runtime, native reproducibility,
+a11y, operator, lint/types/security/docs/policy. Optional randomized-suite canceled
+by owner pause was not made a gate. Earlier named auditor checked757/441; root fixed
+its legacy checkpoint carry-forward finding in2a304e4 with focused proof. No final
+258 audit by that chat is claimed. CI run40819594549 completed successfully.
 
-Evidence: actual public archived Longmont meeting3382/template15247 acquired through
-bounded 2026 discovery and streamed disk download: 41,472,505 bytes, SHA256
+Candidate B: C:/Dev/cc-pdf-processing, feat/agenda-packet-preview, based on actual
+PR279 merge26c53c6a. Supported agenda-section parsing preserves 30 ordered parents/
+children on pages1–4 and excludes attachments; HTML children retained too. Durable
+preview/resume/cancel and authenticated original inspection precede explicit confirm.
+Resume pins the original hash across amendments; incomplete results and operator
+changes refuse confirmation. Other providers retain their existing import route.
+
+Passed draft evidence (unchanged core behavior is reused): public Longmont3382,
+document17338/template15247,41,472,505 bytes,258pages,SHA256
 b35f5679e9981ec5cb5dc048ae9640f187c2babf5fd1c877c628bdc9e83588a0.
-Original/checkpoints/acceptance work are isolated under monitoring chat work/packet-acceptance.
-Agenda pages1–4 end with item17 ADJOURN; page5 begins older minutes. Prior 210-line
-extraction did not establish semantic correctness. TownReporter source pinned
-e07612de20cd5e035faaf2201d548d4d67da7be3; checkpoint/batch behavior reused conceptually.
+Isolated development API/SQLite workflow refreshed the real download, reused the
+identical completed258-page checkpoint, previewed exact30 expected entries/pages,
+verified zero writes before confirm, then exact stored titles/numbers/order/links
+and idempotent confirm. Receipt work/packet-acceptance/preview-workflow-proof.json
+under coding chat cwd. Prior full258 read292.375s, interruptionafter12/resume and
+local image-only OCR proof remain valid. No installed-station acceptance claimed.
 
-A evidence now passed: real258/258pages in292.375s, interruptionafter12 and resume
-preserved completedpages; local image-only Tesseract proof recovered expected title.
-Compared unpdf1.8.1/pypdf/PDFium on real agenda pages; text content agrees after whitespace
-normalization. An apparent replacement-glyph issue was a terminal display artifact
-(valid U+00A0/U+2019), not actual packet corruption. No Node runtime was added.
+Draft checks: parser11, HTML4, preview-store5 incl pinned-revision resume; router44
+passed initially plus corrected legacy-source error case passed separately (one
+unrelated optional skip). UI43 passed, TypeScript and affected ESLint passed after
+fixing protected PDF viewing to use the credential-aware Blob helper. Original/hash
+and semantic expected fixtures independently verified against rendered pages.
+TownReporter pinned e07612de20cd5e035faaf2201d548d4d67da7be3; behavior reused in Python.
 
-PR279 initial candidate757483f9 reviewed. Targeted corrections before merge: native
-PDFium lock+integrity/license mapping; fresh acquisition retains amended revisions by
-hash while resume reuses original; generic U+FFFD text triggers fallback and cannot
-remain silently complete in checkpoints. Three affected quality proofs and11 affected
-storage/native-lock/adapter regressions passed. Applicable CI and affected auditor
-recheck required at follow-up SHA. No installer rebuild.
+Integrated checks:119 passed,1 optional agenda-js-import skip in17.71s across the
+six affected parser/preview/router/PrimeGov suites. Strict mypy passed all6 affected
+source modules; Ruff lint/format clean. API schema/reference/types regenerated.
+UI43 tests, TypeScript and affected ESLint passed in the identical draft source;
+TypeScript was also checked with the integrated generated API types.
 
-Remaining: A fixed-SHA affected recheck/required CI/merge; then B/parser/preview and complete isolated archive-to-persistence
-workflow with expected titles/order/source verified, audit/checks/merge. No completion
-claim yet. Owned agent: document_processor, Sol6.1 medium, no nested workers; terminate
-through collaboration interrupt if owner stops. No station processes started.
+PR280 open; follow-up candidate includes the two reproduced corrections below.
+Remaining: applicable required CI and normal merge. No extra broad suites/audit
+ladder. No station processes started.
+
+PR280 initial head13860373: normal GitHub review identified old parent-only import
+order collisions. Red reproduction confirmed the17-to30-item mismerge; confirmation
+now refuses numbering/order conflicts before writing and preserves matching edited
+items. Actual browser acceptance also reproduced Windows AccessDenied during JSON
+replacement while polling; bounded310ms sharing-error retry preserves atomic records.
+Affected preview/document regressions15pass; affected strict mypy clean. Final
+browser proof passed after correcting the isolated SQLite fixture to attach a real
+file-backed schema (the first fixture used an in-memory attached schema). The old
+failed preview stayed unchanged; no baseline rebinding. A fresh normal-UI preview
+reused the same original/258-page checkpoint with zero parser workers. Before confirm:
+zero items,30 exactpreview titles/pages; authenticated UI Blob41472505bytes/exactSHA,
+30page links. Actual UI confirm stored30items; serverrestart preservedall30. Native
+headless PDF popup reached commit/networkidle, but viewer DOMContentLoaded did not
+fire; do not claim a PDF-viewer DOM assertion. Receipt/screenshots under coding-chat
+work/packet-acceptance/browser-workflow-proof.json. No station changes.
+Optional live-network CI received Longmont HTTP403 for both list endpoints from
+GitHub runner (7others passed); no optional gate or retry added. Current Coder is
+watcher/nudger only. Agent document_processor owns the bounded browser proof and
+must stop its hidden development helpers after it; root owns follow-up commit/CI.
 
 ---
 Historical handoff and PR278 receipt follow; preserved from prior candidate.

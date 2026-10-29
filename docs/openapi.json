@@ -26222,6 +26222,457 @@
         ]
       }
     },
+    "/api/staff/agenda/{agenda_id}/import-previews": {
+      "post": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Create Import Preview",
+        "operationId": "create_import_preview_api_staff_agenda__agenda_id__import_previews_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgendaImportPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaImportPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agenda/{agenda_id}/import-previews/{preview_id}": {
+      "get": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Get Import Preview",
+        "operationId": "get_import_preview_api_staff_agenda__agenda_id__import_previews__preview_id__get",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaImportPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agenda/{agenda_id}/import-previews/{preview_id}/resume": {
+      "post": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Resume Import Preview",
+        "operationId": "resume_import_preview_api_staff_agenda__agenda_id__import_previews__preview_id__resume_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaImportPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agenda/{agenda_id}/import-previews/{preview_id}/cancel": {
+      "post": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Cancel Import Preview",
+        "operationId": "cancel_import_preview_api_staff_agenda__agenda_id__import_previews__preview_id__cancel_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgendaImportPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agenda/{agenda_id}/import-previews/{preview_id}/document": {
+      "get": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Get Preview Original",
+        "operationId": "get_preview_original_api_staff_agenda__agenda_id__import_previews__preview_id__document_get",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/pdf": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/agenda/{agenda_id}/import-previews/{preview_id}/confirm": {
+      "post": {
+        "tags": [
+          "staff",
+          "agenda-import"
+        ],
+        "summary": "Confirm Import Preview",
+        "operationId": "confirm_import_preview_api_staff_agenda__agenda_id__import_previews__preview_id__confirm_post",
+        "parameters": [
+          {
+            "name": "agenda_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Agenda Id"
+            }
+          },
+          {
+            "name": "preview_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preview Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgendaItem"
+                  },
+                  "title": "Response Confirm Import Preview Api Staff Agenda  Agenda Id  Import Previews  Preview Id  Confirm Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "x-required-roles": [
+          "records_clerk",
+          "meeting_operator"
+        ],
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/paywall/config": {
       "get": {
         "tags": [
@@ -34110,6 +34561,230 @@
         ],
         "title": "AgendaImportExternalRequest",
         "description": "POST .../import-external body (plan \u00a76).\n\n``archive_year`` (PrimeGov only) is the EXPLICIT finite year scope the\noperator's discovery used: discovery can offer a meeting from any archived\nyear the operator asked for (``since``), while PrimeGov's import lookup has\nto know which year list to read. Sending it back makes every offered meeting\nimportable, still with at most three finite archive lists per import -- it is\nnot a multi-year scan. It is rejected (422) for the other vendors, which\nresolve a meeting by id without a year scope, and it may not be in the\nfuture.\n\n``portal_url``/``portal_vendor_hint`` are ``js_portal``-only additions\n(Phase 4): required exactly when ``source == \"js_portal\"``, forbidden\n(must be omitted/null) for every other source -- enforced below, not by\nthe field types alone, so a legacy client that only ever sends\n``source``/``client_code``/``event_id`` (the first three vendors) is\nunaffected. ``client_code`` stays required for every source, including\n``js_portal`` -- there it is purely an operator-assigned display label\nfor provenance/logging (see ``js_portal.py``'s class docstring), never\nspliced into a request URL, so it does not need the SSRF-conscious\ntenant-token shape :func:`validate_client_code` enforces for the other\nthree vendors... except it still gets that same validation, because a\nshort safe label is a reasonable thing to require regardless of vendor."
+      },
+      "AgendaImportPreview": {
+        "properties": {
+          "preview_id": {
+            "type": "string",
+            "title": "Preview Id"
+          },
+          "agenda_id": {
+            "type": "string",
+            "title": "Agenda Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "reading",
+              "ready",
+              "partial",
+              "failed",
+              "cancelled",
+              "confirmed"
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "source_doc_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Doc Url"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalAgendaItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "agenda_pages": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Agenda Pages"
+          },
+          "item_pages": {
+            "additionalProperties": {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Item Pages"
+          },
+          "pages_read": {
+            "type": "integer",
+            "title": "Pages Read",
+            "default": 0
+          },
+          "pages_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages Total"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "resumable": {
+            "type": "boolean",
+            "title": "Resumable",
+            "default": false
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "document_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Sha256"
+          },
+          "source_document_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Url"
+          },
+          "cancel_requested": {
+            "type": "boolean",
+            "title": "Cancel Requested",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preview_id",
+          "agenda_id",
+          "status"
+        ],
+        "title": "AgendaImportPreview"
+      },
+      "AgendaImportPreviewRequest": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "legistar",
+              "primegov",
+              "civicclerk",
+              "js_portal"
+            ],
+            "title": "Source"
+          },
+          "client_code": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Client Code"
+          },
+          "event_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Event Id"
+          },
+          "portal_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Url"
+          },
+          "portal_vendor_hint": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portal Vendor Hint"
+          },
+          "archive_year": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Year"
+          },
+          "document_kind": {
+            "type": "string",
+            "enum": [
+              "automatic",
+              "packet"
+            ],
+            "title": "Document Kind",
+            "default": "automatic"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source",
+          "client_code",
+          "event_id"
+        ],
+        "title": "AgendaImportPreviewRequest"
       },
       "AgendaItem": {
         "properties": {
@@ -47184,6 +47859,66 @@
         ],
         "title": "EquipmentItem",
         "description": "One piece of station equipment tracked for checkout."
+      },
+      "ExternalAgendaItem": {
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Order"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
+          },
+          "doc_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Url"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "order",
+          "title"
+        ],
+        "title": "ExternalAgendaItem",
+        "description": "One agenda item as reported by a vendor, before any domain validation."
       },
       "ExternalCaptionIngestRequest": {
         "properties": {

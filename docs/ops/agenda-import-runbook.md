@@ -17,6 +17,12 @@ number, order, and a link to the official document. The operator still
 lines up video timecodes and publishes by hand; that part isn't automated in
 this release.
 
+For PrimeGov, choose **Preview selected meeting**, inspect the ordered titles and
+source pages, then **Confirm import**. The default prefers the published agenda;
+**Use full published packet** is an explicit alternative. Nothing is added to the
+meeting before confirmation. **Cancel reading** retains completed pages, and
+**Resume reading** continues from the same original after interruption or restart.
+
 This works with three different agenda systems city governments use:
 
 - **Legistar** — used by many larger cities (e.g. Seattle).
@@ -62,9 +68,11 @@ This works with three different agenda systems city governments use:
 Operator (agenda editor)
    |
    | GET  /api/staff/agenda-sources/{source}/{client_code}/meetings
-   | POST /api/staff/agenda/{agenda_id}/import-external
+   | POST /api/staff/agenda/{agenda_id}/import-external (other providers)
+   | POST /api/staff/agenda/{agenda_id}/import-previews (PrimeGov)
+   | POST /api/staff/agenda/{agenda_id}/import-previews/{preview_id}/confirm
    v
-civiccast/agenda_import/router.py  (2 routes; 404 when CIVICCAST_AGENDA_SOURCE=off)
+civiccast/agenda_import/router.py  (404 when CIVICCAST_AGENDA_SOURCE=off)
    |
    v
 civiccast/agenda_import/mapper.py  (the ONE writer -- validates every doc_url,
@@ -110,8 +118,9 @@ require `CIVICCAST_AGENDA_SOURCE_TOKEN`.
 
 ```
 POST /api/staff/agenda/{agenda_id}/import-external
-  body: { source: "legistar"|"primegov"|"civicclerk", client_code, event_id }
-  -> 200 { imported: [AgendaItem...] }
+  body: { source: "legistar"|"civicclerk"|"js_portal", client_code, event_id, ... }
+  -> 200 [AgendaItem...]
+  PrimeGov returns 409: use preview/confirm below.
      401 no staff token · 404 agenda import disabled/agenda not found
      422 unknown source name · 502 upstream fetch failed (incl. token-gated tenant)
 
@@ -119,7 +128,27 @@ GET /api/staff/agenda-sources/{source}/{client_code}/meetings?since=YYYY-MM-DD
   -> [{ external_id, title, meeting_datetime }]
 ```
 
-Both routes require the `records_clerk` or `meeting_operator` role.
+PrimeGov preview API (all routes require `records_clerk` or `meeting_operator`):
+
+- `POST /api/staff/agenda/{agenda_id}/import-previews`: the validated import fields
+  plus optional `document_kind: "automatic" | "packet"`; returns 202 and a preview ID.
+- `GET .../import-previews/{preview_id}`: status, counts, warnings, ordered items,
+  agenda/item pages, retained document ID/hash and authenticated source link.
+- `POST .../{preview_id}/cancel` and `/resume`: cancel the bounded reader or continue
+  the exact retained revision. A fresh preview rechecks provider amendments.
+- `GET .../{preview_id}/document`: inspect the hash-verified retained original.
+- `POST .../{preview_id}/confirm`: only a ready preview may persist. Returns written
+  items; repeated confirmation returns an empty list without duplicates. If the
+  agenda changed during review, 409 requires a fresh preview to preserve edits.
+  If existing numbering/order differs (for example an older parent-only import),
+  confirmation also returns 409 before any writes. Create a new empty agenda or
+  reconcile existing items manually; matching numbered items retain operator edits.
+
+Processing errors are visible in preview status/warnings, not reported as a successful
+empty import. Queued/reading progresses to ready, partial, failed or cancelled;
+only explicit confirmation produces confirmed. Other providers retain their existing
+synchronous import route and error responses below. Source links are validated before
+being offered in the preview. All discovery/import routes require the same staff roles.
 
 ### Error taxonomy (all three vendors, identical)
 
@@ -149,8 +178,11 @@ seen before) are added on a re-import.
   `/Public/CompiledDocument?meetingTemplateId=...&compileOutputType=...` URL from
   the document's `templateId` and downloads the PDF anonymously (the endpoint
   redirects to the real PDF). A document is only imported when the PDF's text
-  layer parses into flat, top-level numbered items; a differently formatted
-  agenda is an honest 502 `pdf_no_items`, not a fabricated import. A meeting
+  is complete and its agenda section can be identified. Supported packets have
+  sequential numeric parents, uppercase parent headings, optional lettered children,
+  a call-to-order opening and an adjourn boundary. Wrapped titles and source pages
+  are preserved; material after adjournment (appendices, prior minutes, attachments)
+  is excluded. Unsupported structures remain partial and cannot be confirmed. A meeting
   whose only document is a cancellation notice yields an honest 502
   `cancellation_notice_only`.
 - **PrimeGov bounded handling**: PDF downloads are capped at 100 MiB / 180 s
@@ -161,18 +193,16 @@ seen before) are added on a re-import.
   unfinished pages from that same retained original. Each local parser attempt
   has a 45-second killable subprocess budget. Native pypdf extraction falls back
   to independent PDFium text/rendering and local Tesseract OCR for image-only pages.
-  A document
-  over those bounds, an unreadable/encrypted PDF, a page that fails to extract,
-  or a PARTIAL extraction is refused with a distinct error
-  (`document_too_large`/`document_timeout`/`pdf_unreadable`/`pdf_partial`)
+  A document over those bounds, an unreadable/encrypted PDF, or a page that remains
+  unreadable after recovery leaves an explicit partial/failed preview with details
   BEFORE anything is written -- a truncated or page-incomplete document never
   silently replaces a complete agenda. The character budget is checked against
   each page's text BEFORE that page is parsed, so an overrun is refused whether
   the excess sits on the first, a middle, or the final page; text that totals
   exactly the limit is complete when every page was covered. A page whose text
-  extraction raises is recorded (`pages_failed`) and makes the whole extraction
-  partial even when numbered items were recovered from the surviving pages;
-  every page failing reports `pdf_unreadable` rather than an empty agenda. The vendor's redirect to its external public blob storage is
+  extraction raises is retried using the independent recovery path. Only recovered
+  text or a visually confirmed blank counts as complete. Unrecoverable pages remain
+  named in the page checkpoint and prevent confirmation. The vendor's redirect to its external public blob storage is
   followed manually, each hop validated with the existing public-URL guard, so a
   redirect to a LITERAL loopback/private/link-local/metadata host is refused
   (DNS-rebinding remains that guard's pre-existing, disclosed residual risk).
@@ -238,5 +268,19 @@ an image containing unreadable content cannot silently count as complete.
 
 The page reader is provider-independent; Longmont's published 258-page packet is
 the large-document acceptance fixture. Complete page extraction alone does not
-establish correct agenda-item interpretation. Agenda-section parsing and operator
-preview/confirmation are the subsequent integration slice.
+establish correct agenda-item interpretation. The separate agenda-section parser
+and operator preview supply that review boundary. This is not limited to Longmont,
+but the supported layout is deliberately explicit rather than claiming every packet
+layout works. HTML remains the default where available, with numbered child rows
+included and unnumbered descriptions excluded.
+
+Preview records are versioned JSON beside managed originals under `previews/` and
+must be backed up with them. They retain the request, exact original hash, page
+provenance and confirmation state. One processing lock bounds aggregate work to one
+reader; a concurrent request reports busy and offers resume. Process exit releases
+the lock; the next read exposes interrupted state instead of displaying progress
+forever. There is no new queue service or framework. On Windows, atomic JSON
+replacement retries transient reader sharing/access errors for at most 310 ms, then
+reports a persistent storage failure while preserving the old record. Retention does
+not automatically delete historical originals; include this directory in existing
+storage capacity/backup management. No station installer is produced by these PRs.

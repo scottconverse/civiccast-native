@@ -126,6 +126,35 @@ export interface AgendaImportExternalRequest {
   archive_year?: number | null
 }
 
+export interface AgendaImportPreview {
+  preview_id: string
+  agenda_id: string
+  status: 'queued' | 'reading' | 'ready' | 'partial' | 'failed' | 'cancelled' | 'confirmed'
+  title?: string | null
+  source_doc_url?: string | null
+  items?: Array<ExternalAgendaItem>
+  agenda_pages?: Array<number>
+  item_pages?: Record<string, Array<number>>
+  pages_read?: number
+  pages_total?: number | null
+  warnings?: Array<string>
+  resumable?: boolean
+  document_id?: string | null
+  document_sha256?: string | null
+  source_document_url?: string | null
+  cancel_requested?: boolean
+}
+
+export interface AgendaImportPreviewRequest {
+  source: 'legistar' | 'primegov' | 'civicclerk' | 'js_portal'
+  client_code: string
+  event_id: string
+  portal_url?: string | null
+  portal_vendor_hint?: string | null
+  archive_year?: number | null
+  document_kind?: 'automatic' | 'packet'
+}
+
 export interface AgendaItem {
   item_id: string
   agenda_id: string
@@ -2107,6 +2136,14 @@ export interface EquipmentItem {
   active?: boolean
   created_at?: string
   updated_at?: string
+}
+
+export interface ExternalAgendaItem {
+  order: number
+  title: string
+  number?: string | null
+  doc_url?: string | null
+  confidence?: number | null
 }
 
 export interface ExternalCaptionIngestRequest {

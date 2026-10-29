@@ -855,6 +855,60 @@ Import agenda items from an external agenda system.
 - Request body: `AgendaImportExternalRequest`
 - Responses: 200 `Array<AgendaItem>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Agenda import disabled, or meeting agenda not found; 422 Source not yet available in this release; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 502 Upstream fetch failed (includes token-gated tenants); 503 Durable storage is not ready yet, or (js_portal only) the optional crawl4ai/Playwright runtime is not installed
 
+### `POST /api/staff/agenda/{agenda_id}/import-previews`
+
+Create Import Preview.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`
+- Request body: `AgendaImportPreviewRequest`
+- Responses: 202 `AgendaImportPreview`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/agenda/{agenda_id}/import-previews/{preview_id}`
+
+Get Import Preview.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `preview_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `AgendaImportPreview`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/agenda/{agenda_id}/import-previews/{preview_id}/cancel`
+
+Cancel Import Preview.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `preview_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `AgendaImportPreview`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/agenda/{agenda_id}/import-previews/{preview_id}/confirm`
+
+Confirm Import Preview.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `preview_id` (path, required): `string`
+- Request body: none
+- Responses: 200 `Array<AgendaItem>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/agenda/{agenda_id}/import-previews/{preview_id}/document`
+
+Get Preview Original.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `preview_id` (path, required): `string`
+- Request body: none
+- Responses: 200 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/agenda/{agenda_id}/import-previews/{preview_id}/resume`
+
+Resume Import Preview.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled; requires one of these CivicCast roles: records_clerk or meeting_operator
+- Parameters: `agenda_id` (path, required): `string`; `preview_id` (path, required): `string`
+- Request body: none
+- Responses: 202 `AgendaImportPreview`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/agendas`
 
 List meeting agendas for the station.
@@ -5005,6 +5059,35 @@ Read CivicCast local federation metadata.
 - `portal_vendor_hint` (optional): `string | null`
 - `source` (required): `'legistar' | 'primegov' | 'civicclerk' | 'js_portal'`
 
+### `AgendaImportPreview`
+
+- `agenda_id` (required): `string`
+- `agenda_pages` (optional): `Array<number>`
+- `cancel_requested` (optional): `boolean`
+- `document_id` (optional): `string | null`
+- `document_sha256` (optional): `string | null`
+- `item_pages` (optional): `Record<string, Array<number>>`
+- `items` (optional): `Array<ExternalAgendaItem>`
+- `pages_read` (optional): `number`
+- `pages_total` (optional): `number | null`
+- `preview_id` (required): `string`
+- `resumable` (optional): `boolean`
+- `source_doc_url` (optional): `string | null`
+- `source_document_url` (optional): `string | null`
+- `status` (required): `'queued' | 'reading' | 'ready' | 'partial' | 'failed' | 'cancelled' | 'confirmed'`
+- `title` (optional): `string | null`
+- `warnings` (optional): `Array<string>`
+
+### `AgendaImportPreviewRequest`
+
+- `archive_year` (optional): `number | null`
+- `client_code` (required): `string`
+- `document_kind` (optional): `'automatic' | 'packet'`
+- `event_id` (required): `string`
+- `portal_url` (optional): `string | null`
+- `portal_vendor_hint` (optional): `string | null`
+- `source` (required): `'legistar' | 'primegov' | 'civicclerk' | 'js_portal'`
+
 ### `AgendaItem`
 
 - `agenda_id` (required): `string`
@@ -6987,6 +7070,14 @@ Read CivicCast local federation metadata.
 - `equipment_id` (required): `string`
 - `name` (required): `string`
 - `updated_at` (optional): `string`
+
+### `ExternalAgendaItem`
+
+- `confidence` (optional): `number | null`
+- `doc_url` (optional): `string | null`
+- `number` (optional): `string | null`
+- `order` (required): `number`
+- `title` (required): `string`
 
 ### `ExternalCaptionIngestRequest`
 
