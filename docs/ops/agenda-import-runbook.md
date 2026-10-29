@@ -214,12 +214,20 @@ PrimeGov's application adapter streams originals into
 `CIVICCAST_UPLOAD_DIR/agenda-import` (development default: `uploads/agenda-import`).
 `CIVICCAST_AGENDA_DOCUMENT_DIR` overrides that directory for an isolated deployment.
 Each version-1 manifest records provider/tenant/meeting/document/URL, bytes and
-SHA256. `original.pdf` and `pages.json` must be backed up together with that
+SHA256. Fresh imports check the published document again and retain each content
+revision in its own hash directory. Unchanged content reuses its completed pages;
+amended content starts its own checkpoints. A processor resume uses the retained
+revision without downloading. `original.pdf` and `pages.json` must be backed up together with that
 managed storage. They contain public meeting material, not provider credentials.
 Existing agenda tables require no migration; the new versioned files are additive.
 Rollback preserves these files; older code ignores them. Do not delete originals
 or checkpoints to retry a read. A changed original is refused rather than silently
 mixed with prior pages. Incomplete download files are removed on failure.
+
+Text with missing-glyph replacement characters triggers fallback/OCR rather than
+counting as complete. A previously saved page with that defect is retried; rejected
+text remains evidence but cannot count toward completion. Native builds include
+PDFium through the reviewed native dependency lock as well as the Python project lock.
 
 Install a local Tesseract executable and English language data to enable scanned
 page recovery, then set `CIVICCAST_TESSERACT_CMD` to its executable path (or put

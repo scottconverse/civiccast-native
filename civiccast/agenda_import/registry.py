@@ -33,7 +33,9 @@ def build_source(
         return LegistarSource(timeout_seconds=timeout_seconds, token=token)
     if name == "primegov":
         return PrimeGovSource(
-            timeout_seconds=timeout_seconds, document_store=configured_document_store()
+            timeout_seconds=timeout_seconds,
+            document_store=configured_document_store(),
+            refresh_documents=True,
         )
     if name == "civicclerk":
         return CivicClerkSource(timeout_seconds=timeout_seconds)

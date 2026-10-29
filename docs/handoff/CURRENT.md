@@ -18,8 +18,20 @@ Agenda pages1–4 end with item17 ADJOURN; page5 begins older minutes. Prior 210
 extraction did not establish semantic correctness. TownReporter source pinned
 e07612de20cd5e035faaf2201d548d4d67da7be3; checkpoint/batch behavior reused conceptually.
 
-Remaining: finish A integration/regressions, actual bounded resume/OCR proof, fixed-SHA
-audit/required CI/merge; then B/parser/preview and complete isolated archive-to-persistence
+A evidence now passed: real258/258pages in292.375s, interruptionafter12 and resume
+preserved completedpages; local image-only Tesseract proof recovered expected title.
+Compared unpdf1.8.1/pypdf/PDFium on real agenda pages; text content agrees after whitespace
+normalization. An apparent replacement-glyph issue was a terminal display artifact
+(valid U+00A0/U+2019), not actual packet corruption. No Node runtime was added.
+
+PR279 initial candidate757483f9 reviewed. Targeted corrections before merge: native
+PDFium lock+integrity/license mapping; fresh acquisition retains amended revisions by
+hash while resume reuses original; generic U+FFFD text triggers fallback and cannot
+remain silently complete in checkpoints. Three affected quality proofs and11 affected
+storage/native-lock/adapter regressions passed. Applicable CI and affected auditor
+recheck required at follow-up SHA. No installer rebuild.
+
+Remaining: A fixed-SHA affected recheck/required CI/merge; then B/parser/preview and complete isolated archive-to-persistence
 workflow with expected titles/order/source verified, audit/checks/merge. No completion
 claim yet. Owned agent: document_processor, Sol6.1 medium, no nested workers; terminate
 through collaboration interrupt if owner stops. No station processes started.

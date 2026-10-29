@@ -50,6 +50,7 @@ class DocumentStore:
         provider_document_id: str,
         url: str,
         download: Callable[[Path], None],
+        refresh: bool = False,
     ) -> Iterator[RetainedDocument]:
         identity = {
             "source": source,
@@ -63,33 +64,68 @@ class DocumentStore:
         folder.mkdir(parents=True, exist_ok=True)
         with FileLock(str(folder / "document.lock"), timeout=1):
             original = folder / "original.pdf"
+            checkpoint = folder / "pages.json"
             manifest = folder / "manifest.json"
             if manifest.exists():
                 metadata = json.loads(manifest.read_text(encoding="utf-8"))
                 if metadata.get("version") != 1 or metadata.get("identity") != identity:
                     raise ValueError("Retained document manifest identity/version mismatch.")
+                if metadata.get("storage_key") is not None:
+                    digest = metadata["sha256"]
+                    if (
+                        metadata["storage_key"] != digest
+                        or len(digest) != 64
+                        or any(c not in "0123456789abcdef" for c in digest)
+                    ):
+                        raise ValueError("Invalid retained document storage identity.")
+                    original = folder / "versions" / digest / "original.pdf"
+                    checkpoint = original.with_name("pages.json")
                 if not original.is_file() or _sha256(original) != metadata.get("sha256"):
                     raise ValueError("Retained original is missing or changed; resume refused.")
-            else:
+                # Preserve the legacy v1 manifest when a fresh revision replaces
+                # the current pointer; its original/checkpoint remain untouched.
+                if refresh and metadata.get("storage_key") is None:
+                    _write_json(folder / "legacy-manifest.json", metadata)
+            if not manifest.exists() or refresh:
                 partial = folder / "download.part"
                 try:
                     download(partial)
                     with partial.open("rb") as handle:
                         if b"%PDF-" not in handle.read(1024):
                             raise ValueError("The published document is not a PDF.")
+                    digest = _sha256(partial)
                     metadata = {
                         "version": 1,
                         "identity": identity,
-                        "sha256": _sha256(partial),
+                        "sha256": digest,
+                        "storage_key": digest,
                         "bytes": partial.stat().st_size,
                     }
-                    partial.replace(original)
-                    temporary = folder / "manifest.tmp"
-                    temporary.write_text(json.dumps(metadata), encoding="utf-8")
-                    temporary.replace(manifest)
+                    version = folder / "versions" / digest
+                    version.mkdir(parents=True, exist_ok=True)
+                    original = version / "original.pdf"
+                    checkpoint = version / "pages.json"
+                    if original.exists():
+                        if _sha256(original) != digest:
+                            raise ValueError(
+                                "Retained revision is corrupted; refusing replacement."
+                            )
+                    else:
+                        partial.replace(original)
+                    _write_json(version / "manifest.json", metadata)
+                    _write_json(manifest, metadata)
                 finally:
                     partial.unlink(missing_ok=True)
-            yield RetainedDocument(key, original, folder / "pages.json", metadata)
+            yield RetainedDocument(key, original, checkpoint, metadata)
+
+
+def _write_json(path: Path, metadata: dict[str, Any]) -> None:
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(metadata, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
 
 
 def _sha256(path: Path) -> str:

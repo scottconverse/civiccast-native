@@ -318,8 +318,10 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: comments were refreshed, and the PyAV provenance override remains intact.
 #: Re-pinned 2026-10-25 for targeted pypdf/filelock/setuptools advisories.
 #: The existing single LGPL PyAV wheel and all other application pins are retained.
+#: Re-pinned 2026-10-28: add PDFium 5.14.0 for local PDF recovery/rendering;
+#: all existing distribution versions/hashes, including the LGPL PyAV override, remain.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "06d7779dc872efc55b88bc67323f836179e38f350a946bf7b6d89838ec201aa6"
+    "a7a1cab876e29fe9fc8492871b6daa5dca6321c0604e53ba482b7f2f42c92b14"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).
@@ -487,6 +489,9 @@ APP_DISTRIBUTION_LICENSE: Final[dict[str, str]] = {
     "pydantic-core": "MIT",
     "pygments": "BSD-2-Clause",
     "pypdf": "BSD-3-Clause",
+    # Python wrapper Apache-2.0/BSD-3-Clause; PDFium BSD-3-Clause.
+    # The wheel retains all bundled third-party notices in dist-info/licenses.
+    "pypdfium2": "Apache-2.0 OR BSD-3-Clause",
     "python-dateutil": "Apache-2.0 OR BSD-3-Clause",
     "python-dotenv": "BSD-3-Clause",
     "python-multipart": "Apache-2.0",

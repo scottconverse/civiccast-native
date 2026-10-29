@@ -165,6 +165,7 @@ class PrimeGovSource:
         max_pdf_text_chars: int = _MAX_PDF_TEXT_CHARS,
         extraction_deadline_seconds: float = _EXTRACTION_DEADLINE_SECONDS,
         document_store: DocumentStore | None = None,
+        refresh_documents: bool = False,
     ) -> None:
         self._timeout_seconds = timeout_seconds
         self._transport = transport
@@ -174,6 +175,7 @@ class PrimeGovSource:
         self._max_pdf_text_chars = max_pdf_text_chars
         self._extraction_deadline_seconds = extraction_deadline_seconds
         self._document_store = document_store
+        self._refresh_documents = refresh_documents
         self.last_document: RetainedDocument | None = None
         self.last_processing: PdfProcessingResult | None = None
         # Set by _list_meetings when one (not both) discovery endpoint failed;
@@ -316,9 +318,10 @@ class PrimeGovSource:
                 source="primegov",
                 client_code=client_code,
                 event_id=str(meeting["id"]),
-                provider_document_id=str(document.get("templateId") or document.get("id")),
+                provider_document_id=str(document.get("id") or document.get("templateId")),
                 url=doc_url,
                 download=lambda path: self._download_document(client_code, doc_url, path),
+                refresh=self._refresh_documents,
             ) as retained:
                 self.last_document = retained
                 result = process_pdf(

@@ -262,3 +262,78 @@ def test_document_page_cap_cannot_be_bypassed_by_resume(tmp_path: Path) -> None:
     resumed = processing.process_pdf(path, checkpoint, max_pages=2)
     assert resumed.status == "page_limit"
     assert resumed.pages_read == 2
+
+
+def test_corrupted_native_encoding_uses_same_page_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    def worker(*args: Any) -> dict[str, Any]:
+        mode, page = args[1], args[2]
+        calls.append((mode, page))
+        if mode.endswith("metadata"):
+            return {"status": "complete", "pages_total": 1}
+        if mode == "native":
+            return {"status": "complete", "text": "PUBLIC\ufffdHEARING", "method": "pypdf"}
+        return {"status": "complete", "text": "PUBLIC HEARING", "method": "pdfium"}
+
+    monkeypatch.setattr(processing, "_run_worker", worker)
+    result = processing.process_pdf(_pdf(tmp_path / "agenda.pdf"), tmp_path / "checkpoint.json")
+    assert result.complete
+    assert result.text == "PUBLIC HEARING"
+    assert result.pages[0].method == "pdfium"
+    assert calls == [("native_metadata", 0), ("native", 1), ("pdfium", 1)]
+
+
+def test_rejected_checkpoint_text_retained_but_not_counted_then_recovered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _pdf(tmp_path / "agenda.pdf")
+    checkpoint = tmp_path / "checkpoint.json"
+    processing.process_pdf(path, checkpoint)
+    raw = json.loads(checkpoint.read_text())
+    old = "Damaged\ufffd" * 100
+    raw["pages"][0]["text"] = old
+    checkpoint.write_text(json.dumps(raw))
+    recovered = False
+
+    def worker(*args: Any) -> dict[str, Any]:
+        if not recovered:
+            return {"status": "unrecoverable", "issue": "Recovery unavailable"}
+        return {"status": "complete", "text": "Clean", "method": "pdfium"}
+
+    monkeypatch.setattr(processing, "_run_worker", worker)
+    failed = processing.process_pdf(path, checkpoint, max_chars=5)
+    assert not failed.complete
+    assert failed.pages_read == 0
+    assert failed.text == ""
+    assert failed.pages[0].text == old
+    assert failed.pages[0].method == "pypdf"
+    assert failed.pages[0].status not in {"complete", "blank"}
+    recovered = True
+    clean = processing.process_pdf(path, checkpoint, max_chars=5)
+    assert clean.complete
+    assert clean.text == "Clean"
+    assert clean.pages[0].method == "pdfium"
+
+
+def test_pdfium_missing_glyphs_force_render_instead_of_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pdfium = pytest.importorskip("pypdfium2")
+    monkeypatch.setattr(pdfium.PdfTextPage, "get_text_range", lambda _self: "PUBLIC\ufffdHEARING")
+    path = _pdf(tmp_path / "agenda.pdf")
+    result = processing._worker_extract(
+        str(path),
+        "pdfium",
+        1,
+        tmp_path,
+        str(tmp_path / "missing-tesseract"),
+        15,
+    )
+    assert result["status"] == "unavailable"
+    assert result["method"] == "pdfium_render"

@@ -29,6 +29,11 @@ from typing import Any
 _SUCCESS = {"complete", "blank"}
 
 
+def _readable_text(text: str) -> bool:
+    """Missing glyph substitutions make a text layer unsafe as complete evidence."""
+    return bool(text.strip()) and "\ufffd" not in text
+
+
 @dataclass(frozen=True)
 class PdfPageResult:
     page: int
@@ -102,6 +107,14 @@ def _load_checkpoint(path: Path, digest: str) -> PdfProcessingResult:
                 or (page.status == "blank" and page.text)
             ):
                 raise ValueError("Invalid checkpoint page")
+            if page.status == "complete" and not _readable_text(page.text):
+                page = PdfPageResult(
+                    page.page,
+                    page.text,
+                    page.method,
+                    "quality_rejected",
+                    "Retained text contains missing-glyph replacements; retry required",
+                )
             seen.add(page.page)
             pages.append(page)
         return PdfProcessingResult(digest, total, sorted(pages, key=lambda p: p.page))
@@ -271,6 +284,11 @@ def process_pdf(
     for offset in range(0, len(pending), batch_size):
         for page in pending[offset : offset + batch_size]:
             extracted = worker("native", page)
+            if extracted["status"] == "complete" and not _readable_text(extracted.get("text", "")):
+                extracted = {
+                    "status": "no_text",
+                    "issue": "Native text is empty or has missing glyphs",
+                }
             if extracted["status"] not in _SUCCESS | {"cancelled", "time_limit", "text_limit"}:
                 native_issue = extracted.get("issue", "Native text unavailable")
                 extracted = worker("pdfium", page)
@@ -284,15 +302,24 @@ def process_pdf(
                 result.issues.append(f"Page {page}: {extracted.get('issue', status)}")
                 break
             text = extracted.get("text", "")
+            if status == "complete" and not _readable_text(text):
+                status = "quality_rejected"
+                extracted["issue"] = "Fallback text is empty or has missing-glyph replacements"
             # Apply before accepting EVERY page, including single/final pages.
             if chars + len(text) > max_chars:
                 stopped = "text_limit"
                 result.issues.append(f"Page {page}: retained text budget exceeded")
                 break
+            previous = retained.get(page)
+            method = extracted.get("method", "none")
+            # Preserve rejected prior evidence if recovery fails, excluded from usable text.
+            if status not in _SUCCESS and previous is not None and previous.text:
+                text = previous.text
+                method = previous.method
             retained[page] = PdfPageResult(
                 page,
                 text,
-                extracted.get("method", "none"),
+                method,
                 status,
                 extracted.get("issue"),
             )
@@ -335,9 +362,9 @@ def _worker_extract(
         if mode == "native_metadata":
             return {"status": "complete", "pages_total": len(reader.pages)}
         text = reader.pages[page_number - 1].extract_text() or ""
-        if text.strip():
+        if _readable_text(text):
             return {"status": "complete", "text": text, "method": "pypdf"}
-        return {"status": "no_text", "issue": "Native parser found no text"}
+        return {"status": "no_text", "issue": "Native text is empty or has missing glyphs"}
 
     try:
         # PDFium's Python wrapper currently ships without a py.typed marker.
@@ -352,7 +379,7 @@ def _worker_extract(
             # An invalid text layer can still have a useful rendered page.
             with suppress(Exception), closing(page.get_textpage()) as textpage:
                 text = textpage.get_text_range()
-            if text.strip():
+            if _readable_text(text):
                 return {"status": "complete", "text": text, "method": "pdfium"}
             # Bound render allocation to 20 million pixels and 300 dpi.
             width, height = page.get_size()
@@ -385,7 +412,7 @@ def _worker_extract(
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     text = output.with_suffix(".txt").read_text(encoding="utf-8")
-    if text.strip():
+    if _readable_text(text):
         return {"status": "complete", "text": text, "method": "tesseract"}
     return {
         "status": "unrecoverable",

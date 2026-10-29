@@ -60,3 +60,42 @@ def test_changed_retained_original_refuses_resume(tmp_path):
         retained.path.write_bytes(b"%PDF- changed")
     with pytest.raises(ValueError, match="changed"), store.acquire(**arguments(download)):
         pass
+
+
+def test_fresh_revision_preserves_old_original_and_checkpoints(tmp_path):
+    store = DocumentStore(tmp_path)
+    content = [b"%PDF- old"]
+
+    def download(path):
+        path.write_bytes(content[0])
+
+    with store.acquire(**arguments(download)) as old:
+        old.checkpoint_path.write_text("saved old pages")
+    content[0] = b"%PDF- revised"
+    with store.acquire(**arguments(download), refresh=True) as revised:
+        assert revised.path != old.path
+        assert revised.path.read_bytes() == content[0]
+        assert not revised.checkpoint_path.exists()
+        revised.checkpoint_path.write_text("saved revised pages")
+    assert old.path.read_bytes() == b"%PDF- old"
+    assert old.checkpoint_path.read_text() == "saved old pages"
+
+    def no_download(path):
+        raise AssertionError("Resume must use the retained original")
+
+    with store.acquire(**arguments(no_download)) as resumed:
+        assert resumed.path == revised.path
+        assert resumed.checkpoint_path.read_text() == "saved revised pages"
+
+
+def test_refresh_unchanged_content_keeps_completed_pages(tmp_path):
+    store = DocumentStore(tmp_path)
+
+    def download(path):
+        path.write_bytes(b"%PDF- unchanged")
+
+    with store.acquire(**arguments(download)) as original:
+        original.checkpoint_path.write_text("saved pages")
+    with store.acquire(**arguments(download), refresh=True) as refreshed:
+        assert refreshed.path == original.path
+        assert refreshed.checkpoint_path.read_text() == "saved pages"
