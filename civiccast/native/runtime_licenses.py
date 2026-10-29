@@ -135,6 +135,11 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     # returning "LGPL version 2.1 or later" with nonfree=disabled,
     # version3=disabled, and no libx264/libx265 registered as codecs.
     "gstlibav.dll": "LGPL-2.1-or-later",
+    # GStreamer 1.28.5 gst-plugins-good/ext/libpng/gstpng.c declares LGPL.
+    # gstpngdec.h and gstpngenc.h explicitly permit Library GPL v2 or later;
+    # elect LGPL 2.1, matching gst-plugins-good/COPYING. Exact source URLs and
+    # hashes: docs/ops/evidence/rc1-native-security/png-decoder-regression.json.
+    "gstpng.dll": "LGPL-2.1-or-later",
     "gstmatroska.dll": "LGPL-2.1-or-later",
     "gstmediafoundation.dll": "LGPL-2.1-or-later",
     "gstmpegtsdemux.dll": "LGPL-2.1-or-later",

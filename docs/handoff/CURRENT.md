@@ -45,7 +45,18 @@ GStreamer1.28.5 gstpng plugin with secured libpng/zlib fixed fresh-registry
 PNGdecode/EOS. Added explicit required pngdec factory (56required/69total),
 pinned wheel RECORD verified. Closure39tests and software emergency media1test
 pass with clean worker teardown; fiveD3D11 cases left for required hosted CI.
-No dependency/FFmpeg rebuild, timeout increase, skips, or blind retry. Log chat work/rc1-ws4-3b2763af.log.
+No dependency/FFmpeg rebuild, timeout increase, skips, or blind retry.
+Head910cb6bf WS4 failed manifest staging before tests: missing explicit per-file
+gstpng licence mapping. Corrected explicit LGPL2.1-or-later mapping from exact
+upstream1.28.5 source. Real pinned DLL now passes origins/seed/copy/notices/hash/
+manifest/BOM path; regression added. Licence/builder71unaffected pass, two
+affected tests pass (including stale secured-zlib staticCRT expectation).
+Earlier assertion of standard licence mapping was wrong; recorded in evidence.
+PublicWebKit one failure at readyState>=3 before chapter seek: trace confirms
+all HLS fixturesHTTP200 and no media/page error recorded; earlier heads passed.
+No speculative app/test change. Next required head run must prove it; if repeated,
+diagnose this same precondition before a third attempt. Trace retained chat
+work/rc1-a11y-910cb6bf-trace. No signed candidate yet. Log chat work/rc1-ws4-3b2763af.log.
 No merge or signed product build yet. Current-head
 security run40950465989 PASS:153components/129triaged rawmatches;83Windows
 Python dependencies/0vulnerabilities. Reports outputs/rc1-security/ci-3b2763af.

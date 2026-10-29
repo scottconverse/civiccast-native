@@ -61,6 +61,7 @@ def test_gstreamer_plugin_dlls_resolve_per_direct_plugin_sweep() -> None:
     # the built tree (evidence memo, "34-plugin sweep" table).
     assert classify_shipped_file("lib/gstreamer-1.0/gstcoreelements.dll") == "LGPL-2.1-or-later"
     assert classify_shipped_file("lib/gstreamer-1.0/gstlibav.dll") == "LGPL-2.1-or-later"
+    assert classify_shipped_file("lib/gstreamer-1.0/gstpng.dll") == "LGPL-2.1-or-later"
     assert classify_shipped_file("lib/gstreamer-1.0/gstaudiofx.dll") == "LGPL-2.1-or-later"
     assert classify_shipped_file("lib/gstreamer-1.0/gstrsaudiofx.dll") == "MPL-2.0"
     assert classify_shipped_file("lib/gstreamer-1.0/gstopenh264.dll") == "BSD-2-Clause"
