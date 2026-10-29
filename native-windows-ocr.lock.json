@@ -32,6 +32,8 @@
     "ninja": "1.12.1",
     "compiler": "19.50.35730",
     "linker": "14.50.35730.0",
+    "c_flags": ["/experimental:deterministic"],
+    "cxx_flags": ["/experimental:deterministic", "/EHsc"],
     "static_runtime": true,
     "image_format": "BMP",
     "disabled_dependencies": ["zlib", "libpng", "libjpeg", "libtiff", "giflib", "libwebp", "openjpeg", "libarchive", "libcurl", "openmp"]

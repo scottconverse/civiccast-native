@@ -83,12 +83,59 @@ def _run_build_command(args: list[str], environment: dict[str, str]) -> str:
         print(f"OCR build command failed ({error.returncode}): {args!r}", file=sys.stderr)
         for name, output in (("stdout", error.stdout), ("stderr", error.stderr)):
             if output:
+                bounded = (
+                    output
+                    if len(output) <= 24000
+                    else output[:12000] + "\n[...truncated...]\n" + output[-12000:]
+                )
                 print(
-                    f"--- OCR {name} (last 24000 characters) ---\n{output[-24000:]}",
+                    f"--- OCR {name} (bounded first/last output) ---\n{bounded}",
                     file=sys.stderr,
                 )
+                for line in output.splitlines():
+                    if "dotproduct.cpp" in line and "cl.exe" in line:
+                        print(f"OCR dotproduct compiler command: {line[:12000]}", file=sys.stderr)
+                        break
         raise
     return result.stdout
+
+
+def _report_tesseract_arch_failure(build: Path) -> None:
+    """Expose only bounded compiler-output paths needed to diagnose missing objects."""
+    arch = build / "CMakeFiles/libtesseract.dir/src/arch"
+    target = arch / "dotproduct.cpp.obj"
+    print(f"OCR failed-build object: {target}", file=sys.stderr)
+    try:
+        print(
+            json.dumps(
+                {
+                    "exists": target.is_file(),
+                    "bytes": target.stat().st_size if target.is_file() else None,
+                }
+            ),
+            file=sys.stderr,
+        )
+        entries = sorted(arch.iterdir(), key=lambda path: path.name) if arch.is_dir() else []
+        print(
+            "OCR failed-build arch entries: "
+            + json.dumps(
+                [{"name": path.name, "bytes": path.stat().st_size} for path in entries[:40]]
+            ),
+            file=sys.stderr,
+        )
+        response = build / "CMakeFiles/libtesseract.rsp"
+        if response.is_file():
+            paths = response.read_text(encoding="utf-8-sig", errors="replace")
+            bounded = (
+                paths
+                if len(paths) <= 8000
+                else paths[:4000] + "\n[...truncated...]\n" + paths[-4000:]
+            )
+            print(f"OCR failed-build libtesseract.rsp paths: {bounded!r}", file=sys.stderr)
+        else:
+            print("OCR failed-build libtesseract.rsp is absent", file=sys.stderr)
+    except OSError as error:
+        print(f"OCR failed-build path inspection failed: {type(error).__name__}", file=sys.stderr)
 
 
 def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str]]:
@@ -126,8 +173,8 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
         "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
         "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
         f"-DCMAKE_INSTALL_PREFIX={prefix.as_posix()}",
-        f"-DCMAKE_C_FLAGS=/pathmap:{scratch.resolve()}=ocr-source",
-        f"-DCMAKE_CXX_FLAGS=/pathmap:{scratch.resolve()}=ocr-source",
+        f"-DCMAKE_C_FLAGS={' '.join(lock['build']['c_flags'])} /pathmap:{scratch.resolve()}=ocr-source",
+        f"-DCMAKE_CXX_FLAGS={' '.join(lock['build']['cxx_flags'])} /pathmap:{scratch.resolve()}=ocr-source",
         "-DCMAKE_EXE_LINKER_FLAGS=/Brepro",
     ]
     for name in ("leptonica", "tesseract"):
@@ -165,7 +212,12 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
                 *options,
             ]
         )
-        run([cmake, "--build", str(build), "--parallel", "2"])
+        try:
+            run([cmake, "--build", str(build), "--parallel", "2", "--verbose"])
+        except subprocess.CalledProcessError:
+            if name == "tesseract":
+                _report_tesseract_arch_failure(build)
+            raise
         run([cmake, "--install", str(build)])
 
     target = out / "OCR"
