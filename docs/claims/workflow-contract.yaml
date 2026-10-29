@@ -33,6 +33,7 @@ schema_version: 1
 trusted_workflow: .github/workflows/ci-test.yml
 
 workflow_job_inventory:
+  - stage-native-runtime-inputs # verified byte transfer only; not a claims producer
   - test
   - windows-native   # WS4 real-Windows probe job (merged from program branch); NOT a claims producer - the verifier's needs: is unchanged
   - external-integration # real workflow job; not a claims producer

@@ -83,6 +83,9 @@ def _build_tiny_pack(
         _write(tsduck_root / name, f"license:{name}".encode())
 
     monkeypatch.setattr(pack_builder, "POSTGRES_BIN_PINS", bin_pins)
+    # Layout/signature fixtures contain text stubs, not native PE consumers.
+    # Overlay acquisition and verified replacement have their own native tests.
+    monkeypatch.setattr(pack_builder, "secured_postgres_sources", lambda sources, cache: sources)
     monkeypatch.setattr(pack_builder, "POSTGRES_BIN_DLL_PINS", {})
     monkeypatch.setattr(pack_builder, "POSTGRES_LIB_PINS", {})
     monkeypatch.setattr(pack_builder, "TSDUCK_BIN_PINS", tsduck_pins)

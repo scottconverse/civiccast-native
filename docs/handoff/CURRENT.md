@@ -31,77 +31,59 @@ and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
 do not seek them as a prerequisite or claim human-validated translation accuracy.
 Language edit/review/publication/player-selection software acceptance remains required.
 
-Current state: PR282 open, head3b2763aff2aa6f352b1b28b52bb92f9be4b53bf0.
-Hosted OCR/app reproducibility PASS, run40950465824: two independent clean
-workspaces,9743files/515308302bytes/treeSHA82e3dcc5e1f714b9b1bb53198622df2e3e4ef14d45420e5dfa7af13ba330e970.
-Proof retained at chat outputs/rc1-repro-3b2763af. Required unit/native Windows
-unit checks still executing; native Windows job123717676462 failed6/57 media
-probes (51pass): graphics/content/emergency stop/reload/control acknowledgments
-time out. Earlier selected native coverage35passed/no skips before that media step. Bounded
-agent agenda_setup reproduced missing PNG decoder with fresh plugin registry:
-secured closure fails Missing decoder: PNG; original FFmpeg closure reaches EOS
-with1imagebuffer on same PNG. Evidence chat work/rc1-ws4-png. Checking existing
-GStreamer1.28.5 gstpng plugin with secured libpng/zlib fixed fresh-registry
-PNGdecode/EOS. Added explicit required pngdec factory (56required/69total),
-pinned wheel RECORD verified. Closure39tests and software emergency media1test
-pass with clean worker teardown; fiveD3D11 cases left for required hosted CI.
-No dependency/FFmpeg rebuild, timeout increase, skips, or blind retry.
-Head910cb6bf WS4 failed manifest staging before tests: missing explicit per-file
-gstpng licence mapping. Corrected explicit LGPL2.1-or-later mapping from exact
-upstream1.28.5 source. Real pinned DLL now passes origins/seed/copy/notices/hash/
-manifest/BOM path; regression added. Licence/builder71unaffected pass, two
-affected tests pass (including stale secured-zlib staticCRT expectation).
-Earlier assertion of standard licence mapping was wrong; recorded in evidence.
-PublicWebKit one failure at readyState>=3 before chapter seek: trace confirms
-all HLS fixturesHTTP200 and no media/page error recorded; earlier heads passed.
-No speculative app/test change. Next required head run must prove it; if repeated,
-diagnose this same precondition before a third attempt. Trace retained chat
-work/rc1-a11y-910cb6bf-trace. No signed candidate yet. Log chat work/rc1-ws4-3b2763af.log.
-No merge or signed product build yet. Current-head
-security run40950465989 PASS:153components/129triaged rawmatches;83Windows
-Python dependencies/0vulnerabilities. Reports outputs/rc1-security/ci-3b2763af.
-First CI failures diagnosed: missing artifact step timeouts (five), inventory
-invoked outside uv environment, installer Playwright unsupported on ubuntu-latest
-26.04 (pin affected job to24.04). Corrections pushed and those checks pass; no package rebuild.
-Remaining concrete CI failure: OCR app reproducibility cannot find pinned CMake
-in the hosted toolchain. Provisioning now requests and verifies the pinned VS CMake/Ninja component and
-OCR resolves it from the actual selected MSVC installation.28 focused tests plus
-publisher archive/custom-path tool proof passed; exact OCR pins and byte-equality
-requirement remain unchanged.
-Hosted follow-up reached the builder but refused the stale app-policy toolchain
-lock hash. Updated exact LF lock binding to11d9db51de065d3bf84e478545b7f3f0218aff555e70745e69beeee6c2e788f5;
-identity and tamper-refusal regressions2pass. No version/equality waiver.
-Head4ff062b6 hosted build then reached Tesseract compilation but failed exit1;
-compiler output was captured and hidden. Fresh local long-path OCR-only compile
-passed87.78s using exact tools/max2jobs, so no compiler correction is justified
-yet. Head8667458f adds bounded failure-only stdout/stderr diagnostics (5focused
-tests pass); Hosted8667458f exposed LNK1181 missing dotproduct.cpp.obj and D9007 ignored
-pathmap. Single-object probes under both full and minimal MSVC produce the object;
-no missing-object cause claimed. Proven deterministic/EHsc flags now pinned; OCR
-lock29325c5cf7767cc6e819fd09e2f82dcf8862b2a3cb2984de6f61dec9da5eb8f2.
-Hosted run40948301974 failed at20:27:34Z with the same missing dotproduct object.
-Its exact compiler command exposed ambient C:/Strawberry/c/bin/ccache.exe ahead
-of pinned cl.exe. Upstream Tesseract ENABLE_CCACHE defaults ON and installs
-compiler launchers. Correction: supported ENABLE_CCACHE=OFF, blank compiler-launcher cache entries,
-and removal of only inherited C/CXX launcher environment keys (try_compile
-otherwise reinitializes them). Eight focused tests and actual pinned-CMake
-configure-only proof with invalid ambient launcher pass; hosted success verified above.
-OCR lock now e44aabd55106f76a965cc64229fd04d3534cb35d97eedb9f01f60f9de9222183;
-app payload binds that exact LF hash. No full local OCR or product rebuild.
-This is an observed unpinned launcher, not yet proof of the missing-object cause.
-No OCR feature or dependency-version changes. PR automated review on31cf34c6
-completed with no findings; later changes reviewed by root, no new independent
-review claim.
-No signed product build has run. All compiler/agent jobs are terminal; CI jobs and
-single runner/waiter remain active as recorded below.
-Next: required CI and normal merge, then ONE signed RC1 build and isolated acceptance.
+Current state: PR282 remains open. Last tested head5bbf881015d39a1a5ba611075887da21e8c95db6.
+No merge, signed RC1 build, guest installation, tag or publication yet.
+Required unit run40955160859/job123734196810 terminal:24failed/11913passed/
+112skipped/5deselected,57m27s. Claims verifier consequently failed, also reporting
+stale workflow/contract bindings and missing input-transfer job inventory.
+Owned CI waiter session75660 is terminal; no duplicate waiter.
+
+Focused correction now prepared (no product/runtime-byte changes):
+- Installer text-stub fixtures isolate secured_postgres_sources; production
+  archive/hash verification stays unchanged. Ubuntu frontend assertion now24.04.
+- Native exact counts2144pure/2386total/2383Windows-not-integration; floors raised
+  to2094/2333, retaining50margin. All34affected tests verified across focused runs.
+- Three stale docs tests now support RC editions and distinguish RC1 source from
+  still-published Beta20 manual downloads; exact artifact hashes remain checked.
+  No manual/public artifact changed or rerendered for test-only corrections.
+- Six workflow/contract blob bindings renewed only for reviewed archive transfer
+  and raised floors. Transfer job inventoried as NONproducer; named claim code,
+  tests, trust root, producer nodes/attestation unchanged. Sixteen affected
+  policy regressions pass; real static inventory/needs/bindings pass. Actual
+  same-run claims verification remains required on new CI run. No installed
+  or hardware claim renewed. Ruff/format/diff checks passed for corrections.
+
+Valid passing evidence at5bbf8810 retained:
+- Native Windows job123734271897:2383native+35installer+57realmedia, zero
+  failures/errors/skips. outputs/rc1-windows-5bbf8810. This proves fixed PNG
+  graphics/board/emergency behavior under hosted Windows; no local physical GPU.
+- Repro40955160743:two independent clean app builds byte-identical;
+  outputs/rc1-repro-5bbf8810. Earlier failure was ambient ccache; supported
+  ENABLE_CCACHE=OFF plus explicit empty launcher cache/env fixed it. OCRlock
+  e44aabd55106f76a965cc64229fd04d3534cb35d97eedb9f01f60f9de9222183.
+- PublicWebKit40955160895 passed unchanged after one playback-ready precondition
+  failure on910cb6bf; trace retained. No weakened playback assertion.
+- Security40955160860 passed; outputs/rc1-security/ci-5bbf8810.
+- PNG omitted implicit decoder regression fixed by existing pinned gstpng.dll,
+  explicit pngdec requirement and confirmed per-file LGPL mapping. Real pinned
+  DLL staging through manifest/BOM passes; exact source/licence/failure-to-fix
+  receipts docs/ops/evidence/rc1-native-security/png-decoder-regression.json.
+- Optional randomized40955160865 failed35m14s; not an owner release gate and no
+  extra investigation/rerun launched. Do not claim every check is green.
+
+Next: push these focused CI corrections, required CI including same-run claims,
+normal merge, ONE signed RC1 build, existing isolated acceptance and cleanup.
+No signed product build or dependency archive rebuild for these CI-only changes.
 Current ead567a3 and rollback8fdce69e complete kits safely moved (same volume)
 to C:/CivicCastTester/rc1-preserved-kits/<full-SHA> before any build pruning;
 station-index presence/hash checked. Reuse ead.../station from this protected root.
 Restore retained kits to canonical staging after build/final cleanup. No deletion.
 Owned hidden runner session61380 / Runner.Listener PID4504 started2026-10-29
 19:36:29Z, executable C:/actions-runner/bin/Runner.Listener.exe; two input transfer
-jobs passed. Runner remains listening for authorized RC1 work. Cancellation:
+jobs passed. Runner stopped cleanly while idle October29~21:35Z; session61380 terminal
+and PID4504 absent, no Runner.Worker. All input transfers succeeded.
+Use hidden run.cmd --once per authorized build job after required CI/merge.
+Historical cancellation:
 verify identity then Ctrl-C owned session. Single PR waiter session75660 uses
 45-second gh checks watch, log coding-chat work/rc1-ci-wait.log; terminal result
 triggers failure repair or merge. Cancel waiter with Ctrl-C only if superseded.

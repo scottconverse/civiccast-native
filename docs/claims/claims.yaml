@@ -42,6 +42,12 @@
 # 2026-10-19 review renews current-source tripwires only; historical
 # acceptance dates and installed/pre-login status remain unchanged.
 # See docs/evidence/beta20-current-source-review-2026-10-19.md.
+# RC1 October29: renew only workflow/contract bindings for the reviewed
+# source-free native archive transfer, source-lock revalidation, and raised
+# existing native collection floors. Registered claim code/prose/test/trust
+# inputs and producer test/attestation requirements are unchanged. The added
+# transfer job is inventoried but is not an evidence producer. Same-run
+# claims verification must still pass; this renews no installed/hardware claim.
 schema_version: 1
 
 governed_doc_set:
@@ -156,10 +162,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2938412abebedfb25af8a2bf8776a15c8336f9d0
+        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: da4dc26b05beda17b53897816370ffd2b4705db2
+        blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -236,10 +242,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2938412abebedfb25af8a2bf8776a15c8336f9d0
+        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: da4dc26b05beda17b53897816370ffd2b4705db2
+        blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -293,10 +299,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2938412abebedfb25af8a2bf8776a15c8336f9d0
+        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: da4dc26b05beda17b53897816370ffd2b4705db2
+        blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -358,10 +364,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2938412abebedfb25af8a2bf8776a15c8336f9d0
+        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: da4dc26b05beda17b53897816370ffd2b4705db2
+        blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -1121,10 +1127,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2938412abebedfb25af8a2bf8776a15c8336f9d0
+        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: da4dc26b05beda17b53897816370ffd2b4705db2
+        blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f
@@ -2049,10 +2055,10 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2938412abebedfb25af8a2bf8776a15c8336f9d0
+        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
-        blob: da4dc26b05beda17b53897816370ffd2b4705db2
+        blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
       trust_root:
         path: docs/claims/trust-root.yaml
         blob: 90fd520a7e62324e41bc6c8aa5d2b969406e255f

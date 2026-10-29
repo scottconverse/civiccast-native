@@ -14,11 +14,13 @@ unconditionally so the gate is real on every push and PR.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts import render_user_manual
 
@@ -54,8 +56,14 @@ def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
     edition = " ".join(
         manual.split("## Edition and package evidence", 1)[1].split("## ", 1)[0].split()
     )
-    edition_number = manual_version.rsplit("beta.", 1)[1]
-    assert f"This manual identifies the Beta {edition_number} software edition." in edition
+    version = manual_version.removeprefix("v")
+    if "-beta." in version:
+        # Older manuals identify their edition as "Beta20" in prose; RC and
+        # stable editions use their complete version token.
+        edition_number = version.split("-beta.", 1)[1]
+        assert f"Beta {edition_number}" in edition or version in edition
+    else:
+        assert version in edition
     assert (
         "For publication, download, installation, and acceptance status, use the matching "
         "release page and the version-specific verification record; do not infer status from this manual."
@@ -175,18 +183,33 @@ class TestUserManualVersionHeaderConsistency:
                 "---\ntitle: X\nsubtitle: no version here\n---\n"
             )
 
-    def test_tracked_manual_downloads_match_the_current_source(self) -> None:
-        """The website's downloads must match the manual they advertise."""
+    def test_tracked_manual_downloads_match_the_published_release(self) -> None:
+        """Public downloads stay with the published edition as source advances."""
         manifest_path = render_user_manual.ROOT / "docs" / render_user_manual.MANIFEST_NAME
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         pdf_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.pdf"
         docx_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.docx"
 
-        assert render_user_manual._rendered_header_version_token(
-            pdf_path
-        ) == render_user_manual._source_version_token(_SOURCE.read_text(encoding="utf-8"))
+        published = yaml.safe_load(
+            (_REPO_ROOT / "docs/releases/release-truth.yaml").read_text(encoding="utf-8")
+        )["current"]
+        assert render_user_manual._rendered_header_version_token(pdf_path) == published
+        website = (_REPO_ROOT / "docs/index.html").read_text(encoding="utf-8")
+        downloads = re.findall(
+            r"https://github\.com/scottconverse/civiccast-native/releases/download/"
+            r"([^/]+)/USER-MANUAL\.(?:pdf|docx)",
+            website,
+        )
+        assert downloads and set(downloads) == {published}
         assert manifest["source"] == "docs/USER-MANUAL.md"
-        assert manifest["source_sha256"] == render_user_manual._source_sha256(_SOURCE)
+        assert re.fullmatch(r"[0-9a-f]{64}", manifest["source_sha256"])
+        source_version = render_user_manual._source_version_token(
+            _SOURCE.read_text(encoding="utf-8")
+        )
+        if source_version == published:
+            assert manifest["source_sha256"] == render_user_manual._source_sha256(_SOURCE)
+        # A newer candidate has its own exact-source companions rendered by the
+        # candidate workflow; it must not replace these published downloads.
         entries = {entry["path"]: entry for entry in manifest["artifacts"]}
         assert set(entries) == {"docs/USER-MANUAL.pdf", "docs/USER-MANUAL.docx"}
         for path in (pdf_path, docx_path):
