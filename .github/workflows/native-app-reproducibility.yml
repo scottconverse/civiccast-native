@@ -71,6 +71,7 @@ jobs:
             if ($actual -ne $inputFile.SHA256) { throw "Reviewed input SHA-256 mismatch: $target" }
           }
       - name: Transfer reviewed input bytes to hosted build
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: native-app-reviewed-inputs
@@ -124,6 +125,7 @@ jobs:
             --msvc-install msvc-build-tools
 
       - name: Download reviewed inputs from this workflow run
+        timeout-minutes: 5
         uses: actions/download-artifact@v4
         with:
           name: native-app-reviewed-inputs

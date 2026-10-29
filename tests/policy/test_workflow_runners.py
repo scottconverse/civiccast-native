@@ -123,7 +123,7 @@ def test_native_beta_hosted_selector_is_allowed_only_for_installer_workflow(
 name: installer
 jobs:
   frontend:
-    runs-on: ${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-24.04' }}
     steps: []
 """
 

@@ -62,7 +62,7 @@ HOSTED_EXPRESSION_ALLOWLIST = {
     ),
     (
         "ci-installer-compile.yml",
-        "${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-latest' }}",
+        "${{ inputs.native_beta_windows_only && 'windows-latest' || 'ubuntu-24.04' }}",
     ),
     # native-beta-candidate-artifacts.yml's build_target: self-hosted lane
     # (see that workflow's header) keeps the assembled kit local for Gate A

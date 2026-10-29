@@ -31,11 +31,18 @@ and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
 do not seek them as a prerequisite or claim human-validated translation accuracy.
 Language edit/review/publication/player-selection software acceptance remains required.
 
-Current state: source corrections and bounded final affected review complete;
-no RC1 commit/PR/CI dispatch or signed product build yet. Next: DCO commit and PR,
-required CI plus normal merge, then ONE consolidated signed RC1 candidate and
-isolated installed acceptance. Preserve current ead567a3 and rollback8fdce69e kits
-from staging pruning until deliberate final cleanup.
+Current state: PR282 open, initial head31cf34c6. Required CI executing.
+First CI failures diagnosed: missing artifact step timeouts (five), inventory
+invoked outside uv environment, installer Playwright unsupported on ubuntu-latest
+26.04 (pin affected job to24.04). Corrections prepared; no package rebuild.
+Next: required CI and normal merge, then ONE signed RC1 build and isolated acceptance.
+Preserve current ead567a3 and rollback8fdce69e kits from staging pruning.
+Owned hidden runner session61380 / Runner.Listener PID4504 started2026-10-29
+19:36:29Z, executable C:/actions-runner/bin/Runner.Listener.exe; two input transfer
+jobs passed. Runner remains listening for authorized RC1 work. Cancellation:
+verify identity then Ctrl-C owned session. Single PR waiter session75660 uses
+45-second gh checks watch, log coding-chat work/rc1-ci-wait.log; terminal result
+triggers failure repair or merge. Cancel waiter with Ctrl-C only if superseded.
 
 Passed source evidence: setup backend73pass/1optional skip, operator UI46pass,
 types/lint; recovery combined70pass and runtime10pass; real junction escape
@@ -80,7 +87,7 @@ coding-chat outputs/rc1-doc-review. Canonical manual SHA
 Final signed workflow renders companions from its final SHA. Installed browser
 and recovery scripts are prepared under coding-chat work/rc1-acceptance but NOT
 executed. Required CI, normal merge, signed build, installed service/PostgreSQL/
-browser acceptance and cleanup remain. No active owned helper jobs at checkpoint.
+browser acceptance and cleanup remain. Source compiler jobs ended; CI runner/waiter recorded above.
 Host station untouched. STOP before RC1 tagging/publication/public assets.
 
 ## Historical Beta20 delivery (complete; do not reopen)
