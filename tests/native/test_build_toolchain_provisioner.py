@@ -72,10 +72,13 @@ def test_committed_lock_is_complete_and_matches_runtime_attestation() -> None:
     assert msvc["sha256"] == ("97b2740209702f310a53d1e92ce971e86aafbde916a4d6cd087464e98ff61e2b")
     assert msvc["compiler_version"] == "19.50.35730"
     assert msvc["linker_version"] == "14.50.35730.0"
+    assert msvc["cmake_version"] == "4.2.3-msvc3"
+    assert msvc["ninja_version"] == "1.12.1"
     assert msvc["components"] == [
         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
         "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
         "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+        "Microsoft.VisualStudio.Component.VC.CMake.Project",
     ]
     provisioner.validate_lock(lock)
 
@@ -232,6 +235,8 @@ def test_msvc_layout_command_is_exact_and_noninteractive(tmp_path: Path) -> None
         "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
         "--add",
         "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+        "--add",
+        "Microsoft.VisualStudio.Component.VC.CMake.Project",
         "--quiet",
         "--wait",
         "--norestart",
@@ -260,6 +265,8 @@ def test_msvc_install_command_is_exact_and_noninteractive(tmp_path: Path) -> Non
         "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
         "--add",
         "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+        "--add",
+        "Microsoft.VisualStudio.Component.VC.CMake.Project",
         "--quiet",
         "--wait",
         "--norestart",
@@ -484,6 +491,56 @@ def test_reexport_relocated_msvc_install_tolerates_no_github_env(tmp_path: Path)
     provisioner.reexport_relocated_msvc_install(requested, relocated, github_env=None)
     # No exception, and nothing to assert on disk -- the point is the call
     # above did not raise trying to open a None path.
+
+
+@pytest.mark.parametrize("bad_tool", [None, "cmake", "ninja"])
+def test_msvc_cmake_tools_use_selected_installation_and_exact_versions(
+    tmp_path, monkeypatch, bad_tool
+):
+    root = tmp_path / "custom-pinned-install"
+    tools_root = root / "Common7/IDE/CommonExtensions/Microsoft/CMake"
+    paths = {"cmake": tools_root / "CMake/bin/cmake.exe", "ninja": tools_root / "Ninja/ninja.exe"}
+    for path in paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"reviewed tool stub")
+    monkeypatch.setenv("PATH", str(tmp_path / "ambient-unreviewed-tools"))
+    called = []
+
+    def runner(command, **kwargs):
+        called.append(command)
+        name = Path(command[0]).stem
+        version = "4.2.3-msvc3" if name == "cmake" else "1.12.1"
+        if name == bad_tool:
+            version += ".unexpected"
+        output = f"cmake version {version}\n" if name == "cmake" else version + "\n"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    if bad_tool:
+        with pytest.raises(provisioner.ToolchainProvisionError, match="not reviewed"):
+            provisioner.verify_msvc_cmake_tools(
+                root, {"cmake": "4.2.3-msvc3", "ninja": "1.12.1"}, runner=runner
+            )
+    else:
+        assert (
+            provisioner.verify_msvc_cmake_tools(
+                root, {"cmake": "4.2.3-msvc3", "ninja": "1.12.1"}, runner=runner
+            )
+            == paths
+        )
+    assert all(Path(command[0]).is_relative_to(root) for command in called)
+
+
+def test_msvc_verification_rejects_compiler_only_installation(tmp_path):
+    vcvarsall = tmp_path / "VC/Auxiliary/Build/vcvarsall.bat"
+    vcvarsall.parent.mkdir(parents=True)
+    vcvarsall.write_bytes(b"stub")
+    msvc = provisioner.load_lock()["artifacts"]["msvc"]
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(command, 0, "19.50.35730 14.50.35730.0", "")
+
+    with pytest.raises(provisioner.ToolchainProvisionError, match="cmake is missing"):
+        provisioner.verify_msvc_installation(tmp_path, msvc, runner=runner)
 
 
 def test_msvc_version_probe_rejects_compiler_or_linker_drift() -> None:

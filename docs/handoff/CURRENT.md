@@ -31,12 +31,20 @@ and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
 do not seek them as a prerequisite or claim human-validated translation accuracy.
 Language edit/review/publication/player-selection software acceptance remains required.
 
-Current state: PR282 open, initial head31cf34c6. Required CI executing.
+Current state: PR282 open, head d3777c1fd7b360e9f612469ab072ed43e0830ed9. Required CI executing.
 First CI failures diagnosed: missing artifact step timeouts (five), inventory
 invoked outside uv environment, installer Playwright unsupported on ubuntu-latest
-26.04 (pin affected job to24.04). Corrections prepared; no package rebuild.
+26.04 (pin affected job to24.04). Corrections pushed and those checks pass; no package rebuild.
+Remaining concrete CI failure: OCR app reproducibility cannot find pinned CMake
+in the hosted toolchain. Provisioning now requests and verifies the pinned VS CMake/Ninja component and
+OCR resolves it from the actual selected MSVC installation.28 focused tests plus
+publisher archive/custom-path tool proof passed; exact OCR pins and byte-equality
+requirement remain unchanged.
 Next: required CI and normal merge, then ONE signed RC1 build and isolated acceptance.
-Preserve current ead567a3 and rollback8fdce69e kits from staging pruning.
+Current ead567a3 and rollback8fdce69e complete kits safely moved (same volume)
+to C:/CivicCastTester/rc1-preserved-kits/<full-SHA> before any build pruning;
+station-index presence/hash checked. Reuse ead.../station from this protected root.
+Restore retained kits to canonical staging after build/final cleanup. No deletion.
 Owned hidden runner session61380 / Runner.Listener PID4504 started2026-10-29
 19:36:29Z, executable C:/actions-runner/bin/Runner.Listener.exe; two input transfer
 jobs passed. Runner remains listening for authorized RC1 work. Cancellation:
@@ -74,8 +82,9 @@ Package corrections (built/pinned/mirrored; not signed/installed acceptance):
   unchanged PG DLL proof remains valid after SQLite-only correction.
 - Native Grype report has129 raw matches, all individually evidenced/triaged by
   the existing checker. This is NOT129 confirmed vulnerabilities or zero matches.
-  Final CI scan must bind final source inventory (SQLite source metadata changed
-  after local scan; component version unchanged). Exact evidence lives under
+  Final CI scan now passed at d3777c1, run40942012789:
+  153 native components /129 individually triaged matches;83 Windows wheels/zero
+  vulnerabilities. Evidence coding-chat outputs/rc1-security/ci-d3777c1. Exact evidence lives under
   docs/ops/evidence/rc1-native-security and build/native-security-final-grype.json.
   Existing pipeline now covers shipped Windows requirements and native components;
   no threshold waivers. Only the project's own editable distribution is exempt

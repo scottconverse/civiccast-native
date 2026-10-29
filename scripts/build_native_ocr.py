@@ -30,6 +30,7 @@ from scripts.build_native_pyav_wheel import (  # noqa: E402
     find_vcvarsall,
     load_pinned_msvc_environment,
 )
+from scripts.provision_native_build_toolchain import verify_msvc_cmake_tools  # noqa: E402
 
 
 def _acquire(spec: dict, destination: Path) -> None:
@@ -74,10 +75,11 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
         raise ValueError("OCR source/build lock does not match reviewed policy")
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     components = lock["components"]
-    environment = load_pinned_msvc_environment(find_vcvarsall())
-    tools_root = Path(os.environ.get("PROGRAMFILES(X86)", "C:/Program Files (x86)")) / (
-        "Microsoft Visual Studio/18/BuildTools/Common7/IDE/CommonExtensions/Microsoft/CMake"
-    )
+    vcvarsall = find_vcvarsall()
+    environment = load_pinned_msvc_environment(vcvarsall)
+    # VC/Auxiliary/Build/vcvarsall.bat identifies the actual selected installation;
+    # a runner may provision it anywhere, independently of ProgramFiles and PATH.
+    tools = verify_msvc_cmake_tools(vcvarsall.parents[3], lock["build"])
 
     def run(args: list[str]) -> str:
         result = subprocess.run(
@@ -90,18 +92,7 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
         )
         return result.stdout
 
-    def tool(name: str, bundled: Path) -> str:
-        for executable in (shutil.which(name), str(bundled)):
-            if (
-                executable
-                and Path(executable).is_file()
-                and lock["build"][name] in run([executable, "--version"]).splitlines()[0]
-            ):
-                return executable
-        raise ValueError(f"Pinned OCR build tool is unavailable: {name} {lock['build'][name]}")
-
-    cmake = tool("cmake", tools_root / "CMake/bin/cmake.exe")
-    ninja = tool("ninja", tools_root / "Ninja/ninja.exe")
+    cmake, ninja = (str(tools[name]) for name in ("cmake", "ninja"))
     scratch.mkdir(parents=True, exist_ok=True)
     cache = ROOT / "build/native-ocr-cache"
     for name in ("leptonica", "tesseract"):
