@@ -288,7 +288,7 @@ APP_BUILD_REQUIREMENTS_SHA256: Final[str] = (
 #: layouts, and the exact MSVC component recipe rather than only to whichever
 #: matching executables happened to exist on one release machine.
 APP_BUILD_TOOLCHAIN_LOCK_SHA256: Final[str] = (
-    "a9db3110ff557dfb295798b102ddcd2623959f0bde97aed6c90f833f1ffd5424"
+    "11d9db51de065d3bf84e478545b7f3f0218aff555e70745e69beeee6c2e788f5"
 )
 #: Exact executable identities allowed to influence the deterministic
 #: application/portal build. Paths are deliberately absent so the attestation

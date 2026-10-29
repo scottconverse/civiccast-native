@@ -1,4 +1,4 @@
-# CURRENT — ACTIVE: RC1 offline agenda readiness — October 29, 2026
+# CURRENT â€” ACTIVE: RC1 offline agenda readiness â€” October 29, 2026
 
 ## RC1 current assignment (supersedes historical completion below)
 
@@ -40,6 +40,9 @@ in the hosted toolchain. Provisioning now requests and verifies the pinned VS CM
 OCR resolves it from the actual selected MSVC installation.28 focused tests plus
 publisher archive/custom-path tool proof passed; exact OCR pins and byte-equality
 requirement remain unchanged.
+Hosted follow-up reached the builder but refused the stale app-policy toolchain
+lock hash. Updated exact LF lock binding to11d9db51de065d3bf84e478545b7f3f0218aff555e70745e69beeee6c2e788f5;
+identity and tamper-refusal regressions2pass. No version/equality waiver.
 Next: required CI and normal merge, then ONE signed RC1 build and isolated acceptance.
 Current ead567a3 and rollback8fdce69e complete kits safely moved (same volume)
 to C:/CivicCastTester/rc1-preserved-kits/<full-SHA> before any build pruning;
@@ -93,9 +96,9 @@ Package corrections (built/pinned/mirrored; not signed/installed acceptance):
 Manual PDF/DOCX and docsite rendered and affected content visually reviewed in
 coding-chat outputs/rc1-doc-review. Canonical manual SHA
 37d386db5d94b0c0449985859dbc7b57e606c983767e70cd9ef3acac59f3ff50.
-Final signed workflow renders companions from its final SHA. Installed browser
-and recovery scripts are prepared under coding-chat work/rc1-acceptance but NOT
-executed. Required CI, normal merge, signed build, installed service/PostgreSQL/
+Final signed workflow renders companions from its final SHA. Installed browser, offline OCR, complete lifecycle and separate true Beta20-to-RC1
+upgrade scripts are prepared under coding-chat work/rc1-acceptance but NOT executed.
+Main lane same-RC1 reinstall is explicitly not cross-version upgrade evidence. Required CI, normal merge, signed build, installed service/PostgreSQL/
 browser acceptance and cleanup remain. Source compiler jobs ended; CI runner/waiter recorded above.
 Host station untouched. STOP before RC1 tagging/publication/public assets.
 
@@ -185,7 +188,7 @@ station action, model-transfer, force-push or DeepSeek. Completion not yet claim
 
 Prior preparation receipt follows; its no-publication boundary is superseded above.
 
-# READY FOR SCOTT TAG/PUBLISH APPROVAL — October 29, 2026
+# READY FOR SCOTT TAG/PUBLISH APPROVAL â€” October 29, 2026
 
 Preparation COMPLETE. No tag/publication/asset replacement authorized or performed.
 Source ead567a33614a65554a69ef186342d691c43b7dc, version1.0.0-beta.20 unchanged.
@@ -198,7 +201,7 @@ companion hashes, provenance and limitations in coding-chat outputs:
 C:/Users/scott/Documents/Codex/2026-10-28/re/outputs/CivicCast-signed-installer-ead567a3.md
 and matching.json. This local receipt does not require a signing rebuild or CI rerun.
 
-Required isolated lifecycle PASS08:37–09:00UTC, receipt:
+Required isolated lifecycle PASS08:37â€“09:00UTC, receipt:
 C:/CivicCastTester/civiccast-ead567a3-20261029-retry/receipt.json.
 Install/packaged agenda proof/uninstall exit0; setup/launcher/uninstaller signatures
 Valid; offlineAI/caption activation and guest service/health/schema passed. Installed
@@ -291,7 +294,7 @@ Current sole receipt waiter72811/blocking cell335; stage installing08:37:26Z.
 
 Previous source delivery receipt follows.
 
-# DELIVERED: retained PDF processing and agenda preview — October 29, 2026
+# DELIVERED: retained PDF processing and agenda preview â€” October 29, 2026
 
 Both authorized PRs are normally merged. PR280 merged at 2026-10-29T07:16:02Z,
 merge ead567a33614a65554a69ef186342d691c43b7dc, final source head
@@ -329,7 +332,7 @@ its legacy checkpoint carry-forward finding in2a304e4 with focused proof. No fin
 
 Candidate B: C:/Dev/cc-pdf-processing, feat/agenda-packet-preview, based on actual
 PR279 merge26c53c6a. Supported agenda-section parsing preserves 30 ordered parents/
-children on pages1–4 and excludes attachments; HTML children retained too. Durable
+children on pages1â€“4 and excludes attachments; HTML children retained too. Durable
 preview/resume/cancel and authenticated original inspection precede explicit confirm.
 Resume pins the original hash across amendments; incomplete results and operator
 changes refuse confirmation. Other providers retain their existing import route.
@@ -383,11 +386,11 @@ must stop its hidden development helpers after it; root owns follow-up commit/CI
 
 ---
 Historical handoff and PR278 receipt follow; preserved from prior candidate.
-# CivicCast current handoff — October 27, 2026
+# CivicCast current handoff â€” October 27, 2026
 
 Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
 
-## CURRENT — DELIVERED: PR277 REVIEW CORRECTIONS (PR278) — October 28, 2026
+## CURRENT â€” DELIVERED: PR277 REVIEW CORRECTIONS (PR278) â€” October 28, 2026
 
 DELIVERED. PR #278 https://github.com/scottconverse/civiccast-native/pull/278 merged to
 `main` at 2026-10-28T23:46:47Z: merge commit `ba80846330108bf300e48bb64507b748c099b8d7`,
@@ -409,12 +412,12 @@ root coordinates. Branch `fix/pr277-review-corrections` from actual current main
 affected docs/types; no Phase 2, no installer/release/tag/publication, no LFS/spending, no
 station API/probe/DB/restart/install action, no frozen-candidate edits.
 
-CORRECTION 1 — failed page could still be imported as complete
+CORRECTION 1 â€” failed page could still be imported as complete
 (`civiccast/agenda_import/docparse.py`). Diagnosis: a page whose `extract_text()` raised was
 replaced by empty text, so a document with a lost middle page reported `partial=False`/
 `reason=None` whenever any other page yielded numbered items, and the caller persisted an
 incomplete agenda. Fix: `PdfExtraction.pages_failed` records every failed page; a
-non-zero count always ends as `partial=True` — `reason="page_failed"` when items were
+non-zero count always ends as `partial=True` â€” `reason="page_failed"` when items were
 recovered from other pages, `reason="unreadable"` when EVERY page failed (the existing
 "nothing usable" outcome). `PrimeGovSource` refuses either before persistence
 (`pdf_partial`, now naming the unreadable page count; `pages_read` counts only pages that
@@ -422,7 +425,7 @@ yielded text). Regressions: middle-page failure, first-page failure, all-pages f
 (`tests/agenda_import/test_docparse.py`), plus a PrimeGov refusal test asserting the
 partial result never reaches the mapper (`test_primegov.py`).
 
-CORRECTION 2 — text budget skipped single/final pages
+CORRECTION 2 â€” text budget skipped single/final pages
 (`civiccast/agenda_import/docparse.py`). Diagnosis: the overrun check ran after the page
 was parsed and appended and only when another page remained, so a single-page or
 oversized FINAL page bypassed the 2,000,000-character cap and imported as complete. Fix:
@@ -434,11 +437,11 @@ other providers' legacy `extract_items_from_pdf` are unchanged. Regressions: sin
 overrun, final-page overrun, exactly-at-limit completion (`test_docparse.py`) and a real
 subprocess single-page overrun refused before import (`test_primegov.py`, tiny budget).
 
-CORRECTION 3 — discovered archived year could not be imported
+CORRECTION 3 â€” discovered archived year could not be imported
 (`primegov.py`, `router.py`, operator `AgendasScreen.tsx`). Diagnosis: `since` selects any
 archived year for discovery, but the import lookup searched only the current year and the
 two prior ones, so a meeting discovered with e.g. `since=2023-01-01` in 2026 returned
-not-found. Fix: smallest compatible explicit year context — optional PrimeGov-only
+not-found. Fix: smallest compatible explicit year context â€” optional PrimeGov-only
 `archive_year` field on the existing import-external body (rejected 422 for the other
 vendors or for a future archive year; years 1 through the current UTC year are supported), forwarded through the
 `AgendaSource.fetch_agenda` Protocol keyword (other adapters accept and ignore it), and used
@@ -493,7 +496,7 @@ watcher process is left running).
 
 ---
 
-## HISTORICAL — PHASE 1 DELIVERED — October 28, 2026
+## HISTORICAL â€” PHASE 1 DELIVERED â€” October 28, 2026
 
 P1 public PrimeGov PDF retrieval, P2 bounded download/extraction, and P3 archived/upcoming discovery are implemented and merged. Phase 2 is not started.
 
@@ -557,7 +560,7 @@ no extra tests, no rebuild, no LFS, no spending and no station action.
 - NEXT STEP: normal reviewable PR, bounded watch of the auto-triggered required
   checks, then normal merge; no admin/bypass, no tag/release/rebuild/station work.
 
-## HISTORICAL — DELIVERED: Beta20 recovery-fix package published — October 27, 2026
+## HISTORICAL â€” DELIVERED: Beta20 recovery-fix package published â€” October 27, 2026
 
 Scott authorized publishing the prepared signed Beta20 (source `8fdce69e`, build
 `40616252842`, setup SHA-256 `2c6d2614...388e4b`) and updating public download
@@ -566,15 +569,15 @@ host-station action. Sole executor: DeepSeek LOW
 `work/deepseek-beta20-publish.py` (activity/state in
 `outputs/deepseek-beta20-publish/`); root coordinates only.
 
-Routine decision under the delegated rule — revision convention. The
+Routine decision under the delegated rule â€” revision convention. The
 `v1.0.0-beta.20` tag and release already exist (tag target
 `a17449189a39af6474d914137eab020169f91023`, PR #259 publication, revised
 October 22 for documentation).
-- Option A — new revision tag `v1.0.0-beta.20.1` plus a new release. Pro:
+- Option A â€” new revision tag `v1.0.0-beta.20.1` plus a new release. Pro:
   distinct tag identity for the new bytes. Con: no existing convention for a
   patch tag on this line, a second 26-asset release (or an incomplete
   complete-kit set), a release-truth `current` switch and extra history.
-- Option B — in-place asset revision of the existing published release, keeping
+- Option B â€” in-place asset revision of the existing published release, keeping
   the tag and its history, exactly as the October 22 documentation revision did
   (its truth note already reads "use revision source for this package" with the
   original tag target unchanged). Pro: existing convention, tags/history
@@ -582,7 +585,7 @@ October 22 for documentation).
   release infrastructure. Con: published bytes change under one tag, mitigated
   by explicit revision-source notes in the release body, truth manifest and
   verification record. **Recommended and taken.**
-- Option C — move/force the existing tag. Forbidden by policy; not considered.
+- Option C â€” move/force the existing tag. Forbidden by policy; not considered.
 No tag was created, moved or deleted, so no tag/release workflow hook could fire
 a duplicate build; this repo's workflow triggers are workflow_dispatch,
 PR/branch-push and workflow_run, none tag-based.
@@ -691,9 +694,9 @@ station.**
 - Stop boundary: READY FOR OWNER TAG/PUBLISH APPROVAL. No tag, release,
   publication, LFS transfer, spending, reboot, or host-station action occurred.
 
-## Current task — October 27, 2026: black/silent outage cause, fix, local hotfix
+## Current task â€” October 27, 2026: black/silent outage cause, fix, local hotfix
 
-## DELIVERED — October27, 2026 15:56 MDT
+## DELIVERED â€” October27, 2026 15:56 MDT
 
 PR273 MERGED normally (no bypass) at2026-10-27T21:56:58Z.
 Final PR head1412c0060db6863f983dc381f1e51597a0930296.
@@ -717,7 +720,7 @@ cache prevents repeated registrations. Local backed-up module hotfix is active,
 not a newly published signed installer. This work is delivered; historical
 checkpoints below are not instructions to restart it.
 
-## Application-upgrade checkpoint — October 27, 2026
+## Application-upgrade checkpoint â€” October 27, 2026
 
 PAUSED by Scott. Preparing for application upgrade does not authorize resumption.
 No native DeepSeek runner is running (verified by process command line).
@@ -820,7 +823,7 @@ and every recovery retry re-entered the same poisoned probe.
   and the historical filesrc11 cause are unchanged and not requalified.
 
 
-## Current owner scope — YouTube live acceptance completed October 27
+## Current owner scope â€” YouTube live acceptance completed October 27
 
 Scott requested setup and real YouTube validation. Installed Setup now holds the
 existing authorized YouTube credentials. Installed Publish sent channel public to
@@ -835,7 +838,7 @@ not establish a fix for that operational failure. Scott deferred investigating i
 until after this YouTube test. No tag/public release authorized by this test.
 
 
-## Delivery complete — October 27, 2026, 02:57 MDT
+## Delivery complete â€” October 27, 2026, 02:57 MDT
 
 PR272 merged normally at 08:57:42 UTC as 69c2bcaea51e573ab1fd707a42260ae14bdc6e9e,
 head 677d800f16b1c67d5e849aefd6ccc9efc47e9d43. Independently verified GitHub
@@ -853,7 +856,7 @@ in the detailed execution record below.
 
 ## Current outcomes and owner authority
 
-F1–F3, F5–F7 and N1–N8 are delivered through PR267–271; do not reopen them. F2 live
+F1â€“F3, F5â€“F7 and N1â€“N8 are delivered through PR267â€“271; do not reopen them. F2 live
 YouTube transmission/playback remains explicitly deferred, not a gate.
 Scott resumed the work and explicitly directed native host installation/testing,
 no sandbox, finish the goal. This supersedes the prior leave-station-untouched
@@ -863,7 +866,7 @@ replacement, LFS transfer/spending through October, reboot or physical hardware.
 ## Direct native installation: complete
 
 The retained signed423393349f87148e7253f93691a9a70478cc120c candidate installed
-on this machine at C:/Program Files/CivicCast (Native), exit0, 07:30:57–07:41:37UTC.
+on this machine at C:/Program Files/CivicCast (Native), exit0, 07:30:57â€“07:41:37UTC.
 Normal installer recovery snapshot protected the previous app/database. Installed
 manifest matched source; launcher/uninstaller signatures valid and matched prior
 F5 hashes. Supervisor is running; operator/public pages HTTP200. These page and
@@ -920,7 +923,7 @@ Worker /root/f4_resume finished; no owned local test jobs remain.
 The historical exact cause remains unknown. The following explicit acceptance
 revision replaces that forensic clause; it does not claim the old cause was found.
 
-## Adopted owner-delegated F4 decision — acceptance revision
+## Adopted owner-delegated F4 decision â€” acceptance revision
 
 Scott instructed the coordinator to record issue, options/pros/cons, recommendation
 and reasons, then take that recommendation as his decision and continue. Root
@@ -962,7 +965,7 @@ new-candidate acceptance or a proved original F4 cause. Preserve those dirty fil
 Full transfer snapshot remains in coordinator outputs/CIVICCAST-FULL-CONTEXT-HANDOFF-2026-10-26.md.
 Everything below is historical evidence, not current execution instructions.
 
-## Archived execution history — not current instructions
+## Archived execution history â€” not current instructions
 
 The entries below preserve earlier evidence. Their old candidate statuses, PIDs,
 resource blockers, and next-action instructions are superseded by the current
@@ -1205,7 +1208,7 @@ outcome above.
   Bounded model-assisted/root sample review: Spanish/Vietnamese preserve meaning;
   Chinese generalizes council to municipal meeting; Arabic incorrectly says
   legislative session; Filipino order sentence ambiguous. Explicit draft edits
-  for those three passed existing edit/approve→published tracks. No professional
+  for those three passed existing edit/approveâ†’published tracks. No professional
   or native-language certification claimed; stations need qualified reviewers.
 - Parent N7 material review complete. API/manual/help generated; PDF/DOCX82632
   terminal0 (usual MiKTeX update warnings only), docsite12764 terminal0. N7 ready
@@ -1354,12 +1357,12 @@ outcome above.
   access checks, timestamp links and accessible transcript; checks pending.
   Parent authorized N1 checks alongside hosted CI after headroom check (11GB free).
 
-## Active F4/F6/F7 checkpoint — October 25, 2026
+## Active F4/F6/F7 checkpoint â€” October 25, 2026
 
 - Scott explicitly resumed this work in the parent Codex chat; the earlier chat
   remains paused and must not be messaged. Parent owns the complete roadmap;
-  this directly controlled worker owns only F4/F6/F7. F1–F3 are merged; F5 and
-  N1–N8 remain pending. No tags, publication, installer build or station changes.
+  this directly controlled worker owns only F4/F6/F7. F1â€“F3 are merged; F5 and
+  N1â€“N8 remain pending. No tags, publication, installer build or station changes.
 - N7 selection for later work: Spanish, Chinese, Tagalog/Filipino, Vietnamese,
   Arabic (top five US languages besides English). Preserve existing Spanish;
   specify supported Chinese written variants honestly during N7 implementation.
@@ -1411,7 +1414,7 @@ outcome above.
 - Prior F1-F3 records below are historical; PR267 receipts remain preserved in
   C:\Dev\civiccast-f1-f3\docs\handoff\CURRENT.md.
 
-## Active F1–F3 delivery checkpoint — October 25, 2026
+## Active F1â€“F3 delivery checkpoint â€” October 25, 2026
 - OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
   subsequently explicitly approved creating its YouTube channel. Created Google
   project `keen-apogee-512802-i5` (CivicCast YouTube), configured an external/testing
@@ -1450,7 +1453,7 @@ outcome above.
 - F1 VERIFIED: original review missed fixes already in main (`5c3540ec`, `5ca75521`).
   Retained package-timeline clipping/rebasing and approved-source repackaging gates.
   Added real FFmpeg fractional-trim + bilingual-caption regression: removed head/tail
-  excluded, retained cues align to 0–0.167 and0.467–0.567 seconds, originals unchanged.
+  excluded, retained cues align to 0â€“0.167 and0.467â€“0.567 seconds, originals unchanged.
   Existing trim/repackage/review regressions passed; no caption engine was replaced.
 - F2 ACCEPTED BY OWNER; LIVE REHEARSAL IS FOLLOW-UP: protected Setup values now feed existing
   IA/YouTube/NAS/SMTP adapters with environment fallback and explicit provider override.
@@ -1530,7 +1533,7 @@ outcome above.
   merge, release, installer, LFS transfer, spending or installed-station changes.
 
 
-## Historical restart checkpoint — October 25, 2026
+## Historical restart checkpoint â€” October 25, 2026
 
 Scott requested preparation for context compaction and a Codex app update/restart.
 This checkpoint is a local documentation change only; it has not been committed
@@ -1576,7 +1579,7 @@ or pushed, and must not automatically trigger another PR or CI cycle.
 The following entries retain their original preparation/history scope. This
 restart checkpoint and the confirmed merge receipts supersede pending wording.
 
-## Completed follow-up — targeted Brotli correction
+## Completed follow-up â€” targeted Brotli correction
 
 The checker integration below is complete: PR265 merged into main at
 `f9d380bebb15489762424f4f1293f4e6f050211a` after current-head unit tests,
@@ -1771,7 +1774,7 @@ identified; availability of every third-party download and access to private
 signing credentials are not implied by a successful Git clone.
 
 
-## Integration and advisory investigation — October 24, 2026
+## Integration and advisory investigation â€” October 24, 2026
 
 Scott authorized [PR265](https://github.com/scottconverse/civiccast-native/pull/265)
 and merge after applicable CI passes, followed by a Brotli investigation/report.
