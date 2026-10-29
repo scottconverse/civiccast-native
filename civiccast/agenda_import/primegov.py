@@ -80,11 +80,13 @@ from civiccast.agenda_import.docparse import (
     PdfExtraction,
     extract_items_from_html,
 )
+from civiccast.agenda_import.documents import DocumentStore, RetainedDocument
 from civiccast.agenda_import.models import (
     ExternalAgenda,
     ExternalAgendaItem,
     ExternalMeetingSummary,
 )
+from civiccast.agenda_import.pdf_processing import PdfProcessingResult, process_pdf
 
 _LIST_UPCOMING_PATH = "/api/v2/PublicPortal/ListUpcomingMeetings"
 _LIST_ARCHIVED_PATH = "/api/v2/PublicPortal/ListArchivedMeetings"
@@ -162,6 +164,8 @@ class PrimeGovSource:
         max_pdf_pages: int = _MAX_PDF_PAGES,
         max_pdf_text_chars: int = _MAX_PDF_TEXT_CHARS,
         extraction_deadline_seconds: float = _EXTRACTION_DEADLINE_SECONDS,
+        document_store: DocumentStore | None = None,
+        refresh_documents: bool = False,
     ) -> None:
         self._timeout_seconds = timeout_seconds
         self._transport = transport
@@ -170,6 +174,10 @@ class PrimeGovSource:
         self._max_pdf_pages = max_pdf_pages
         self._max_pdf_text_chars = max_pdf_text_chars
         self._extraction_deadline_seconds = extraction_deadline_seconds
+        self._document_store = document_store
+        self._refresh_documents = refresh_documents
+        self.last_document: RetainedDocument | None = None
+        self.last_processing: PdfProcessingResult | None = None
         # Set by _list_meetings when one (not both) discovery endpoint failed;
         # the router surfaces it as a response header so the operator sees a
         # PARTIAL banner instead of a silently-truncated meeting list.
@@ -305,8 +313,42 @@ class PrimeGovSource:
                     "(extraction_status=pdf_no_url)."
                 )
 
-        pdf_bytes = self._fetch_document_bytes(client_code, doc_url)
-        extraction = self._extract_pdf_bounded(pdf_bytes)
+        if self._document_store is not None:
+            with self._document_store.acquire(
+                source="primegov",
+                client_code=client_code,
+                event_id=str(meeting["id"]),
+                provider_document_id=str(document.get("id") or document.get("templateId")),
+                url=doc_url,
+                download=lambda path: self._download_document(client_code, doc_url, path),
+                refresh=self._refresh_documents,
+            ) as retained:
+                self.last_document = retained
+                result = process_pdf(
+                    retained.path,
+                    retained.checkpoint_path,
+                    max_pages=self._max_pdf_pages,
+                    max_chars=self._max_pdf_text_chars,
+                    tesseract_cmd=os.environ.get("CIVICCAST_TESSERACT_CMD"),
+                )
+                self.last_processing = result
+                if not result.complete:
+                    raise AgendaSourceUpstreamError(
+                        f"PDF processing {result.status}: {result.pages_read}/{result.pages_total} "
+                        f"pages retained ({', '.join(result.issues)}). Resume reuses the original "
+                        "and completed pages; no agenda was imported."
+                    )
+                # Agenda interpretation is separate from complete page recovery.
+                # The preview integration replaces this legacy numbered-line parser.
+                from civiccast.agenda_import.docparse import extract_items_from_page_texts
+
+                items = extract_items_from_page_texts([page.text for page in result.pages])
+                extraction = PdfExtraction(
+                    items=items, pages_total=result.pages_total or 0, pages_read=result.pages_read
+                )
+        else:
+            pdf_bytes = self._fetch_document_bytes(client_code, doc_url)
+            extraction = self._extract_pdf_bounded(pdf_bytes)
         if extraction.reason == "unreadable":
             raise AgendaSourceUpstreamError(
                 f"PrimeGov PDF document at {doc_url} for meeting {meeting.get('id')!r} "
@@ -494,12 +536,18 @@ class PrimeGovSource:
         return self._request(client_code, url).text
 
     def _fetch_document_bytes(self, client_code: str, url: str) -> bytes:
+        # Compatibility seam for standalone adapters; the app uses retained paths.
+        with tempfile.TemporaryDirectory(prefix="civiccast-pdf-") as folder:
+            path = Path(folder) / "document.pdf"
+            self._download_document(client_code, url, path)
+            return path.read_bytes()
+
+    def _download_document(self, client_code: str, url: str, path: Path) -> None:
         # Streamed download with a byte cap and a real total wall-clock deadline
         # checked on every chunk, so a slow-drip or oversized document is refused
         # with a bounded amount of work (and memory) -- unlike reading
         # ``response.content`` which buffers the whole body before any check.
         started = time.monotonic()
-        chunks: list[bytes] = []
         total = 0
         current_url = url
         try:
@@ -514,11 +562,15 @@ class PrimeGovSource:
             # already discloses; this change introduces no new bypass and claims no
             # DNS-rebinding protection. Disabling httpx's own follow_redirects is
             # what makes the hop-by-hop validation possible.
-            with httpx.Client(
-                transport=self._transport,
-                timeout=self._timeout_seconds,
-                follow_redirects=False,
-            ) as client:
+            validate_portal_url(url)
+            with (
+                path.open("wb") as output,
+                httpx.Client(
+                    transport=self._transport,
+                    timeout=self._timeout_seconds,
+                    follow_redirects=False,
+                ) as client,
+            ):
                 for _hop in range(_MAX_DOCUMENT_REDIRECTS + 1):
                     with client.stream(
                         "GET", current_url, headers={"Accept": "application/pdf"}
@@ -559,7 +611,7 @@ class PrimeGovSource:
                                     f"{self._max_document_bytes} byte cap "
                                     "(extraction_status=document_too_large) -- refused."
                                 )
-                            chunks.append(chunk)
+                            output.write(chunk)
                         break
                 else:
                     raise AgendaSourceUpstreamError(
@@ -575,7 +627,6 @@ class PrimeGovSource:
             raise AgendaSourceUpstreamError(
                 f"PrimeGov document request to {url} failed: {exc}"
             ) from exc
-        return b"".join(chunks)
 
     def _extract_pdf_bounded(self, pdf_bytes: bytes) -> PdfExtraction:
         # Genuinely bounded AND killable extraction. Page/char caps (in

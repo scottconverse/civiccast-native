@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from civiccast.agenda_import.base import AgendaSource, AgendaSourceNotAvailableError
 from civiccast.agenda_import.civicclerk import CivicClerkSource
+from civiccast.agenda_import.documents import configured_document_store
 from civiccast.agenda_import.js_portal import JsPortalSource
 from civiccast.agenda_import.legistar import LegistarSource
 from civiccast.agenda_import.primegov import PrimeGovSource
@@ -31,7 +32,11 @@ def build_source(
     if name == "legistar":
         return LegistarSource(timeout_seconds=timeout_seconds, token=token)
     if name == "primegov":
-        return PrimeGovSource(timeout_seconds=timeout_seconds)
+        return PrimeGovSource(
+            timeout_seconds=timeout_seconds,
+            document_store=configured_document_store(),
+            refresh_documents=True,
+        )
     if name == "civicclerk":
         return CivicClerkSource(timeout_seconds=timeout_seconds)
     if name == "js_portal":
