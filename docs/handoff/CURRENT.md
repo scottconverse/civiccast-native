@@ -1,4 +1,160 @@
-# CURRENT — Agenda packet preview integration — October 28, 2026
+# CURRENT — Beta20 PDF package published; documentation integration — October 29, 2026
+
+Public revision DELIVERED at existing v1.0.0-beta.20 release. All27asset sizes and
+GitHub digests verified against prepared replacements and retained old assets:
+9replaced,18unchanged. Public unauthenticated SHA256SUMS and setup sidecar downloads
+match selected bytes. Total27assets26937777054bytes including standalone reviewed
+PyAV wheel. Setup SHA2568a37e2bc48d1f0d63fde088c682730f9b2b49e812e674168ddf462b5b01b9f34.
+Originalrelease tag a17449189a39af6474d914137eab020169f91023 unchanged; new annotated
+archive/v1.0.0-beta.20-package-revision-20261029 points at artifact sourceead567a3.
+Release notes disclose exact source, accepted checks, external OCR prerequisites,
+and unchanged historical/model evidence. No signing rebuild or station action.
+Remaining: publication docs PR, applicable required CI and normal merge.
+
+Publication preparation history follows.
+
+Scott explicitly ordered push/merge/tag/publish; Tesseract bundling and other
+features are deferred to a future version. Existing Beta20 package-revision
+convention applies: original release tag unchanged,9changed assets/18unchanged,
+new annotated provenance tag archive/v1.0.0-beta.20-package-revision-20261029
+pushed at exact artifact source ead567a33614a65554a69ef186342d691c43b7dc.
+Publication branch docs/publish-pdf-package-20261029 based on main ead567a3.
+Prepared9asset hashes/old remote metadata/checksums/notes retained in coding-chat
+work/publish-ead567a3. Previous signed8fdkit remains available for recovery.
+Owned upload session60781 uploads app/server packs and4manual files; next upload
+setup/sidecar/checksums, verify all27remote digests and unchanged tag, edit release
+notes, commit/push publication docs, required CI and normal merge. No rebuild,
+station action, model-transfer, force-push or DeepSeek. Completion not yet claimed.
+
+Prior preparation receipt follows; its no-publication boundary is superseded above.
+
+# READY FOR SCOTT TAG/PUBLISH APPROVAL — October 29, 2026
+
+Preparation COMPLETE. No tag/publication/asset replacement authorized or performed.
+Source ead567a33614a65554a69ef186342d691c43b7dc, version1.0.0-beta.20 unchanged.
+Signed build40835548156 attempt2 success. Kit:
+C:/CivicCastTester/kit-staging/ead567a33614a65554a69ef186342d691c43b7dc
+Setup CivicCast (Native)_1.0.0-beta.20_x64-setup.exe,261413760bytes,
+SHA2568a37e2bc48d1f0d63fde088c682730f9b2b49e812e674168ddf462b5b01b9f34.
+Authenticode Valid, Scott Converse, Microsoft timestamp. Full artifact paths,
+companion hashes, provenance and limitations in coding-chat outputs:
+C:/Users/scott/Documents/Codex/2026-10-28/re/outputs/CivicCast-signed-installer-ead567a3.md
+and matching.json. This local receipt does not require a signing rebuild or CI rerun.
+
+Required isolated lifecycle PASS08:37–09:00UTC, receipt:
+C:/CivicCastTester/civiccast-ead567a3-20261029-retry/receipt.json.
+Install/packaged agenda proof/uninstall exit0; setup/launcher/uninstaller signatures
+Valid; offlineAI/caption activation and guest service/health/schema passed. Installed
+six-module hashes match selected source, four real agenda pages yield30correctitems,
+actualPDFium rendering passes; preview has no preconfirm writes, authenticated original
+hash correct, confirm/reopen30items. Retained258checkpoint unchanged; no fullpacket
+orOCRrepeat. Uninstall removedruntime/packs/launcher/service and preservedupload/PGmarker.
+Packaged agenda check uses installed production routes in-process, not live supervisor
+agendaAPI/newGUI. Prior browser evidence reused; native PDFviewer rendering unverified.
+Tesseract+Englishdata+DLLs remain external prerequisites, not bundled promise.
+
+All owned runners/waiters and Sandbox instances stopped; wsblist empty09:00UTC.
+Host station never probed/changed. Historical8fdcandidate restored intact. No LFS,
+spending/reboot/newsourcepatch. No remaining executable preparation work; STOP here.
+
+Historical preparation chronology follows; pending statements below are superseded.
+
+New owner authorization relayed by Current Coder watcher: prepare signed public
+installer containing PR279/280, STOP BEFORE TAG/PUBLISH. No host station probes,
+changes, restart, install or reboot. Existing pipeline/isolated lifecycle only.
+Candidate source main ead567a33614a65554a69ef186342d691c43b7dc; established version
+1.0.0-beta.20. Reuse source CI40828194825 and unaffected packet/resume/OCR/browser
+proof. Packaging/installed changed workflow acceptance remains outstanding.
+
+Owned build40835548156 dispatched 2026-10-29 ~07:27Z, exact SHA verified, self-hosted,
+prepare_only=false, both large-upload flags=false, reviewed PyAV beta20 asset.
+Reuse signed station C:/CivicCastTester/preserved-8fdce69e-20261029/kit/station.
+Prior 8fd candidate-root and kit moved intact to that preservation directory before
+workflow prune (original candidate and kit-staging locations); baseline148c kept.
+Restore original historical locations after build pruning ends. C free~173GiB,
+RAM free~6.8GiB before serial build; recheck before isolated acceptance.
+
+Owned hidden runner session33604, ListenerPID33472 parent12788, started07:27:12Z.
+Owned gh build waiter session30686, log work/installer-40835548156.log under coding
+chat cwd. Expected terminal: signed candidate/kit plus successful workflow, then
+isolated native-guest-filesystem install/run/uninstall and packaged agenda proof.
+Cancellation: gh run cancel40835548156, verify terminal; Ctrl-C owned waiter/runner
+sessions after checking process identity. Automatic informational Gate A may enqueue
+after build; prevent it from expanding this bounded isolated acceptance assignment.
+No publication/tag job is in the build workflow. One Sol6.1 medium document_processor
+prepares bounded guest-only agenda proof; no nested workers or station access.
+
+Attempt1 ended failure before packs/signing: reviewed-pyav-reuse scratch directory
+already existed (New-Item without Force). Preserved empty stale directory under
+preserved-8fdce69e-20261029/reviewed-pyav-reuse; one failed-job-only rerun requested
+07:37Z. Same candidate/run, completed manual and verified station bundle reused.
+Old waiter30686/cell293 terminal exit1. Current sole waiter70886, log
+work/installer-40835548156-attempt2.log. Runner33604 remains owned. No source change
+or weakened checks; no repeated signing build yet. Guest-only proof prepared,
+not executed, under coding chat work/installer-acceptance.
+
+Build40835548156 attempt2 SUCCESS, signed kit assembled08:09Z. Waiter70886/cell303
+terminal exit0; runner33604 terminal after canceling automatic informational
+GateA40840114130 (all jobs terminal; no acceptance VM launched by that run).
+Old candidate/kit restored to original8fd paths after pruning ended. Signed setup
+261413760bytes, SHA2568a37e2bc48d1f0d63fde088c682730f9b2b49e812e674168ddf462b5b01b9f34,
+Scott Converse Authenticode Valid, Microsoft timestamp, thumbprint
+FDD65C665C426DFCACF23FA544B0E1E15614CF83. App report binds clean ead567a3 source.
+
+Owned isolated acceptance Sandbox6a5b48c7-c4a2-4223-b043-f41e3dde3287 launched
+08:11:49Z,12288MB,network/vGPU disabled; kit/proof/fixtures readonly, guest native
+C:/CivicCastInstall. Evidence C:/CivicCastTester/civiccast-ead567a3-20261029.
+Expected terminal receipt passed after install/signature/activation/agenda/uninstall
+preservation; guest shuts down. Cancel exact ID with wsb stop, verify absent.
+Prelaunch free physical~13.6GiB, disk~136GiB; no other Sandbox active. Prior accidental
+WindowsSandbox.exe --help empty Sandbox stopped after verified ownership and logged
+in existing failure log. Never use that GUI launcher for CLI help; wsb is CLI.
+Installed agenda proof is bounded240s, four fresh pages plus blank PDFium render;
+retained258 checkpoint reused. No full-packet read/OCR repeat or station action.
+Headless Sandbox has no ExistingLogin (0x80070520); used supported wsb exec System
+on exact owned ID. Guest machine CA7D38AB-FF78-4 independently identified (host is
+different); lifecycle and proof guards bind to that guest name. Lifecycle PID6340
+inside guest, hidden. Setup hash/signature passed; stage installing08:14:32Z.
+Sole acceptance receipt waiter73228, blocking exec cell325,140-minute bound.
+On terminal receipt inspect result, ensure exact Sandbox stopped; no generic VM kill.
+
+First guest installed/activated successfully and all packaged agenda assertions
+passed (four pages, actual PDFium render, installed six-module source hashes,
+30preview/confirm/reopen, no preconfirm writes,258checkpoint unchanged). Wrapper
+read null Start-Process ExitCode and wrongly marked failure; guest shutdown before
+uninstall. Receipt retained unchanged, waiter73228/cell325 exit1, firstVM absent.
+Corrected local acceptance wrapper to retain System.Diagnostics.Process handles,
+drain output asynchronously and read exit before disposal. No product/source/build
+change. Fresh same-byte lifecycle guest6c268bdd-f813-4248-910a-19b9cfbd988d started
+~08:36Z, evidence C:/CivicCastTester/civiccast-ead567a3-20261029-retry. Installer
+and uninstaller wrappers use held process handles too; failed guest now remains
+available for diagnosis/uninstall instead of unconditional shutdown. Host untouched.
+Cancel only this exact Sandbox via wsb stop; no new packaging build.
+Current sole receipt waiter72811/blocking cell335; stage installing08:37:26Z.
+
+Previous source delivery receipt follows.
+
+# DELIVERED: retained PDF processing and agenda preview — October 29, 2026
+
+Both authorized PRs are normally merged. PR280 merged at 2026-10-29T07:16:02Z,
+merge ead567a33614a65554a69ef186342d691c43b7dc, final source head
+01d48cd10d09af84f3f5a68b8a1aa3928acca3b7. PR279 receipt follows below.
+Final ci-test run40828194825 passed Unit tests, WS4 and Claims-evidence verifier.
+All applicable CI passed; three packaging-only checks skipped. Optional network and
+randomized checks also passed, without becoming gates. Public a11y passed one
+failed-job rerun after diagnosis of an unchanged WebKit video.play timeout; no
+claim that the intermittent media test itself was fixed. Normal review's legacy
+parent-only import conflict was fixed with red/green evidence and resolved.
+
+Final browser receipt verifies integrated source hashes, 30 correct entries from
+the real 258-page packet, zero writes before confirmation, authenticated original
+bytes/hash, and persistence across an isolated backend restart. Native headless PDF
+viewer rendering remains unverified; Blob bytes and page links were verified.
+All owned development helpers and the final CI waiter are stopped. Station/data
+unchanged. No L1/L2, installer rebuild or publication. No further work authorized.
+This local final receipt is not pushed as a bookkeeping-only CI restart.
+
+Pre-merge implementation evidence follows; pending statements below are historical.
 
 Root owns coding and delivery. Current Coder now reports Scott assigned it watching/
 nudging only; it declined final candidate audit execution. Do not wait on that chat
