@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -66,6 +67,7 @@ class DocumentStore:
             original = folder / "original.pdf"
             checkpoint = folder / "pages.json"
             manifest = folder / "manifest.json"
+            previous_digest: str | None = None
             if manifest.exists():
                 metadata = json.loads(manifest.read_text(encoding="utf-8"))
                 if metadata.get("version") != 1 or metadata.get("identity") != identity:
@@ -82,6 +84,7 @@ class DocumentStore:
                     checkpoint = original.with_name("pages.json")
                 if not original.is_file() or _sha256(original) != metadata.get("sha256"):
                     raise ValueError("Retained original is missing or changed; resume refused.")
+                previous_digest = metadata["sha256"]
                 # Preserve the legacy v1 manifest when a fresh revision replaces
                 # the current pointer; its original/checkpoint remain untouched.
                 if refresh and metadata.get("storage_key") is None:
@@ -104,6 +107,7 @@ class DocumentStore:
                     version = folder / "versions" / digest
                     version.mkdir(parents=True, exist_ok=True)
                     original = version / "original.pdf"
+                    previous_checkpoint = checkpoint
                     checkpoint = version / "pages.json"
                     if original.exists():
                         if _sha256(original) != digest:
@@ -112,6 +116,16 @@ class DocumentStore:
                             )
                     else:
                         partial.replace(original)
+                    if (
+                        digest == previous_digest
+                        and previous_checkpoint != checkpoint
+                        and previous_checkpoint.exists()
+                        and not checkpoint.exists()
+                    ):
+                        # Adopt only identical bytes; preserve the old checkpoint too.
+                        temporary_checkpoint = checkpoint.with_suffix(".tmp")
+                        shutil.copyfile(previous_checkpoint, temporary_checkpoint)
+                        temporary_checkpoint.replace(checkpoint)
                     _write_json(version / "manifest.json", metadata)
                     _write_json(manifest, metadata)
                 finally:

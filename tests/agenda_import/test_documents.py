@@ -2,6 +2,8 @@
 # Copyright (c) The CivicCast Authors
 """Retained acquisition must survive retries without replacing its original."""
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -99,3 +101,26 @@ def test_refresh_unchanged_content_keeps_completed_pages(tmp_path):
     with store.acquire(**arguments(download), refresh=True) as refreshed:
         assert refreshed.path == original.path
         assert refreshed.checkpoint_path.read_text() == "saved pages"
+
+
+def test_refresh_flat_manifest_carries_same_original_checkpoint_forward(tmp_path):
+    store = DocumentStore(tmp_path)
+
+    def download(path):
+        path.write_bytes(b"%PDF- unchanged")
+
+    with store.acquire(**arguments(download)) as original:
+        identity = original.metadata["identity"]
+        folder = tmp_path / original.document_id
+    legacy = {
+        "version": 1,
+        "identity": identity,
+        "sha256": hashlib.sha256(b"%PDF- unchanged").hexdigest(),
+        "bytes": 15,
+    }
+    (folder / "manifest.json").write_text(json.dumps(legacy))
+    (folder / "original.pdf").write_bytes(b"%PDF- unchanged")
+    (folder / "pages.json").write_text('{"completed":12}')
+    with store.acquire(**arguments(download), refresh=True) as refreshed:
+        assert refreshed.checkpoint_path.read_text() == '{"completed":12}'
+        assert (folder / "pages.json").read_text() == '{"completed":12}'
