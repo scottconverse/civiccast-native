@@ -3,12 +3,38 @@
 """OCR source trust and service-independent executable discovery."""
 
 import hashlib
+import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from scripts import build_native_ocr as builder
+
+
+def test_build_failure_exposes_bounded_compiler_output_only_on_failure(monkeypatch, capsys):
+    failure = subprocess.CalledProcessError(
+        1, ["cmake"], output="x" * 25000 + "compiler error C1083", stderr="link detail"
+    )
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(builder.subprocess, "run", fail)
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        builder._run_build_command(["cmake", "--build", "scratch"], {})
+    assert caught.value is failure
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert "compiler error C1083" in captured.err and "link detail" in captured.err
+    assert len(captured.err) < 24500
+    monkeypatch.setattr(
+        builder.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, "quiet success", ""),
+    )
+    assert builder._run_build_command(["cmake"], {}) == "quiet success"
+    assert capsys.readouterr() == ("", "")
 
 
 def test_corrupt_cached_artifact_is_refused(tmp_path: Path) -> None:

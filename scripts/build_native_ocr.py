@@ -68,6 +68,29 @@ def _extract_sources(archive: Path, scratch: Path) -> None:
                 target.write_bytes(data)
 
 
+def _run_build_command(args: list[str], environment: dict[str, str]) -> str:
+    """Keep successful builds quiet, but retain bounded compiler failure diagnostics."""
+    try:
+        result = subprocess.run(
+            args,
+            env=environment,
+            check=True,
+            text=True,
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except subprocess.CalledProcessError as error:
+        print(f"OCR build command failed ({error.returncode}): {args!r}", file=sys.stderr)
+        for name, output in (("stdout", error.stdout), ("stderr", error.stderr)):
+            if output:
+                print(
+                    f"--- OCR {name} (last 24000 characters) ---\n{output[-24000:]}",
+                    file=sys.stderr,
+                )
+        raise
+    return result.stdout
+
+
 def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str]]:
     """Return every shipped file's manifest attribution; fail on tool/source drift."""
     lock_path = ROOT / "native-windows-ocr.lock.json"
@@ -82,15 +105,7 @@ def stage_offline_ocr(out: Path, scratch: Path) -> dict[str, tuple[str, str, str
     tools = verify_msvc_cmake_tools(vcvarsall.parents[3], lock["build"])
 
     def run(args: list[str]) -> str:
-        result = subprocess.run(
-            args,
-            env=environment,
-            check=True,
-            text=True,
-            capture_output=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        return result.stdout
+        return _run_build_command(args, environment)
 
     cmake, ninja = (str(tools[name]) for name in ("cmake", "ninja"))
     scratch.mkdir(parents=True, exist_ok=True)
