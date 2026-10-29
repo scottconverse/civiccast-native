@@ -31,7 +31,24 @@ and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
 do not seek them as a prerequisite or claim human-validated translation accuracy.
 Language edit/review/publication/player-selection software acceptance remains required.
 
-Current state: PR282 open, head ee796d1207c8f028862a634dcfc97f18b4d57220. Required CI executing; OCR reproducibility failed.
+Current state: PR282 open, head3b2763aff2aa6f352b1b28b52bb92f9be4b53bf0.
+Hosted OCR/app reproducibility PASS, run40950465824: two independent clean
+workspaces,9743files/515308302bytes/treeSHA82e3dcc5e1f714b9b1bb53198622df2e3e4ef14d45420e5dfa7af13ba330e970.
+Proof retained at chat outputs/rc1-repro-3b2763af. Required unit/native Windows
+unit checks still executing; native Windows job123717676462 failed6/57 media
+probes (51pass): graphics/content/emergency stop/reload/control acknowledgments
+time out. Earlier selected native coverage35passed/no skips before that media step. Bounded
+agent agenda_setup reproduced missing PNG decoder with fresh plugin registry:
+secured closure fails Missing decoder: PNG; original FFmpeg closure reaches EOS
+with1imagebuffer on same PNG. Evidence chat work/rc1-ws4-png. Checking existing
+GStreamer1.28.5 gstpng plugin with secured libpng/zlib fixed fresh-registry
+PNGdecode/EOS. Added explicit required pngdec factory (56required/69total),
+pinned wheel RECORD verified. Closure39tests and software emergency media1test
+pass with clean worker teardown; fiveD3D11 cases left for required hosted CI.
+No dependency/FFmpeg rebuild, timeout increase, skips, or blind retry. Log chat work/rc1-ws4-3b2763af.log.
+No merge or signed product build yet. Current-head
+security run40950465989 PASS:153components/129triaged rawmatches;83Windows
+Python dependencies/0vulnerabilities. Reports outputs/rc1-security/ci-3b2763af.
 First CI failures diagnosed: missing artifact step timeouts (five), inventory
 invoked outside uv environment, installer Playwright unsupported on ubuntu-latest
 26.04 (pin affected job to24.04). Corrections pushed and those checks pass; no package rebuild.
@@ -57,7 +74,7 @@ of pinned cl.exe. Upstream Tesseract ENABLE_CCACHE defaults ON and installs
 compiler launchers. Correction: supported ENABLE_CCACHE=OFF, blank compiler-launcher cache entries,
 and removal of only inherited C/CXX launcher environment keys (try_compile
 otherwise reinitializes them). Eight focused tests and actual pinned-CMake
-configure-only proof with invalid ambient launcher pass; hosted success pending.
+configure-only proof with invalid ambient launcher pass; hosted success verified above.
 OCR lock now e44aabd55106f76a965cc64229fd04d3534cb35d97eedb9f01f60f9de9222183;
 app payload binds that exact LF hash. No full local OCR or product rebuild.
 This is an observed unpinned launcher, not yet proof of the missing-object cause.

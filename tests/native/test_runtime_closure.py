@@ -95,7 +95,10 @@ def test_required_factory_count_includes_live_audio_processing_factories() -> No
     assert "audiochebband" in REQUIRED_FACTORIES
     assert FACTORY_PLUGIN["audiochebband"] == "gstaudiofx.dll"
     assert FACTORY_PLUGIN["volume"] == "gstvolume.dll"
-    assert len(REQUIRED_FACTORIES) == 55
+    # decodebin must retain PNG support after minimizing the FFmpeg codec set.
+    assert "pngdec" in REQUIRED_FACTORIES
+    assert FACTORY_PLUGIN["pngdec"] == "gstpng.dll"
+    assert len(REQUIRED_FACTORIES) == 56
 
 
 # --------------------------------------------------------------------------
@@ -126,7 +129,7 @@ def test_staged_optional_factories_are_disjoint_from_required_factories() -> Non
     pipelines cannot run without" -- these three are not that (no pipeline in
     `civiccast/egress/gst/engine.py` builds a graph with them today), so they
     must never silently widen REQUIRED_FACTORIES's meaning or its asserted
-    count of 52."""
+    count of 56."""
     assert not (STAGED_OPTIONAL_FACTORIES & REQUIRED_FACTORIES)
     assert not (STAGED_OPTIONAL_FACTORIES & EXCLUDED_GPL_FACTORIES)
     assert not (STAGED_OPTIONAL_FACTORIES & LINUX_ONLY_FACTORIES)

@@ -736,5 +736,9 @@
         "native-windows-gstreamer-ffmpeg.lock.json"
       ]
     }
-  ]
+  ],
+  "factory_contract_followup": {
+    "evidence": "png-decoder-regression.json",
+    "note": "The historical 68 explicit factory check omitted implicit decodebin PNG support. Native pngdec is now required (69 total, 56 required); FFmpeg source, codecs and pins remain unchanged."
+  }
 }

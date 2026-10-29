@@ -1,0 +1,60 @@
+{
+  "reviewed": "2026-10-29",
+  "defect": "Required Windows WS4 six PNG overlay/board/emergency cases exited before control acknowledgment: the minimized FFmpeg removed avdec_png and selected closure omitted native pngdec. The explicit factory list did not cover the implicit decodebin PNG dependency.",
+  "fix": "Require pngdec and map it to gstpng.dll from the existing pinned gstreamer_plugins1.28.5 wheel. No dependency archive/source/FFmpeg changes.",
+  "plugin": {
+    "path": "lib/gstreamer-1.0/gstpng.dll",
+    "bytes": 37376,
+    "sha256": "def5cdb617c22c60a7898fdf570641bbad1a1a90a1bd02babd7f7474e236a896",
+    "distribution": "gstreamer_plugins",
+    "version": "1.28.5",
+    "license": "LGPL-2.1-or-later",
+    "provenance": "Existing requirements-native-runtime.txt hash-locked wheel; actual binary equals its wheel RECORD SHA256 in two retained cache extracts. Standard builder ownership/license mapping applies.",
+    "inventory": "Covered by existing gstreamer1.28.5 component sourced from requirements-native-runtime.txt; dynamic png16.dll/zlib remain exact locked secured overlay, whose consumer symbols and actual packaged file pins were checked."
+  },
+  "factory_contract": {
+    "required": 56,
+    "total": 69,
+    "previous_total": 68,
+    "new_required_factory": "pngdec",
+    "historical_scope": "The prior68-factory equivalence proof remains historical evidence for that explicit list; it did not test implicit PNG decoding. New native PNG factory and actual decode now explicitly verified."
+  },
+  "isolated_reproduction": {
+    "same_input": "Generated80x80opaquegreenPNG",
+    "baseline_preserved_original_ffmpeg": {
+      "avdec_png": true,
+      "pngdec": false,
+      "terminal": "EOS",
+      "image_buffers": 1
+    },
+    "secured_before_fix": {
+      "avdec_png": false,
+      "pngdec": false,
+      "terminal": "ERROR",
+      "diagnostic": "Missing decoder: PNG"
+    },
+    "secured_with_native_plugin": {
+      "avdec_png": false,
+      "pngdec": true,
+      "terminal": "EOS",
+      "image_buffers": 1
+    },
+    "raw_evidence_local": "C:\\Users\\scott\\Documents\\Codex\\2026-10-28\\re\\work\\rc1-ws4-png",
+    "raw_probe_note": "Raw probe checks only four named factories; its inherited missing_required field is not a full factory audit and is not used as evidence."
+  },
+  "checks": {
+    "closure_suite": "39passed",
+    "software_media_test": "test_emergency_late_image_reaches_pixels_and_clear_preserves_logo[compositor]:1passed in8.08seconds",
+    "software_worker_result": {
+      "error": null,
+      "teardown_clean": true
+    },
+    "owned_pytest_and_worker_pids_terminal": [
+      25348,
+      36488
+    ],
+    "ruff": "pass",
+    "diff_whitespace": "pass"
+  },
+  "remaining_required_ci": "Five named d3d11compositor graphics/board/reload/emergency executions deferred to required hosted Windows CI; existing tests do not explicitly force WARP. No timeouts/skips/assertions weakened. No host station, guest, service or physical GPU execution."
+}
