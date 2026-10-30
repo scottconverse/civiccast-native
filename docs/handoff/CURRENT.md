@@ -2,6 +2,41 @@
 
 ## RC1 current assignment (supersedes historical completion below)
 
+Count correction reviewed: purefloor2095/Windowsfloor2334, exact2145/2387;
+both affected policy tests PASS27.10s, narrow governance/diff checks PASS.
+Six workflow blob bindings renewed to230d6303d11c2a7a2896dd5291e16c122a6c5edc;
+contract/producer requirements unchanged. Normal push follows; no active waiter.
+
+PR284 d7ca613e required run40989064082 TERMINAL FAILED02:34Z; waiter16832/
+PID16204 terminal. Unit:11935PASS/2FAIL (only collection-policy counts/floor),
+112skipped/5deselected as reported. New Ollama regression makes counts2145/2387
+versus stale2144/2386, and purefloor2094 is51belowactual (allowed50).
+Claims9violations cascade from failed producer/missing required evidence.
+Bounded agenda_setup updates counts/floor/governed workflow bindings and runs
+only affected policy checks. NO retry of obsolete d7 CI. New head required CI
+will supply ONE justified unchanged media-path retry; repeat readiness failure
+requires specific diagnosis. No new signed installer or guest launched.
+
+Required-run waiter now session16832/PID16204/start2026-10-30T02:26:38.3058580Z. Existing all-checks waiter23196 stopped (identity verified) to exclude optional randomized waiting. Log chat work/rc1-pr284-required-run-wait.log; Ctrl-C cancels waiter only. Terminal result triggers exact failed Windows-job retry; no remote job canceled.
+
+PR284 Windows job123847729190 FAILED:56mediaPASS/1planar-audio-tail rollover
+failure; subsequent native-suite JUnit absent, no pass claimed. Bounded Sol diagnosis
+compares PR283 job123796243285 verified57PASS: exact engine/test/workflow/runtime
+pins unchanged. Outgoing EOS/padding completed; incoming second stream never
+prerolled before existing10s watchdog. No specific stream/caps diagnosis in log.
+ONE unchanged failed-job retry justified; no timeout/assertion/source change.
+CLI retry refused while parent40989064082 still running unit tests; no retry started.
+Retry exact failed job after parent terminal. If same cause repeats, diagnose
+incoming per-pad state/caps before any further attempt. Logs retained in chat work.
+
+PR284 current headd7ca613e: Rust compile/tests, lint, public/operator accessibility
+(including WebKit), docs and security checks PASS. Required unit/native runtime/
+reproducibility jobs still running; native job passed tool installation and reached
+real media tests. No repository review findings. Both input-transfer listeners
+terminal SUCCESS. Existing CI waiter PID23196/start01:59:50Z remains the only waiter;
+its exec session handle was not retained across compaction. Log remains
+chat work/rc1-pr284-d7ca613e-ci-wait.log. No new installer/guest yet.
+
 Owner request: merged corrections, one consolidated signed RC1 candidate, isolated
 installed acceptance and cleanup. STOP before RC1 tagging/publication/public asset
 replacement. Beta20 publication is complete. Never probe or modify the host station.
@@ -25,7 +60,7 @@ inventory/security and managed recovery respectively. No DeepSeek; watcher obser
 Acceptance still pending: real discovery/explicit selection, visible original/page
 links, exact 30 items, zero writes before confirm, incomplete refusal, persistence
 after isolated restart, bundled OCR under service identity, backup/restore/resume,
-signatures/install/upgrade preservation/uninstall. Affected source/repository review and normal merge are complete.
+signatures/install/upgrade preservation/uninstall. PR282/283 source reviews and normal merges are complete; PR284 correction awaits required CI and merge.
 Reuse unaffected retained 258-page/checkpoint/development OCR/YouTube/blackout evidence.
 Owner revision relayed by the authorized watcher October29: qualified human review
 for Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic is PENDING
@@ -133,11 +168,15 @@ Bounded source fix prepared by agenda_recovery, root affected-diff reviewed:
   regressions prepared for required WindowsCI, NOT locally executed. No local
   full installer build or host daemon/station probes.
 PR284 OPEN: https://github.com/scottconverse/civiccast-native/pull/284
-Headdf2d90a4227419eddae0d4203e75f54acba14b0b, requiredCI running.
-One hidden waiter session13693/PID36928,parent21872,start01:47:12Z,
-gh pr checks284 --watch --interval45 -> chat work/rc1-pr284-ci-wait.log.
-Ctrl-C stops watcher only. Both input-transfer run-once runners10461/89502
-succeeded/terminal; no persistent runner or guest.
+Current headd7ca613e3c9ee07ed1d2779a7410522f19fddff2, requiredCI running.
+Old watch13693 terminal; one hidden waiter session26395/PID23196,parent12984,
+start01:59:50Z, gh pr checks284 --watch --interval45 -> chat
+work/rc1-pr284-d7ca613e-ci-wait.log. Ctrl-C stops watcher only.
+Old ci-test40987844299 obsoletehead CANCELLED/COMPLETED; old optionalrandomized
+had completed before cancellation request, no new optionalgate. Newrun40989064082.
+New reviewed-input transfer runner28955 PASS/terminal02:01:15Z; second native
+runtime-input run-once runner started only for queuedjob123847311095.
+No persistent runner, active agent or guest.
 First head: Windows Rust compile+new regressions PASS. Lint failed only formatter
 on new Python regression; root ran pinned Ruff0.15.12 format+check, now passes.
 Windows native job failed BEFORE tests: Chocolatey feed504 for FFmpeg9.0.2,
@@ -175,7 +214,7 @@ DOCXsha379a2e1e25893475500d9fc467eb034337b99b10dc9b9624a903e6df7bfe7271.
 Isolated acceptance inputs ready; C:/CivicCastTester/rc1-installed-2be5b99d-20261029/
 acceptance.wsb is obsolete preparation only. Current8GiB configs bound to3addb10e
 at C:/CivicCastTester/rc1-installed-3addb10e-20261029/acceptance.wsb and
-C:/CivicCastTester/rc1-upgrade-3addb10e-20261029/acceptance.wsb. Neither launched.
+C:/CivicCastTester/rc1-upgrade-3addb10e-20261029/acceptance.wsb. Main guest failed and was stopped; upgrade guest has not launched.
 Prepared browser check now clicks Page4 (not first page), asserts #page=4 and
 requires root to visually inspect actual page4 screenshot; syntax checked only.
 Failed main guest stopped as recorded above; upgrade guest not launched. Station untouched; protected Beta20/rollback kits unchanged.
@@ -186,12 +225,12 @@ Only public key copied into acceptance inputs; SHA256
 c462d5ed924744f62b6de0cdb4e2358d4a858325cdf365fc03706d7a0e31ce2e.
 Prepared main lifecycle no longer repeats same-version RC1 reinstall; separate
 Beta20-to-RC1 upgrade is the required preservation check. Changed helper syntax
-passes; neither guest executed. Guest export/host retention NOT executed.
+passes; main guest failed before these stages. Guest export/host retention NOT executed.
 Require retained encrypted backup and
 host-protected passphrase receipt before any eventual owned-guest disposal.
-Latest headroom17:45MT:10.88GiB available RAM,144.29GiB free disk. Recheck before
-build/guest; prepared12GiB guest exceeds current free RAM, use8GiB if still enough
-headroom or wait for owned build release. Never stop owner applications.
+Latest resumed check:13.17GiB available RAM. Recheck before guest launch;
+12GiB planned for actual model inference, no concurrent build/guest.
+Do not reuse8GiB or stop owner applications.
 Packaged security reconciliation found12 nested setuptools vendored distributions
 not separately enumerated by static inventory; one focused actual-version audit
 reports zero findings. Supplemental inventory/pack hash binding COMPLETE at chat work/rc1-packaged-security.
