@@ -290,6 +290,8 @@ async function mockCaptionedHls(page: import('@playwright/test').Page) {
     })
   })
   await page.route('**/captioned/240p/seg000.ts', async (route) => {
+    // Two seconds of moving 426x240/30fps H.264 baseline video, not repeated
+    // black frames: playback checks require genuinely advancing presented frames.
     const segment = Buffer.from(
       readFileSync('e2e/fixtures/seg000.ts.b64', 'utf8'),
       'base64',
