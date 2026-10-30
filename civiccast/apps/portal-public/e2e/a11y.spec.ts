@@ -730,25 +730,34 @@ test('built embed plays captions on an external origin and clears withdrawn play
   await expect(player.getByRole('button', { name: 'English', exact: true })).toBeVisible()
   await expect(player.getByRole('button', { name: 'Spanish', exact: true })).toBeVisible()
   const video = player.locator('video')
-  const playbackStart = await video.evaluate((node: HTMLVideoElement) => {
+  const playback = await video.evaluate(async (node: HTMLVideoElement) => {
     node.muted = true
-    // Prove advancement with presented frames, not a transient buffering level.
-    // Latch the evidence so a driver poll cannot miss this two-second clip.
-    node.requestVideoFrameCallback((_now, first) => {
-      node.requestVideoFrameCallback((_next, second) => {
-        node.dataset.presentedFrameAdvance = String(second.mediaTime - first.mediaTime)
-      })
-    })
     const start = node.currentTime
-    void node.play().catch((error: unknown) => { node.dataset.playbackError = String(error) })
-    return start
+    // Collect real presentation evidence in the browser, avoiding repeated
+    // locator/trace round trips during this two-second clip. The driver poll
+    // failed on CPU-constrained Linux WebKit. Keep both advancement requirements
+    // and await play() before returning the browser's presentation evidence.
+    const presented = new Promise<number>((resolve) => {
+      let firstMediaTime: number | undefined
+      const observe: VideoFrameRequestCallback = (_now, frame) => {
+        firstMediaTime ??= frame.mediaTime
+        const advance = frame.mediaTime - firstMediaTime
+        if (advance > 0 && node.currentTime > start + 0.1) resolve(advance)
+        else node.requestVideoFrameCallback(observe)
+      }
+      node.requestVideoFrameCallback(observe)
+    })
+    let playbackError: string | null = null
+    try { await node.play() } catch (error) { playbackError = String(error) }
+    const advance = playbackError === null ? await presented : 0
+    return {
+      timeAdvanced: node.currentTime > start + 0.1,
+      framesAdvanced: advance > 0,
+      playbackError,
+      mediaError: node.error?.message ?? null,
+    }
   })
-  await expect.poll(() => video.evaluate((node: HTMLVideoElement, start) => ({
-    timeAdvanced: node.currentTime > start + 0.1,
-    framesAdvanced: Number(node.dataset.presentedFrameAdvance ?? 0) > 0,
-    playbackError: node.dataset.playbackError ?? null,
-    mediaError: node.error?.message ?? null,
-  }), playbackStart)).toEqual({ timeAdvanced: true, framesAdvanced: true, playbackError: null, mediaError: null })
+  expect(playback).toEqual({ timeAdvanced: true, framesAdvanced: true, playbackError: null, mediaError: null })
   await player.getByRole('button', { name: 'Spanish', exact: true }).press('Enter')
   await expect(player.getByRole('button', { name: 'Spanish', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(() => player.locator('video').evaluate((node: HTMLVideoElement) => Array.from(node.textTracks).flatMap((track) => Array.from(track.cues ?? []).map((cue) => (cue as VTTCue).text)).join(' '))).toContain('La mocion')
