@@ -6,7 +6,7 @@ Owner request: merged corrections, one consolidated signed RC1 candidate, isolat
 installed acceptance and cleanup. STOP before RC1 tagging/publication/public asset
 replacement. Beta20 publication is complete. Never probe or modify the host station.
 
-Candidate: C:/Dev/cc-pdf-processing, feat/rc1-agenda-offline, based on main
+Candidate: C:/Dev/cc-pdf-processing, fix/rc1-installer-space. RC1 implementation is merged in2be5b99d; original base was main
 25c9dcc4a5202339f77d2ff165a3e534dd772d95 (PR281). Version identity: 1.0.0-rc.1; manual parser accepts dotted RC syntax. Preserve unrelated Windows recovery documents.
 
 Required outcomes: administrator UI agenda enablement/tenant persistence; bundled
@@ -18,12 +18,12 @@ Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic.
 Root owns integration, recovery, version/docs, required CI/normal merge, one signed
 build and isolated installed service/PostgreSQL/browser acceptance. Bounded Sol6.1
 medium agents agenda_setup, offline_ocr and agenda_recovery own config/UI, OCR/native
-inventory/security and managed recovery respectively. No DeepSeek; watcher observes/nudges only. All owned dependency-source builds and agent tasks are terminal; no signed RC1/product build has launched.
+inventory/security and managed recovery respectively. No DeepSeek; watcher observes/nudges only. All dependency-source builds and agent tasks are terminal; the first signed RC1 build stopped at the real installer-size guard; bounded correction follows below.
 
 Acceptance still pending: real discovery/explicit selection, visible original/page
 links, exact 30 items, zero writes before confirm, incomplete refusal, persistence
 after isolated restart, bundled OCR under service identity, backup/restore/resume,
-signatures/install/upgrade preservation/uninstall, final affected diff/repository review.
+signatures/install/upgrade preservation/uninstall. Affected source/repository review and normal merge are complete.
 Reuse unaffected retained 258-page/checkpoint/development OCR/YouTube/blackout evidence.
 Owner revision relayed by the authorized watcher October29: qualified human review
 for Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic is PENDING
@@ -31,14 +31,53 @@ and explicitly NOT an RC1 readiness/completion blocker. Scott has no reviewers;
 do not seek them as a prerequisite or claim human-validated translation accuracy.
 Language edit/review/publication/player-selection software acceptance remains required.
 
-Current state: PR282 remains open. Last tested head5bbf881015d39a1a5ba611075887da21e8c95db6.
-No merge, signed RC1 build, guest installation, tag or publication yet.
+Current state: PR282 normally squash-merged October29 23:01:05Z.
+Merged source2be5b99d9ea402d4b0756975ae98cb70cb1e9b35, version1.0.0-rc.1.
+Final PR heade05fdce431e697c03639c198c33514531f5883ea: ALL required CI passed,
+including unit and same-run claims run40964478052; optional randomized also
+passed. Final snapshot chat work/rc1-pr282-e05fdce4-final.json. No unresolved
+repository findings; original automated review31cf34c6 had none, later affected
+corrections reviewed by root (no new independent review claimed).
+CI waiter4015/PID6116 terminal; both input-transfer run-once listeners terminal.
+
+Signed build40970229720 at2be5b99d is terminal INCOMPLETE, no installer/kit.
+K1 model bundle signing and final manual rendering succeeded and remain valid.
+Attempt1 stopped before pack build on an existing EMPTY PyAV reuse directory;
+verified scoped empty/non-reparse/no owned worker, removed nonrecursively.
+Attempt2 built/verified all five signed component packs, then correctly refused
+installer disk estimate: required four sidecars+extractedtrees6145182639bytes
+exceeded declared5529600000bytes. This is a real package-affecting defect.
+No third blind retry. Runner12243 and waiter32300 are terminal; no owned worker.
+Completed component packs+five builder reports moved safely out of runner cleanup
+to C:/CivicCastTester/rc1-preserved-components/2be5b99d9ea402d4b0756975ae98cb70cb1e9b35.
+
+Bounded follow-up fix prepared on fix/rc1-installer-space:
+- NSIS required-sidecar declaration6600000KiB (6758400000bytes),9.98% over
+  actual reports. Actual-report proof chat work/rc1-installer-size-proof.json.
+  Keep exact candidate size guard, optional-CUDA exclusion and measured ARP size.
+- PyAV reuse directory creation idempotent; exact wheel size/SHA checks unchanged.
+- Four affected existing policy checks pass; Ruff/format/diff pass. No new tests,
+  dependencies, model downloads, renderer rebuild or runtime component changes.
+Next: focused PR/required CI/normal merge, then finish one consolidated RC1 kit
+with corrected installer sizing. Reuse unaffected checks/model packs and retained
+source/manual evidence; no tag/publication. All installed acceptance remains pending.
+
+Final2be5b99d manual PDF/DOCX+receipt retained at chat outputs/rc1-final-manual-2be5b99d;
+file sizes/hashes and render manifest verified. Source37d386db... equals prior
+visually reviewed manual. PDFsha e6c290684e778dbe10156a16f781be4618e6f1b703ab791461201fdbcf6f464a;
+DOCXsha379a2e1e25893475500d9fc467eb034337b99b10dc9b9624a903e6df7bfe7271.
+Isolated acceptance inputs ready; C:/CivicCastTester/rc1-installed-2be5b99d-20261029/
+acceptance.wsb is PREPARED ONLY and must be rebound to final signed-source kit.
+No guest launched. Station untouched; protected Beta20/rollback kits unchanged.
+
+Last fully tested head5bbf881015d39a1a5ba611075887da21e8c95db6.
+Historical pre-merge failures below are resolved; signed build/installed acceptance pending.
 Required unit run40955160859/job123734196810 terminal:24failed/11913passed/
 112skipped/5deselected,57m27s. Claims verifier consequently failed, also reporting
 stale workflow/contract bindings and missing input-transfer job inventory.
 Owned CI waiter session75660 is terminal; no duplicate waiter.
 
-Focused correction now prepared (no product/runtime-byte changes):
+Focused correction pushed in e05fdce4 (no product/runtime-byte changes):
 - Installer text-stub fixtures isolate secured_postgres_sources; production
   archive/hash verification stays unchanged. Ubuntu frontend assertion now24.04.
 - Native exact counts2144pure/2386total/2383Windows-not-integration; floors raised
@@ -71,8 +110,8 @@ Valid passing evidence at5bbf8810 retained:
 - Optional randomized40955160865 failed35m14s; not an owner release gate and no
   extra investigation/rerun launched. Do not claim every check is green.
 
-Next: push these focused CI corrections, required CI including same-run claims,
-normal merge, ONE signed RC1 build, existing isolated acceptance and cleanup.
+Next: finish this signed build, existing isolated acceptance and cleanup;
+STOP before RC1 tag/publication.
 No signed product build or dependency archive rebuild for these CI-only changes.
 Current ead567a3 and rollback8fdce69e complete kits safely moved (same volume)
 to C:/CivicCastTester/rc1-preserved-kits/<full-SHA> before any build pruning;

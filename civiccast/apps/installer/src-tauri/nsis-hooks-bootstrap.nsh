@@ -170,7 +170,8 @@
 ;    install size beyond what NSIS can auto-detect", e.g. downloads/
 ;    extractions done by an external process): see
 ;    CIVICCAST_ADDSIZE_PACKS_KB below and its use in NSIS_HOOK_PREINSTALL.
-;    DERIVATION: 5,400,000 KB is the conservative current budget for all four
+;    DERIVATION: 6,600,000 KiB covers RC1's measured 6,145,182,639 bytes
+;    (run 40970229720 attempt 2), with about 10% headroom, for all four
 ;    raw sidecars plus their extracted trees. The candidate workflow sums the
 ;    actual `pack_bytes` + `payload_bytes` from every signed builder report and
 ;    fails before packaging if that exact build exceeds this declaration, so
@@ -186,7 +187,7 @@
 ;    File-statement-only) EstimatedSize write with the real number --
 ;    self-correcting on every future build, unlike a hardcoded constant.
 ; ===========================================================================
-!define CIVICCAST_ADDSIZE_PACKS_KB "5400000"
+!define CIVICCAST_ADDSIZE_PACKS_KB "6600000"
 
 ; MUI_DIRECTORYPAGE_TEXT_TOP is MUI2's documented mechanism for adding
 ; explanatory prose above the directory browse box (must be !define'd

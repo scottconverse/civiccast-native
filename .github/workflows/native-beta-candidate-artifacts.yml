@@ -615,7 +615,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $reuse = Join-Path $env:RUNNER_TEMP 'reviewed-pyav-reuse'
-          New-Item -ItemType Directory -Path $reuse | Out-Null
+          New-Item -ItemType Directory -Force -Path $reuse | Out-Null
           if ($env:REVIEWED_RELEASE) {
             gh release download $env:REVIEWED_RELEASE --repo $env:GITHUB_REPOSITORY --pattern $env:REVIEWED_WHEEL_NAME --dir $reuse
             if ($LASTEXITCODE -ne 0) { throw 'Reviewed PyAV wheel asset download failed.' }
