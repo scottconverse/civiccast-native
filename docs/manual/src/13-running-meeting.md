@@ -92,7 +92,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 The **On-air preview** plays this channel's outgoing HLS broadcast. Before a live takeover it shows scheduled output; it is not a separate preview of the selected incoming source. Enable the channel's web output on **Channels** if the preview is unavailable. Use **Check source** and **Run pre-flight** for incoming-source status. A passed source check alone does not mean the source is on air.
 
-Live Room pre-flight checks the selected source's configured network address, including the sample source. A sample file cannot substitute for an unreachable live input. The installer's separate private rehearsal uses the bundled local sample. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
+Live Room pre-flight checks the selected source's configured network address. The bundled sample is a recording, not an RTMP server or camera; it is not offered as a live meeting source. Use **Readiness → Check broadcast readiness** for the separate private rehearsal with that file. For a meeting, select a real, reachable source on the session's channel and make sure its fresh check passes.
 
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 

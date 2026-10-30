@@ -1115,3 +1115,32 @@ def test_a_commit_that_finishes_gets_a_full_fresh_stall_budget(
 
     assert engine._check_stall() is False  # and the bound still bites at 10s
     assert engine._loop.quit_calls == 1
+
+
+def test_output_health_reports_measured_rates_and_zero_on_stall(engine_module, capsys):
+    from civiccast.egress.health import parse_ffmpeg_encoder_metrics_line
+
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._last_output_progress_print_t = 10.0
+    engine._mux_input_snapshot_t = 10.0
+    engine._output_buffers = 100
+    engine._output_buffers_at_arm = 0
+    engine._output_bytes = 3_750_000
+    engine._output_bytes_snapshot = 0
+    engine._mux_input_delta_suffix = lambda elapsed: "[mux-in 5.0s: video=+150 audio=+200]"
+    for name in (
+        "_u59_judge_leg_rate",
+        "_u59_judge_leg_lag",
+        "_snapshot_mux_input",
+        "_snapshot_chain_input",
+    ):
+        setattr(engine, name, lambda *args: None)
+    engine._maybe_print_output_progress(15.0)
+    measured = parse_ffmpeg_encoder_metrics_line(capsys.readouterr().err)
+    assert measured.encoder_fps == 30
+    assert measured.encoder_bitrate_kbps == 6000
+    engine._mux_input_delta_suffix = lambda elapsed: "[mux-in 5.0s: video=+0 audio=+0]"
+    engine._maybe_print_output_progress(20.0)
+    stalled = parse_ffmpeg_encoder_metrics_line(capsys.readouterr().err)
+    assert stalled.encoder_fps == 0
+    assert stalled.encoder_bitrate_kbps == 0

@@ -355,6 +355,7 @@ def public_guide(
     hours: int = Query(default=72, ge=1, le=24 * 14),
     store: Any = Depends(get_program_log_store),
     titler: Any = Depends(get_program_log_asset_titler),
+    schedule_store: Any = Depends(get_schedule_store),
 ) -> list[PublicGuideEntry]:
     if store is None:
         raise HTTPException(
@@ -364,6 +365,13 @@ def public_guide(
     now = datetime.now(UTC)
     horizon = now + timedelta(hours=hours)
     entries: list[PublicGuideEntry] = []
+    covered_ids: set[str] = set()
+    published = (
+        list(schedule_store.list(channel_id=channel_id, states=("published",)))
+        if schedule_store is not None
+        else []
+    )
+    published_ids = {str(item.id) for item in published}
     for slot in store.list_slots(channel_id=channel_id):
         title = slot.title_override
         duration = slot.duration_seconds
@@ -375,7 +383,11 @@ def public_guide(
                     duration = getattr(asset, "duration_seconds", None)
         title = title or slot.asset_id
         for occurrence in store.list_occurrences(slot_id=slot.slot_id):
+            if occurrence.schedule_item_id is not None:
+                covered_ids.add(str(occurrence.schedule_item_id))
             if occurrence.status != "scheduled":
+                continue
+            if str(occurrence.schedule_item_id) not in published_ids:
                 continue
             if occurrence.occurrence_start < now or occurrence.occurrence_start > horizon:
                 continue
@@ -384,6 +396,32 @@ def public_guide(
                     channel_id=slot.channel_id,
                     title=title,
                     starts_at=occurrence.occurrence_start,
+                    duration_seconds=duration,
+                )
+            )
+    # Manual schedules have no recurring slot/occurrence. They are the normal
+    # operator Schedule workflow and must appear in the same resident guide.
+    if schedule_store is not None:
+        for item in published:
+            if (
+                str(item.id) in covered_ids
+                or item.mode != "premiere"
+                or not now <= item.scheduled_at <= horizon
+            ):
+                continue
+            title = item.asset_title
+            duration = item.duration_seconds
+            if (not title or duration is None) and titler is not None:
+                asset = titler(item.asset_id)
+                if asset is not None:
+                    title = title or getattr(asset, "title", None)
+                    if duration is None:
+                        duration = getattr(asset, "duration_seconds", None)
+            entries.append(
+                PublicGuideEntry(
+                    channel_id=item.channel_id,
+                    title=title or item.asset_id,
+                    starts_at=item.scheduled_at,
                     duration_seconds=duration,
                 )
             )

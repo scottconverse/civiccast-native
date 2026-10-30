@@ -484,3 +484,13 @@ it('pages all cleanup candidates while probing only the visible page', async () 
   expect(await findByText('Page 2 of 2')).toBeTruthy()
   expect((next as HTMLButtonElement).disabled).toBe(true)
 })
+
+it('keeps the service permission error visible beside the watch-folder form', async () => {
+  vi.mocked(listWatchFolderConfigs).mockResolvedValue([])
+  vi.mocked(createWatchFolderConfig).mockRejectedValue(new ApiError('Unprocessable Entity', 422, 'The station service cannot read this folder.'))
+  const view = renderScreen()
+  fireEvent.change(await view.findByLabelText('Watch folder path'), { target: { value: 'D:/TestMedia' } })
+  fireEvent.click(view.getByRole('button', { name: 'Add watch folder' }))
+  expect((await view.findByRole('alert')).textContent).toContain('The station service cannot read this folder.')
+  expect((view.getByLabelText('Watch folder path') as HTMLInputElement).value).toBe('D:/TestMedia')
+})

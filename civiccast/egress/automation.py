@@ -3410,6 +3410,7 @@ def build_channel_automation(
             ReportingStore(session_factory),
             outbox=as_run_outbox,
             underwriting_store=UnderwritingStore(session_factory),
+            schedule_lookup=schedule_store.get,
         ),
         channel_start_hook=channel_start_hook,
     )

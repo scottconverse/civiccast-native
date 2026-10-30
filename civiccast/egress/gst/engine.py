@@ -1119,6 +1119,8 @@ class GstPlayoutEngine:
         self._loop: GLib.MainLoop | None = None
         # S9-5 stall watchdog state (output-buffer progress past the mux).
         self._output_buffers = 0
+        self._output_bytes = 0
+        self._output_bytes_snapshot = 0
         self._stall_last_count = 0
         self._stall_last_advance_t = 0.0
         # Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z):
@@ -2703,6 +2705,17 @@ class GstPlayoutEngine:
             # plain read needs no lock — the reader may observe a value one behind, which
             # only ever delays a stall verdict by a tick, never causes a false stall.
             self._output_buffers += 1
+            with contextlib.suppress(Exception):
+                if _info.type & Gst.PadProbeType.BUFFER_LIST:
+                    buffers = _info.get_buffer_list()
+                    if buffers is not None:
+                        self._output_bytes += sum(
+                            buffers.get(index).get_size() for index in range(buffers.length())
+                        )
+                else:
+                    buffer = _info.get_buffer()
+                    if buffer is not None:
+                        self._output_bytes += buffer.get_size()
             self._flush_source_output()
             return Gst.PadProbeReturn.OK
 
@@ -3659,6 +3672,7 @@ class GstPlayoutEngine:
         self._output_buffers_at_arm = self._output_buffers
         self._first_output_seen = False
         self._last_output_progress_print_t = self._stall_last_advance_t
+        self._output_bytes_snapshot = getattr(self, "_output_bytes", 0)
         # U59 round 4: the rate diagnostic's first interval starts at arm time --
         # the same moment the ladder below takes its baseline -- and its episode
         # latch starts clean (a worker that just armed has no episode in flight).
@@ -3727,6 +3741,7 @@ class GstPlayoutEngine:
         silence plus the watchdog kill."""
         if now - self._last_output_progress_print_t < _OUTPUT_PROGRESS_INTERVAL_S:
             return
+        elapsed = now - self._last_output_progress_print_t
         self._last_output_progress_print_t = now
         delta = self._output_buffers - self._output_buffers_at_arm
         # U30: the total above cannot say WHICH stream is advancing -- it kept
@@ -3734,8 +3749,21 @@ class GstPlayoutEngine:
         # suffix names each counted mux sink pad's delta over THIS interval, and
         # is "" (line byte-identical) whenever nothing was counted.
         mux_in = self._mux_input_delta_suffix(now - self._mux_input_snapshot_t)
+        # Report measured encoded video cadence and TS throughput, not profile
+        # targets. The existing health parser understands these progress fields.
+        # Missing video counters stay unmeasured rather than being invented.
+        output_bytes = getattr(self, "_output_bytes", 0)
+        previous_bytes = getattr(self, "_output_bytes_snapshot", output_bytes)
+        self._output_bytes_snapshot = output_bytes
+        video = re.search(r"\bvideo=\+(\d+)", mux_in)
+        metrics = ""
+        if elapsed > 0:
+            bitrate = max(0, output_bytes - previous_bytes) * 8 / elapsed / 1000
+            metrics = f" bitrate={bitrate:.2f}kbits/s"
+            if video is not None:
+                metrics += f" fps={int(video.group(1)) / elapsed:.2f}"
         print(
-            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING{mux_in}",
+            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING{mux_in}{metrics}",
             file=sys.stderr,
             flush=True,
         )

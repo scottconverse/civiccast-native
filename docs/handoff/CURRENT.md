@@ -1,4 +1,40 @@
-# CURRENT — ACTIVE: RC2 R9 operator corrections — October 30, 2026
+# CURRENT — ACTIVE: RC2 R7/R9 operator corrections — October 30, 2026
+
+Scott resumed RC2 after the complete read-only R7 results review. One candidate
+on fix/rc2-r9-operator-workflows / PR285; version1.0.0-rc.2. Published RC1 stays intact.
+No station/soak changes, model uploads, broad test ladder, unrelated scope or agents.
+
+R7 source corrections implemented: model-data-only service Modify permission;
+minutes+seconds in both schedule drawers; persistent actionable watch-folder and
+minutes errors; private sample instead of dead RTMP camera; published manual and
+recurring guide entries; planned-versus-actual as-run start; measured GStreamer
+FPS/bitrate restricted to current-worker logs; visible release download bytes.
+Prior R9 credential redaction, caption overlap/capacity, timing/repeat/accounting,
+preparation, loudness, migration and verified download corrections are retained.
+
+Executed: 16 Windows identity/ACL checks, scheduling UI checks, 19 watch-folder,
+35 sample/live/minutes UI, 15 Commit-to-Air, 13 published-guide API, 22 as-run,
+42 watchdog/health checks. New production caption tap consumed15/15 saved-audio
+segments without discard; native CEA-708 decode-back recovered15/15 cues across
+three isolated workers. All workers ended normally. Bounded development-host
+proof, not installed tester acceptance or a sustained caption-uptime claim.
+Detailed executed evidence/limits: docs/ops/evidence/rc2-r7-corrections.md.
+Changed ESLint/TypeScript, Ruff, five-module mypy and current claim bindings pass.
+
+Manual chapters, consolidated Markdown, PDF/DOCX and built-in Help regenerated;
+both source-bound render consistency checks pass. Existing scanner report now
+has one exact GLib2.88.4/CVE-2026-58016 application-reachability triage, with
+upstream/reference/PE/source review and expiry; not an upstream-fixed claim or
+blanket waiver. Saved report reconciliation passes without another broad scan.
+
+Paused CI41072320499/41072320432 and waiter89258 are terminal. No current jobs.
+Next: commit/push this reviewed batch, applicable required CI and same-run claims,
+normal merge, one signed RC2 candidate reusing unchanged model packs, then the
+focused failed-operator actions/three-channel caption observations. No RC2 kit,
+installer, installed acceptance, tag or publication exists yet. No ETA asserted.
+Human language review pending/nonblocking; historical accepted RC1 PTS remains.
+
+## Existing RC2 implementation and earlier evidence
 
 Scott authorized the R9 Beta20 corrections and all affected operator documentation,
 manual and built-in help. Worktree `C:/Dev/cc-rc2-r9`, branch
@@ -42,28 +78,26 @@ F3 branding was not reproduced. Existing tester orchestration incidents are reco
 as separate. No new model bytes or station operations. RC1 accepted PTS limitation
 remains historical/accepted; no repair loop was reopened.
 
-PR https://github.com/scottconverse/civiccast-native/pull/285 is open. Follow-up
-corrections to head 56d2923c address the 43 failed required Unit cases:
-current Alembic 0098 fixtures; reviewed engine/graph/test claim tripwires with
-historical evidence limitations preserved; public RC1 architecture/support/manual
-pointers; explicit RC1-only acceptance fixture; and useful static operator validation
-messages without submitted values/context. Unknown extra-field names remain hidden.
-Public manual PDF/DOCX copies are the existing signed RC1 kit companions, not RC2
-installed evidence. Source manual and packaged Help remain the RC2 edition.
+PR https://github.com/scottconverse/civiccast-native/pull/285 remains OPEN at
+9fa75f500637fc57858e651246c64376e66754d4, ordinarily signed/pushed October30 14:31 UTC.
+The 43 previous Unit failures were addressed: current Alembic 0098 fixtures;
+reviewed engine/graph/test claim tripwires with historical evidence limitations;
+public RC1 architecture/support/manual pointers; explicit RC1-only acceptance
+fixture; static useful validation guidance without submitted values or context.
+Public manual PDF/DOCX copies come from the existing signed RC1 kit. Source manual
+and packaged Help remain RC2. No models were uploaded (push transferred 2.02MiB).
 
-Focused correction log: work/rc2-unit-correction-focused.log (45 passed; 9 follow-ups,
-including inherited local staff-token configuration); corrected isolated test environment
-and remaining copy yielded 20 passed in work/rc2-validation-followup.log. Updated
-claim bindings/evidence pass 2 focused verifier cases in work/rc2-claims-rebind-focused.log.
-Ruff passes. No skipped producer or waived required test. No RC2 installer exists.
+Focused results: 45 passed in the first correction selection; remaining copy and
+isolated child authentication environment yielded 20 passed. Two changed-claim
+verifier cases pass, Ruff/format pass, mypy passes the three changed validation/model
+modules. Logs work/rc2-{unit-correction-focused,validation-followup,claims-rebind-focused}.log.
+Prior current-head run41018363680 is terminal/cancelled; no test producer waived.
 
-Old current-head Unit run 41018363680 failed; same-run claims failed as a consequence
-and native transfer is still queued. Prior waiter 22081/PID24784 is terminal.
-No local Runner.Listener/Worker is active. Next: one ordinary signed commit/push,
-new-head required CI with its two reviewed-input run-once transfers, one waiter,
-then normal merge on applicable green CI. No model upload, station action or RC2
-publication is authorized by this state file. Owner has not approved new delegation;
-no agents launched during these corrections.
+Previous head9fa75f5 CI41072320499/optional41072320432 were cancelled at Scott's
+pause; waiter89258/PID1180 is historical/terminal. Previous scanner failure and
+upstream investigation are preserved in work/rc2-security-9fa and its failure log.
+The top section supersedes those previous pending CI/security states. Required
+new-head outcomes and the delivered candidate remain incomplete.
 
 ## Historical RC1 state (superseded assignment; evidence retained)
 

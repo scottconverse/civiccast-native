@@ -1,5 +1,15 @@
 # Troubleshooting matrix {#ch-troubleshooting}
 
+## RC2 corrections from first-install feedback
+
+- **Installation stops while Ollama removes `manifests-v2`:** the restricted service needs modify access to its model data, while installed executables stay read-only. RC2 setup grants that access to the Ollama model store and legacy local-model data only. Do not make all of Program Files writable.
+- **A short clip cannot be scheduled:** enter minutes and seconds separately; a 38-second clip uses 0 minutes and 38 seconds. Publish the item separately before expecting it in the resident guide or on air.
+- **Watch folder rejected:** read the persistent explanation beside the form. The service account needs read/traverse access to the named folder. Your Windows account being able to browse it is insufficient.
+- **Minutes generation refused:** review and approve the recording's caption cues first. The minutes panel displays the reason and an **Open caption review** link. This prerequisite is not bypassed.
+- **HLS health disagrees with moving video:** GStreamer now reports measured encoded FPS and output bitrate from its current worker. A missing reading remains unknown; a stalled interval reports zero. This encoder reading alone is not proof of a working resident connection or captions.
+- **Captions disappear:** check caption diagnostics for discarded input, timeouts and fallback. A queue depth of zero does not prove no audio was lost. RC2 reduces overlapping Whistle work; verify generated captions in the actual channel output, not only a transcript or sidecar. Bounded development checks are not a sustained-operation guarantee.
+
+
 This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 
 ## Before you start

@@ -257,3 +257,17 @@ describe('ScheduleDrawer unparseable start time', () => {
     expect(createSchedule).not.toHaveBeenCalled()
   })
 })
+
+it('schedules a 38-second clip through the normal drawer', async () => {
+  vi.mocked(listStaffAssets).mockResolvedValue([validatedAsset])
+  vi.mocked(listChannelProfiles).mockResolvedValue([channelProfile('public', 'Public Channel')])
+  vi.mocked(createSchedule).mockResolvedValue({ item_id: 'short' } as never)
+  const view = renderDrawer()
+  await waitFor(() => expect(view.getByText('Public Channel')).toBeTruthy())
+  fireEvent.change(view.getByLabelText('Duration minutes'), { target: { value: '0' } })
+  fireEvent.change(view.getByLabelText('Duration seconds'), { target: { value: '38' } })
+  const submit = view.getByRole('button', { name: /Schedule|Add to schedule/i })
+  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(submit)
+  await waitFor(() => expect(createSchedule).toHaveBeenLastCalledWith(expect.objectContaining({ duration_seconds: 38 })))
+})

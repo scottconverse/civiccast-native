@@ -294,7 +294,7 @@ def run_transport_proof(
                 encoding="utf-8",
             )
             server = WindowsWorkerPipeServer(
-                channel_id,
+                f"caption-proof-{os.getpid()}-{channel_id}",
                 security_descriptor_sddl=sddl,
             )
             pipe_channel = _WindowsPipeChannel(channel_id, server=server)

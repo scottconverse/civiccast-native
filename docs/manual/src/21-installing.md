@@ -273,6 +273,7 @@ The **Your first published recording** card checks saved media, playback package
 If no recording is published yet:
 
 1. Under **Camera or test media**, create **Bundled sample video** or upload a short test clip. **Saved** means accepted, not connected, playable or public.
+   The sample is a local recording, not an RTMP camera. Its **Check broadcast readiness** link opens the private rehearsal. Use a real encoder address for a live meeting.
 2. Open **Assets**, find the video by title and choose **Package for playback**. Wait for completion and correct any error.
 3. Open **Publish**, select that recording by title, review its metadata and approve **Portal**. External providers are optional for this local workflow. A saved provider credential is not a successful connection test; test configured destinations using their existing saved details.
 4. Refresh recording progress, open **Check resident playback**, and verify the video and audio. Use **System Health** to check actual configured components before broadcasting.

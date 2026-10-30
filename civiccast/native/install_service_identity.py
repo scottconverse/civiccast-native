@@ -346,6 +346,15 @@ def configure_service_identity(install_root: Path) -> None:
                 # data root; otherwise inherited Modify defeats an RX grant.
                 restrict_data_directory(root, writable=False)
                 _grant_tree(root, "RX")
+                # Ollama migrates/removes manifests-v2 on its first start and
+                # maintains this model DATA store thereafter. Keep executable
+                # runtimes read/execute; grant Modify only inside the two staged
+                # model-store locations (including the legacy pack fallback).
+                for model_store in (
+                    root / "models" / "ollama",
+                    root / "packs" / "local-ai-model" / "models",
+                ):
+                    _grant_tree(model_store, "M")
                 _grant_database_key_read()
                 _grant_service_environment_read()
                 # Explicit station-state overrides keep their location and contents.

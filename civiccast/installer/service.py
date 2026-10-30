@@ -2562,7 +2562,6 @@ def create_sample_rehearsal_upload(
         _clean_failed_sample_asset(asset_dir, sample_path)
         raise
 
-    sample_source = _ensure_sample_rehearsal_source(live_source_store)
     record_sample_rehearsal_media(
         asset_id=result.asset_id,
         file_path=Path(result.file_path),
@@ -2573,9 +2572,7 @@ def create_sample_rehearsal_upload(
         asset_id=result.asset_id,
         title=result.title,
         file_path=result.file_path,
-        live_source_id=sample_source.live_source_id,
-        source_type=sample_source.source_type,
-        message="CivicCast created a short sample video and a no-camera test source for rehearsal.",
+        message="CivicCast created a short sample recording for private rehearsal. It is not a live camera or RTMP server.",
         next_step="Open System Health and select Check broadcast readiness, then confirm the resident preview.",
     )
 

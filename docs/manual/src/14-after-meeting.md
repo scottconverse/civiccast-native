@@ -328,6 +328,8 @@ If you open the page with a role that is not allowed, you see "This action requi
 
 ## Watch folders, retention rules and storage (Media Lifecycle Settings)
 
+Watch folders are read by the installed CivicCast service, not by your signed-in Windows account. If **Add watch folder** fails, the explanation stays beside the form and your path remains entered. Give the CivicCast service account read/traverse access to that folder and its videos; avoid granting broad access to a whole drive. Try **Add watch folder** again after correcting the named problem. Uploading through **Assets** is also supported; no API command is needed.
+
 This page holds station-wide settings and cleanup review. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
 
 - **Watch folders.** A watch folder is a folder on the station's computer (a local disk, a USB drive or a network share) that CivicCast checks automatically and copies new videos from. Type the folder path in **Watch folder path** or click **Browse…**, then click **Add watch folder**. A new file is imported once it has stopped growing. The original stays where it is, and the new video appears in Assets as Validated. Click **Scan now** to check immediately, or **Remove** to stop watching (files already imported stay).

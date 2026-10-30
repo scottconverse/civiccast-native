@@ -59,7 +59,6 @@ from civiccast.egress.health import (
     build_default_sink_health,
     encoder_has_progress,
     read_ffmpeg_encoder_metrics_since,
-    read_latest_ffmpeg_encoder_metrics,
     worker_produced_output,
 )
 
@@ -3292,7 +3291,9 @@ class EgressDaemon:
         log_path = self._stderr_logs.get(channel_id)
         if log_path is None:
             return EgressEncoderMetrics()
-        return read_latest_ffmpeg_encoder_metrics(log_path)
+        return read_ffmpeg_encoder_metrics_since(
+            log_path, offset=self._stderr_spawn_offset.get(channel_id, 0)
+        )
 
     def _observed_on_air_evidence(self, channel_id: str) -> bool:
         """Round-3 fix (PR #183 review, BLOCKER item 1): real evidence the

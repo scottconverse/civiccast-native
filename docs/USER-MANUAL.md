@@ -62,7 +62,7 @@ The October 17 documentation correction reconciles operating instructions and
 refreshes the CLI, API and settings references. Existing installed Help may still
 contain the older wording until its application package is updated.
 
-This RC1 candidate adds administrator agenda setup, bundled offline English OCR and managed agenda recovery to the earlier edition. It also covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record for the package you use.
+This RC2 edition retains RC1 agenda setup, offline English OCR and managed agenda recovery, and updates first-install permissions, caption diagnostics, second-level durations, resident guide visibility and operator error guidance. It also covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record for the package you use.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 
@@ -589,16 +589,16 @@ The diagram shows the two ways an item gets onto the air. If you add an item you
 
 #### What residents see
 
-Residents see two different lists, built from two different sources.
+Residents see approved programmes in two views of the same published schedule.
 
 - **Coming up** on the portal home page lists programs placed with **Schedule** (or Contributors) that are **Published** and start in the future. It never lists a Scheduled item.
-- **Channel schedule** (a page of the portal, see the example below) lists the next 72 hours of airings that came from **Program Guide** recurring slots. It lists an airing as soon as the guide has built it, whether or not anyone has published it.
+- **Channel schedule** lists the next 72 hours of published premieres, including recordings added directly on **Schedule** and approved recurring **Program Guide** airings. Drafts, cancelled items and embargoes are excluded.
 
 ![The resident portal's Channel schedule page, which lists the next three days of programs for one channel.](manual/images/portal-schedule.png){width=90%}
 
 *Figure: the Channel schedule page that residents see.*
 
-> **Known issue (beta.11):** The Channel schedule page can show an airing that will not air, because it reads the guide's own list, not the published state. The guide also keeps listing an airing if you cancel that item on the Schedule screen, because nothing updates the guide when an item is cancelled. Items you add directly on the Schedule screen never appear on the Channel schedule page at all; they appear in **Coming up** after they are published. The two pages do not explain the difference to residents.
+The guide describes the approved plan. It is not proof that a programme aired. Check actual channel output and as-run records for that. Cancelling or withdrawing an item removes it from the resident guide.
 
 ### Which time zone are you typing in?
 
@@ -636,7 +636,7 @@ Use the **Schedule** screen to place one recording on a channel at one time. Thi
 4. In the **Asset** drop-down, choose the video. Each entry reads "title · asset id".
 5. In the **Channel** drop-down, choose the channel by its display name.
 6. In **Start at**, type the date and time in the station's time zone. Check the local-time preview and zone before saving.
-7. In **Duration (min)**, type the length in whole minutes. It starts at 60. The largest allowed length is 14 days.
+7. Enter **Duration minutes** and **Duration seconds**. For a 38-second clip use 0 minutes and 38 seconds. The total must be at least one second; minutes default to 60. The largest allowed length is 14 days.
 8. In **Notes (optional)**, type anything you want recorded. The box says the note is "visible in the audit log" (the station's record of who did what).
 9. Click **Schedule premiere**. The button reads "Scheduling…" while it works.
 
@@ -729,7 +729,7 @@ Use **Program Guide** when a recording should air again and again, for example e
    - **Weekdays**: "Airs Monday through Friday."
 6. In **First airing**, type the date and time in the station's time zone. Check the date, time and station zone shown with the form.
 7. If you chose Daily, Weekly or Weekdays, you may fill **Repeat until (optional)** with the last date it may air. Leave it blank to repeat with no end.
-8. Either keep **Use the recording's own length** ticked, or untick it and type **Duration (min)** (at least 1).
+8. Either keep **Use the recording's own length** ticked, or untick it and enter **Duration minutes** and **Duration seconds** (at least one second in total).
 9. In **Guide title (optional)**, type a title if you want residents to see a different title than the recording's. It can be up to 200 characters.
 10. Click **Add to guide**. The button reads "Adding…".
 
@@ -1248,7 +1248,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 The **On-air preview** plays this channel's outgoing HLS broadcast. Before a live takeover it shows scheduled output; it is not a separate preview of the selected incoming source. Enable the channel's web output on **Channels** if the preview is unavailable. Use **Check source** and **Run pre-flight** for incoming-source status. A passed source check alone does not mean the source is on air.
 
-Live Room pre-flight checks the selected source's configured network address, including the sample source. A sample file cannot substitute for an unreachable live input. The installer's separate private rehearsal uses the bundled local sample. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
+Live Room pre-flight checks the selected source's configured network address. The bundled sample is a recording, not an RTMP server or camera; it is not offered as a live meeting source. Use **Readiness > Check broadcast readiness** for the separate private rehearsal with that file. For a meeting, select a real, reachable source on the session's channel and make sure its fresh check passes.
 
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 
@@ -2045,6 +2045,8 @@ The page loads once when you open it. Leave it and come back to refresh. To fix 
 If you open the page with a role that is not allowed, you see "This action requires one of these CivicCast roles: meeting_operator, publish_operator, support_admin."
 
 ### Watch folders, retention rules and storage (Media Lifecycle Settings)
+
+Watch folders are read by the installed CivicCast service, not by your signed-in Windows account. If **Add watch folder** fails, the explanation stays beside the form and your path remains entered. Give the CivicCast service account read/traverse access to that folder and its videos; avoid granting broad access to a whole drive. Try **Add watch folder** again after correcting the named problem. Uploading through **Assets** is also supported; no API command is needed.
 
 This page holds station-wide settings and cleanup review. In the left menu it is **Media Lifecycle Settings**, shown to setup_admin, publish_operator and records_clerk.
 
@@ -3633,6 +3635,7 @@ The **Your first published recording** card checks saved media, playback package
 If no recording is published yet:
 
 1. Under **Camera or test media**, create **Bundled sample video** or upload a short test clip. **Saved** means accepted, not connected, playable or public.
+   The sample is a local recording, not an RTMP camera. Its **Check broadcast readiness** link opens the private rehearsal. Use a real encoder address for a live meeting.
 2. Open **Assets**, find the video by title and choose **Package for playback**. Wait for completion and correct any error.
 3. Open **Publish**, select that recording by title, review its metadata and approve **Portal**. External providers are optional for this local workflow. A saved provider credential is not a successful connection test; test configured destinations using their existing saved details.
 4. Refresh recording progress, open **Check resident playback**, and verify the video and audio. Use **System Health** to check actual configured components before broadcasting.
@@ -5334,6 +5337,15 @@ Report a suspected vulnerability privately, as `SECURITY.md` in the repository d
 \newpage
 
 ## Troubleshooting matrix {#ch-troubleshooting}
+
+### RC2 corrections from first-install feedback
+
+- **Installation stops while Ollama removes `manifests-v2`:** the restricted service needs modify access to its model data, while installed executables stay read-only. RC2 setup grants that access to the Ollama model store and legacy local-model data only. Do not make all of Program Files writable.
+- **A short clip cannot be scheduled:** enter minutes and seconds separately; a 38-second clip uses 0 minutes and 38 seconds. Publish the item separately before expecting it in the resident guide or on air.
+- **Watch folder rejected:** read the persistent explanation beside the form. The service account needs read/traverse access to the named folder. Your Windows account being able to browse it is insufficient.
+- **Minutes generation refused:** review and approve the recording's caption cues first. The minutes panel displays the reason and an **Open caption review** link. This prerequisite is not bypassed.
+- **HLS health disagrees with moving video:** GStreamer now reports measured encoded FPS and output bitrate from its current worker. A missing reading remains unknown; a stalled interval reports zero. This encoder reading alone is not proof of a working resident connection or captions.
+- **Captions disappear:** check caption diagnostics for discarded input, timeouts and fallback. A queue depth of zero does not prove no audio was lost. RC2 reduces overlapping Whistle work; verify generated captions in the actual channel output, not only a transcript or sidecar. Bounded development checks are not a sustained-operation guarantee.
 
 This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 

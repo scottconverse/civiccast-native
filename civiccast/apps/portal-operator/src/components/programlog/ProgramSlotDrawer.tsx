@@ -60,6 +60,8 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
   const [startLocal, setStartLocal] = useState<string>('')
   const [useAssetDuration, setUseAssetDuration] = useState(true)
   const [durationMinutes, setDurationMinutes] = useState<number>(60)
+  const [durationSeconds, setDurationSeconds] = useState<number>(0)
+  const totalDurationSeconds = durationMinutes * 60 + durationSeconds
   const [titleOverride, setTitleOverride] = useState<string>('')
   const [repeatUntilLocal, setRepeatUntilLocal] = useState<string>('')
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -113,7 +115,7 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
     !startLocal ||
     firstStartUtc === null ||
     repeatUntilInvalid ||
-    (!useAssetDuration && durationMinutes < 1)
+    (!useAssetDuration && totalDurationSeconds < 1)
 
   const handleSubmit = async () => {
     setSubmitError(null)
@@ -134,7 +136,7 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
       asset_id: effectiveAssetId,
       recurrence,
       first_start_at: firstStartUtc,
-      duration_seconds: useAssetDuration ? null : durationMinutes * 60,
+      duration_seconds: useAssetDuration ? null : totalDurationSeconds,
       title_override: titleOverride.trim() ? titleOverride.trim() : null,
       repeat_until: repeatUntilUtc,
     }
@@ -396,20 +398,21 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
               <span>Use the recording&apos;s own length</span>
             </label>
             {!useAssetDuration && (
-              <label className="mt-2 block">
+              <div className="block"><label className="mt-2 block">
                 <span
                   className="mb-1 block text-[10px] font-semibold uppercase tracking-wider"
                   style={{ color: 'var(--cc-ink-3)' }}
                 >
-                  Duration (min)
+                  Duration minutes
                 </span>
                 <input
                   type="number"
-                  min={1}
+                  min={0}
                   step={1}
+                  aria-label="Duration minutes"
                   value={durationMinutes}
                   onChange={(e) =>
-                    setDurationMinutes(Math.max(1, Number(e.target.value) || 0))
+                    setDurationMinutes(Math.max(0, Math.floor(Number(e.target.value) || 0)))
                   }
                   className="cc-mono cc-tabular w-full rounded-md px-3 py-2 text-sm"
                   style={{
@@ -418,7 +421,19 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
                     color: 'var(--cc-ink)',
                   }}
                 />
-              </label>
+                </label><label className="mt-2 block"><span className="block text-xs">Additional seconds (0–59)</span>
+                <input
+                  aria-label="Duration seconds"
+                  type="number"
+                  min={0}
+                  max={59}
+                  step={1}
+                  value={durationSeconds}
+                  onChange={(e) => setDurationSeconds(Math.min(59, Math.max(0, Math.floor(Number(e.target.value) || 0))))}
+                  className="cc-mono cc-tabular w-full rounded-md px-3 py-2 text-sm"
+                />
+                {totalDurationSeconds < 1 && <span role="alert">Enter a duration of at least one second.</span>}
+              </label></div>
             )}
           </div>
 

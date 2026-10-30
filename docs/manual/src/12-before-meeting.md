@@ -53,16 +53,16 @@ The diagram shows the two ways an item gets onto the air. If you add an item you
 
 ### What residents see
 
-Residents see two different lists, built from two different sources.
+Residents see approved programmes in two views of the same published schedule.
 
 - **Coming up** on the portal home page lists programs placed with **Schedule** (or Contributors) that are **Published** and start in the future. It never lists a Scheduled item.
-- **Channel schedule** (a page of the portal, see the example below) lists the next 72 hours of airings that came from **Program Guide** recurring slots. It lists an airing as soon as the guide has built it, whether or not anyone has published it.
+- **Channel schedule** lists the next 72 hours of published premieres, including recordings added directly on **Schedule** and approved recurring **Program Guide** airings. Drafts, cancelled items and embargoes are excluded.
 
 ![The resident portal's Channel schedule page, which lists the next three days of programs for one channel.](manual/images/portal-schedule.png){width=90%}
 
 *Figure: the Channel schedule page that residents see.*
 
-> **Known issue (beta.11):** The Channel schedule page can show an airing that will not air, because it reads the guide's own list, not the published state. The guide also keeps listing an airing if you cancel that item on the Schedule screen, because nothing updates the guide when an item is cancelled. Items you add directly on the Schedule screen never appear on the Channel schedule page at all; they appear in **Coming up** after they are published. The two pages do not explain the difference to residents.
+The guide describes the approved plan. It is not proof that a programme aired. Check actual channel output and as-run records for that. Cancelling or withdrawing an item removes it from the resident guide.
 
 ## Which time zone are you typing in?
 
@@ -100,7 +100,7 @@ Use the **Schedule** screen to place one recording on a channel at one time. Thi
 4. In the **Asset** drop-down, choose the video. Each entry reads "title · asset id".
 5. In the **Channel** drop-down, choose the channel by its display name.
 6. In **Start at**, type the date and time in the station's time zone. Check the local-time preview and zone before saving.
-7. In **Duration (min)**, type the length in whole minutes. It starts at 60. The largest allowed length is 14 days.
+7. Enter **Duration minutes** and **Duration seconds**. For a 38-second clip use 0 minutes and 38 seconds. The total must be at least one second; minutes default to 60. The largest allowed length is 14 days.
 8. In **Notes (optional)**, type anything you want recorded. The box says the note is "visible in the audit log" (the station's record of who did what).
 9. Click **Schedule premiere**. The button reads "Scheduling…" while it works.
 
@@ -193,7 +193,7 @@ Use **Program Guide** when a recording should air again and again, for example e
    - **Weekdays**: "Airs Monday through Friday."
 6. In **First airing**, type the date and time in the station's time zone. Check the date, time and station zone shown with the form.
 7. If you chose Daily, Weekly or Weekdays, you may fill **Repeat until (optional)** with the last date it may air. Leave it blank to repeat with no end.
-8. Either keep **Use the recording's own length** ticked, or untick it and type **Duration (min)** (at least 1).
+8. Either keep **Use the recording's own length** ticked, or untick it and enter **Duration minutes** and **Duration seconds** (at least one second in total).
 9. In **Guide title (optional)**, type a title if you want residents to see a different title than the recording's. It can be up to 200 characters.
 10. Click **Add to guide**. The button reads "Adding…".
 

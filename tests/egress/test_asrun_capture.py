@@ -511,6 +511,30 @@ def reporting_store(tmp_path: Path) -> Iterator[ReportingStore]:
         eng.dispose()
 
 
+def test_recorder_keeps_planned_start_separate_from_observed_output(reporting_store) -> None:
+    from types import SimpleNamespace
+
+    planned = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+    actual = planned + timedelta(seconds=7)
+    item = SimpleNamespace(channel_id="gov", asset_id="asset-a", scheduled_at=planned)
+    recorder = StoreAsRunRecorder(
+        reporting_store, station_id="civiccast-station", schedule_lookup=lambda _id: item
+    )
+    recorder.record_transition(
+        channel_id="gov",
+        source_kind="program",
+        asset_id="asset-a",
+        source_label="A",
+        actual_start=actual,
+        proof_event_id="proof-1",
+        schedule_item_id="schedule-a",
+    )
+    entry = reporting_store.list_as_run("civiccast-station")[0]
+    assert entry.scheduled_start == planned
+    assert entry.actual_start == actual
+    assert entry.schedule_item_id == "schedule-a"
+
+
 def test_store_recorder_appends_and_stitches_durations(
     reporting_store: ReportingStore,
 ) -> None:

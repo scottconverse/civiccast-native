@@ -53,6 +53,7 @@ import logging
 import os
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -70,6 +71,7 @@ from civiccast.reporting.models import AsRunLogEntry, Slug
 from civiccast.reporting.store import ReportingStore
 
 if TYPE_CHECKING:
+    from civiccast.schedule.models import ScheduleItemResponse
     from civiccast.underwriting.store import UnderwritingStore
 
 _LOG = logging.getLogger(__name__)
@@ -128,6 +130,7 @@ class StoreAsRunRecorder:
         station_id: str | None = None,
         outbox: AsRunOutbox | None = None,
         underwriting_store: UnderwritingStore | None = None,
+        schedule_lookup: Callable[[str], ScheduleItemResponse | None] | None = None,
     ) -> None:
         self._store = store
         self._station_id = station_id or resolve_station_id()
@@ -138,6 +141,7 @@ class StoreAsRunRecorder:
         self._lock = threading.Lock()
         self._outbox = outbox or AsRunOutbox(store, db_path=ephemeral_outbox_path())
         self._underwriting = underwriting_store
+        self._schedule_lookup = schedule_lookup
 
     def record_transition(
         self,
@@ -177,6 +181,7 @@ class StoreAsRunRecorder:
                     channel_id=channel_id,
                     asset_id=asset_id,
                     schedule_item_id=schedule_item_id,
+                    scheduled_start=self._scheduled_start(schedule_item_id, channel_id, asset_id),
                     actual_start=actual_start,
                     actual_end=actual_start,
                     duration_s=0,
@@ -245,6 +250,22 @@ class StoreAsRunRecorder:
             )
 
     # --- internals (caller holds the lock) ------------------------------
+
+    def _scheduled_start(
+        self, schedule_item_id: str | None, channel_id: str, asset_id: str | None
+    ) -> datetime | None:
+        if schedule_item_id is None or self._schedule_lookup is None:
+            return None
+        try:
+            item = self._schedule_lookup(schedule_item_id)
+            if item is not None and item.channel_id == channel_id and item.asset_id == asset_id:
+                return item.scheduled_at
+        except Exception:
+            # Missing comparison metadata must never erase actual output evidence.
+            _LOG.warning(
+                "Could not resolve planned start for as-run occurrence %s", schedule_item_id
+            )
+        return None
 
     def _airing_kind(
         self, source_kind: str, schedule_item_id: str | None, channel_id: str, asset_id: str | None

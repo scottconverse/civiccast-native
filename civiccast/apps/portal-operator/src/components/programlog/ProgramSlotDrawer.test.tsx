@@ -237,3 +237,13 @@ describe('ProgramSlotDrawer unparseable repeat-until date', () => {
     expect(Number.isNaN(new Date(sent as string).getTime())).toBe(false)
   })
 })
+
+it('accepts an explicit sub-minute guide duration', async () => {
+  vi.mocked(createProgramSlot).mockResolvedValue({ slot_id: 'short' } as never)
+  const view = await drawerWithAssets()
+  fireEvent.click(view.getByRole('checkbox', { name: /own length/i }))
+  fireEvent.change(view.getByLabelText('Duration minutes'), { target: { value: '0' } })
+  fireEvent.change(view.getByLabelText('Duration seconds'), { target: { value: '38' } })
+  fireEvent.click(view.getByRole('button', { name: /Add to guide/i }))
+  await waitFor(() => expect(createProgramSlot).toHaveBeenLastCalledWith(expect.objectContaining({ duration_seconds: 38 })))
+})

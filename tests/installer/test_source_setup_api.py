@@ -219,14 +219,12 @@ def test_sample_setup_generates_and_ingests_media(monkeypatch, tmp_path) -> None
     payload = response.json()
     assert payload["status"] == "ready"
     assert payload["asset_id"].startswith("sample-rehearsal-")
-    assert payload["live_source_id"] == "civiccast-sample-test-source"
-    assert payload["source_type"] == "rtmp"
+    assert payload["live_source_id"] is None
+    assert payload["source_type"] is None
     assert Path(payload["file_path"]).is_file()
     assert store.ingested[0]["file_size_bytes"] == len(b"sample-video")
-    assert source_store.created[0].name == "CivicCast sample test source"
-    assert (
-        source_store.created[0].endpoint_url == "rtmp://127.0.0.1/live/civiccast-sample-rehearsal"
-    )
+    assert source_store.created == []
+    assert "Check broadcast readiness" in payload["next_step"]
 
 
 def test_sample_setup_returns_503_without_upload_storage(monkeypatch, tmp_path) -> None:

@@ -1102,6 +1102,9 @@ entries:
       # reviewed in docs/releases/v1.0.0-beta.14-verification.md and
       # docs/ops/evidence/beta14-independent-review-2026-10-12.md. This does not renew
       # historical hardware/service acceptance; the Beta14 host install remains pending.
+      # RC2 R7 health counters: current-source review and native caption transport
+      # evidence in docs/ops/evidence/rc2-r7-corrections.md. Historical installed
+      # and hardware claims are not renewed; these are drift tripwires only.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: fad8cce8d0a07cbf0abc75bc1d4041320a01e415
@@ -1110,7 +1113,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 968422d7ef31f641b56cda9f977825752e7e4c70
+          blob: 6e864d3b045b2a92d1e3a5fd138914bd2ed26633
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2030,6 +2033,9 @@ entries:
       # reviewed in docs/releases/v1.0.0-beta.14-verification.md and
       # docs/ops/evidence/beta14-independent-review-2026-10-12.md. This does not renew
       # historical hardware/service acceptance; the Beta14 host install remains pending.
+      # RC2 R7 health counters: current-source review and native caption transport
+      # evidence in docs/ops/evidence/rc2-r7-corrections.md. Historical installed
+      # and hardware claims are not renewed; these are drift tripwires only.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: fad8cce8d0a07cbf0abc75bc1d4041320a01e415
@@ -2038,7 +2044,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 968422d7ef31f641b56cda9f977825752e7e4c70
+          blob: 6e864d3b045b2a92d1e3a5fd138914bd2ed26633
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py

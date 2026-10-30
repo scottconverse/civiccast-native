@@ -163,8 +163,19 @@ function Save-ReleaseAsset {
     # A server ignoring Range returns 200: replace the partial, never append it.
     $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
     $output = [IO.File]::Open($partial, $mode, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    $stream.CopyTo($output)
+    $downloaded = if ($mode -eq [IO.FileMode]::Append) { $offset } else { 0L }
+    $buffer = New-Object byte[] (1024 * 1024)
+    $progressClock = [Diagnostics.Stopwatch]::StartNew()
+    while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $output.Write($buffer, 0, $count)
+      $downloaded += $count
+      if ($progressClock.Elapsed.TotalSeconds -ge 5) {
+        Write-Step "$($Asset.name): $downloaded of $($Asset.size) bytes downloaded"
+        $progressClock.Restart()
+      }
+    }
     $output.Flush()
+    Write-Step "$($Asset.name): $downloaded bytes downloaded; verifying file"
   } finally {
     if ($output) { $output.Dispose() }
     if ($stream) { $stream.Dispose() }

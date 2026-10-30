@@ -1788,6 +1788,21 @@
         "scripts/build_native_gstreamer_ffmpeg.py",
         "native-windows-gstreamer-ffmpeg.lock.json"
       ]
+    },
+    {
+      "package": "gstreamer-glib",
+      "version": "2.88.4",
+      "id": "CVE-2026-58016",
+      "reviewed": "2026-10-30",
+      "review_by": "2026-11-29",
+      "reason": "Affected D-Bus introspection XML parser is present but not reachable through shipped Windows CivicCast inputs. Application source and approved graph review found no GDBus XML handling; all 117 shipped closure PE import tables have no importer of g_dbus_node_info_new_for_xml. Not an upstream-fixed-version claim; revisit on D-Bus/graph/dependency changes.",
+      "evidence": [
+        "docs/ops/evidence/rc2-glib-introspection-applicability.md",
+        "https://github.com/GNOME/glib/commit/c9da977c178fbfc0e4caf99f9fdf5dc433d6fcc2",
+        "civiccast/native/runtime_closure.py",
+        "civiccast/egress/gst/worker.py",
+        "civiccast/egress/gst/graph.py"
+      ]
     }
   ]
 }
