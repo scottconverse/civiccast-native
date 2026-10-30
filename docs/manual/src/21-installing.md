@@ -4,7 +4,7 @@ This chapter walks through Windows setup, first run, first setup in the operator
 
 ## Before you start
 
-- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies `station-models.json` and every matching `station-models.zip.*` part, assembles the complete kit, then runs setup with `/S`.
+- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies the release assets, reuses matching published model packs where specified, assembles the complete kit, then runs setup with `/S`.
 - You checked the installer's hash and signature ([Chapter 9](#ch-planning), "Download and verify what you need").
 - You have a Windows administrator account. Allow about 55 GB on the install drive for a prepared offline kit, or about 100 GB when the download preparation and installation share one drive, plus space for media and recordings.
 - The computer will stay on, awake and connected to power for the whole install.
@@ -50,6 +50,55 @@ Place runtime packs in the `packs\` subfolder beside `setup.exe`. The four runti
 > **Note:** Windows setup stages signed runtime packs under the `packs\` subfolder beside `setup.exe`. The release helper verifies and assembles the separate station-model archive into the kit; setup itself does not fetch missing station packs. The first-run window's model and caption acquisition does not replace the signed station index or station packs needed for activation. Silent `/S` setup skips that GUI acquisition flow.
 
 > **Tip:** Run setup from a local drive or a USB drive. A network share that you mapped to a drive letter in your own Windows session is usually not visible to the elevated setup (standard Windows behavior; not tested with CivicCast). Use the UNC path or copy the kit.
+
+## First-time PEG operator: three channels
+
+Use this route on a clean Windows computer. You do not need an API client, service
+environment edits or development tools.
+
+1. Download the complete kit using the matching release helper linked above, then
+   install it and wait for setup to finish successfully. The small setup executable
+   alone is not the kit. Keep the computer awake and allow the administrator prompt.
+2. Open the installed operator console. Complete **First Setup**, save/print the
+   recovery kit and confirm it is stored safely. Set the station name and time zone
+   in **Station Profile**. If the console instead offers admin sign-in, station
+   data already exists: reinstalling preserves accounts and does not reset a password.
+   Use that station's existing sign-in or recovery kit; do not delete data to reset it.
+3. Open **Assets**, upload your local video files through the normal upload form,
+   and wait for validation/processing. Review and publish the recordings using the
+   Assets/Publish controls described in [Before the meeting](#ch-before-meeting).
+   Upload success alone does not schedule or put a recording on air.
+4. In **Channels**, configure Public, Education and Government with the output you
+   actually intend to use. Check the selected output configuration before starting.
+   Set distinct channel names/branding; the station name is a separate setting.
+5. On **Schedule**, add each recording to its intended channel with its real duration
+   and a start time including seconds when needed. For back-to-back programs, the
+   next start equals the preceding start plus its duration. Use the station time zone.
+6. Approve the items and use **Commit to Air** as described in the Channels workflow.
+   Check **Published playout plan**; draft items are not an on-air plan. If you want
+   a repeating rotation, enable **Repeat the published sequence** for each channel
+   and save. Only the marked final contiguous sequence repeats.
+7. Start the three configured channels. Watch the current program label and local
+   preview for moving video and audible program audio. If live captions are enabled
+   in Station Profile, use each channel's caption status and visible captions to
+   check them; an HTTP response alone does not establish captions or moving video.
+   Observe a program change before leaving the station unattended.
+
+Follow the screen's reported error and the relevant troubleshooting task if a step
+fails. Do not substitute hidden API calls for a missing operator workflow.
+
+## Download retries and space
+
+The kit is large because it includes offline runtimes and models. Plan approximately
+25 GiB of payload; multipart model preparation can temporarily hold parts, the
+assembled archive and extracted models (roughly 66 GiB before the installed copy and
+station media). The install-drive requirements remain separate. The source RC2 helper
+checks free space before model assembly, resumes `.partial` bytes when the server
+supports ranges, and reuses already verified complete files. Rerun the same helper
+with the same destination after a network interruption. Do not mix versions or delete
+station data to make a retry work. A server that does not support ranges may require
+that file to restart. These improvements apply to the helper shipped with RC2, not
+retroactively to the published RC1 helper.
 
 ## How the install runs
 

@@ -700,6 +700,7 @@ class _PendingPreparation:
     #: failure of exactly this preparation must NOT take the ordinary
     #: "fall back to restart" route -- see ``_poll_preparation``.
     slate_first: bool = False
+    since: float = 0.0
 
 
 @dataclass
@@ -1159,6 +1160,8 @@ class EgressDaemon:
         # daemon existed can be a predecessor's orphans.
         self._boot_epoch = time.time()
         self._stderr_logs: dict[str, Path] = {}
+        self._source_output_offsets: dict[str, tuple[int | None, object, int]] = {}
+        self._source_output_labels: dict[str, tuple[int | None, str]] = {}
         # MAJOR M1: last-observed liveness of each channel's supervised HLS
         # relay child (True = confirmed dead since last poll; absent = alive
         # or not applicable). Polled every process_once tick (see
@@ -1360,6 +1363,7 @@ class EgressDaemon:
                 process=self._processes.get(channel_id),
                 config=self._store.get_config(channel_id),
                 slate_first=slate_first,
+                since=self._monotonic(),
             )
             _LOG.info("channel %s: %s source preparation queued", channel_id, kind)
             return _PreparationState.PENDING
@@ -3039,6 +3043,8 @@ class EgressDaemon:
                 # This IS a fresh spawn -- any on-air evidence latched for a
                 # PREVIOUS worker no longer describes this one.
                 self._on_air_confirmed_at.pop(channel_id, None)
+                self._source_output_offsets.pop(channel_id, None)
+                self._source_output_labels.pop(channel_id, None)
                 # Hostile-review follow-up, item 4: track the plan actually being
                 # aired so it gets released on the next exit/stop even when the
                 # channel is opted out via CIVICCAST_EGRESS_SEAMLESS_RELOAD=0
@@ -3187,6 +3193,9 @@ class EgressDaemon:
             warning = "captions disabled: session reset failed; Stop and Start again to retry"
             if not last_error or warning not in last_error:
                 last_error = f"{last_error}; {warning}" if last_error else warning
+        observed = self._source_output_labels.get(channel_id)
+        if observed is not None and observed[0] == pid and state in ("ON_AIR", "TRANSITIONING"):
+            current_source_label = observed[1]
         current_source_label = db_safe_text_or_none(current_source_label)
         last_error = db_safe_text_or_none(last_error)
         _LOG.info(
@@ -3505,6 +3514,12 @@ class EgressDaemon:
         engine-side belt-and-suspenders, parallel to the proof-event auditing).
         """
         if self._as_run_recorder is None:
+            return
+        if running_state == "ON_AIR" and getattr(
+            self._encoder_strategy, "observes_source_output", False
+        ):
+            # Native playlists report each real selected/encoded source. A
+            # settlement is not evidence that segments[0] is still on output.
             return
         try:
             segment = source_plan.segments[0]
@@ -4133,11 +4148,80 @@ class EgressDaemon:
             reason,
         )
 
+    def _poll_source_output(self, channel_id: str, process: Any) -> None:
+        """Consume this worker's output observations once, without schedule inference."""
+        path = self._stderr_logs.get(channel_id)
+        if path is None or not getattr(self._encoder_strategy, "observes_source_output", False):
+            return
+        pid = _process_pid(process)
+        identity = _stderr_log_identity(path)
+        prior = self._source_output_offsets.get(channel_id)
+        offset = (
+            prior[2]
+            if prior is not None and prior[:2] == (pid, identity)
+            else self._current_stderr_spawn_offset(channel_id, path)
+        )
+        try:
+            if path.stat().st_size < offset:
+                offset = 0
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                # Bounded per tick; incomplete lines and remaining bytes stay
+                # pending for the next tick rather than being discarded.
+                data = stream.read(1024 * 1024)
+            complete = data.rfind(b"\n") + 1
+            self._source_output_offsets[channel_id] = (pid, identity, offset + complete)
+            for line in data[:complete].splitlines():
+                if not line.startswith(b"CIVICCAST_SOURCE_OUTPUT "):
+                    continue
+                try:
+                    source = json.loads(line.partition(b" ")[2])
+                    # The private log is anchored to this spawn. On Windows a
+                    # venv launcher PID can differ from the interpreter's PID.
+                    if source["kind"] not in ("program", "cg", "live", "slate"):
+                        continue
+                    observed = datetime.fromtimestamp(source["observed_at"], UTC)
+                    label = db_safe_text(source["label"])
+                    proof_id = "source-" + source["event_id"]
+                    self._source_output_labels[channel_id] = (pid, label)
+                    state = self._store.read_state(channel_id)
+                    self._write_state(
+                        channel_id,
+                        state.state if state else "ON_AIR",
+                        current_source_label=label,
+                        current_proof_event_id=state.current_proof_event_id if state else None,
+                        pid=pid,
+                    )
+                    if self._as_run_recorder is not None:
+                        self._as_run_recorder.record_transition(
+                            channel_id=channel_id,
+                            source_kind=map_source_kind(
+                                segment_kind=source["kind"], running_state="ON_AIR"
+                            ),
+                            asset_id=source["asset_id"],
+                            source_label=label,
+                            actual_start=observed,
+                            proof_event_id=proof_id,
+                            schedule_item_id=source["schedule_item_id"],
+                            source_offset_seconds=float(source.get("source_offset_seconds", 0)),
+                        )
+                except AsRunCaptureSchemaError:
+                    self._as_run_schema_drift = True
+                    _LOG.error(
+                        "as-run capture schema drift; playout safe; ledger paused (channel %s)",
+                        channel_id,
+                    )
+                except Exception:
+                    _LOG.exception("Invalid source-output observation for channel %s", channel_id)
+        except OSError:
+            _LOG.warning("Cannot read source-output observations for channel %s", channel_id)
+
     def _poll_process(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
         if process is None:
             return
         returncode = _process_poll(process)
+        self._poll_source_output(channel_id, process)
         if returncode is None:
             state = self._store.read_state(channel_id)
             # _sink_connected keys health by the sinks the RUNNING pipeline was
@@ -5151,6 +5235,26 @@ class EgressDaemon:
         if not callable(reader):
             return True
         return bool(reader(channel_id))
+
+    def source_preparation_status(self, channel_id: str) -> dict[str, Any]:
+        """Readiness facts for the operator, without promising an exact cut time."""
+        preparation = self._preparations.get(channel_id)
+        settlement = self._pending_reload_settle.get(channel_id)
+        if preparation is not None:
+            status, since = "preparing", preparation.since
+        elif settlement is not None:
+            status, since = "settling", settlement.since
+        else:
+            return {}
+        rollover = self._rollover_plan_end_at.get(channel_id)
+        expected = (
+            settlement.rollover_plan_end_at if settlement else (rollover[1] if rollover else None)
+        )
+        return {
+            "preparation_status": status,
+            "preparation_elapsed_seconds": max(0.0, self._monotonic() - since),
+            "expected_handoff_at": expected,
+        }
 
     def has_pending_preparation(self, channel_id: str) -> bool:
         """Whether a media preparation for this channel is registered right now.

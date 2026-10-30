@@ -193,7 +193,7 @@ Use the same **Outgoing channel feed** box.
 
 ## Keep a channel on air all day (the 24/7 setting)
 
-The box **Run this channel 24/7** holds the setting **Keep this channel on air**. Only a Setup admin can change it. Everyone else sees "Automation settings require the setup admin role."
+The box **Channel startup and repeat** holds the setting **Keep this channel on air**. Only a Setup admin can change it. Everyone else sees "Automation settings require the setup admin role."
 
 The checkbox's own hint reads "Starts the feed automatically after restarts and crashes." The same box has **Allow software (CPU) encoding fallback**, a choice of **Station slate** or **Community bulletins** under "Between programs, show", a **Slate message**, and two optional output names for network video (**NDI output name (optional)**) and a video card (**SDI output device (optional)**). To save any change, click **Save automation settings**. It is enabled only after you change something, and "Unsaved changes" appears beside it.
 
@@ -404,7 +404,7 @@ CG board and legacy slides now wrap supported title, organization, and message t
 
 *CG* is short for "character generator", the part of a broadcast system that puts text and graphics on screen. In CivicCast the **CG Board** is the "community board" a channel can show between programs: a card with station and community announcements. It is **not** the lower-third banner (that is on **Channels**, see above).
 
-The board is shown in the gaps between programs when the channel's filler is set to **Community bulletins** (on **Channels**, in "Run this channel 24/7", under "Between programs, show"). Otherwise it shows the **Station slate**. If no bulletins are approved, the channel falls back to the slate.
+The board is shown in the gaps between programs when the channel's filler is set to **Community bulletins** (on **Channels**, in "Channel startup and repeat", under "Between programs, show"). Otherwise it shows the **Station slate**. If no bulletins are approved, the channel falls back to the slate.
 
 Saved manual ticker text is included in the public board snapshot and the outgoing board picture. Changes appear when the board next refreshes. If a bulletin cannot be rendered, CivicCast reports the preparation error and uses the station slate rather than repeatedly relaunching a broken bulletin encoder.
 

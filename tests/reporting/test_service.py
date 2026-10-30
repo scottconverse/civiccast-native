@@ -582,3 +582,33 @@ class TestExporters:
         # XML: parses, zero child rows.
         assert len(list(ET.fromstring(export_as_run_xml(empty_asrun.rows)))) == 0
         assert len(list(ET.fromstring(export_shows_xml(empty_shows.rows)))) == 0
+
+
+def test_reports_include_crossing_program_and_clip_airtime_to_window(env) -> None:
+    service, store, fields = env
+    fields.upsert_def(_def("field-cat", "category"))
+    fields.set_values(
+        "asset-crossing",
+        [_value("asset-crossing", "field-cat", "Government")],
+        definitions=fields.list_defs("sta_main"),
+    )
+    store.append_as_run(
+        _entry(
+            "crossing",
+            asset_id="asset-crossing",
+            actual_start=_ts(8),
+            actual_end=_ts(11),
+            duration_s=10800,
+        )
+    )
+    report = service.shows_report(station_id="sta_main", from_ts=_ts(9), to_ts=_ts(10))
+    assert len(report.rows) == 1
+    assert report.rows[0].total_airtime_s == 3600
+    assert report.rows[0].play_count == 1
+    categories = service.hours_by_category(
+        station_id="sta_main", field_key="category", from_ts=_ts(9), to_ts=_ts(10)
+    )
+    assert categories.rows[0].total_seconds == 3600
+    ledger = store.list_as_run("sta_main", from_ts=_ts(9), to_ts=_ts(10))
+    assert ledger[0].actual_start == _ts(8)  # original evidence remains intact
+    assert ledger[0].duration_s == 10800

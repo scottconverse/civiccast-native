@@ -384,6 +384,7 @@ class ScheduleSourcePlanProvider:
         segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
         gap_tolerance_seconds: float = 1.0,
         loop_schedule: bool = False,
+        loop_schedule_provider: Callable[[str], bool] | None = None,
         max_segment_seconds: float | None = None,
         gap_absorb_seconds: float = 0.0,
         media_duration_resolver: MediaDurationResolver | None = None,
@@ -404,6 +405,7 @@ class ScheduleSourcePlanProvider:
         self._segment_cap = segment_cap
         self._gap_tolerance = timedelta(seconds=gap_tolerance_seconds)
         self._loop_schedule = loop_schedule
+        self._loop_schedule_provider = loop_schedule_provider
         self._max_segment_seconds = max_segment_seconds
         self._gap_absorb_seconds = gap_absorb_seconds
         # U36: the provider is where the media probe is wired in, because it is
@@ -465,7 +467,7 @@ class ScheduleSourcePlanProvider:
             ),
             segment_cap=self._segment_cap,
             gap_tolerance=self._gap_tolerance,
-            loop_schedule=self._loop_schedule,
+            loop_schedule=self._repeat_enabled(channel_id),
             max_segment_seconds=self._max_segment_seconds,
             gap_absorb_seconds=(
                 self._gap_absorb_seconds if gap_absorb_seconds is None else gap_absorb_seconds
@@ -489,8 +491,13 @@ class ScheduleSourcePlanProvider:
             channel_id=channel_id,
             schedule_items=self._schedule_items_provider(channel_id),
             after=after,
-            loop_schedule=self._loop_schedule,
+            loop_schedule=self._repeat_enabled(channel_id),
         )
+
+    def _repeat_enabled(self, channel_id: str) -> bool:
+        if self._loop_schedule_provider is not None:
+            return self._loop_schedule_provider(channel_id)
+        return self._loop_schedule
 
 
 def _playable_items(
@@ -1145,6 +1152,7 @@ def _segment_from_item(
         kind="program",
         source_ref=item.asset_id,
         schedule_occurrence_id=str(item.id),
+        source_offset_seconds=inpoint,
         inpoint_seconds=inpoint,
         outpoint_seconds=outpoint,
     )

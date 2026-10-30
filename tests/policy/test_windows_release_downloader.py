@@ -8,7 +8,9 @@ import hashlib
 import json
 import shutil
 import subprocess
+import threading
 import zipfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,71 @@ RELEASE_TRUTH = ROOT / "docs" / "releases" / "release-truth.yaml"
 # even while the source version advances to an unpublished candidate.
 PUBLISHED_RELEASE_TAG = yaml.safe_load(RELEASE_TRUTH.read_text(encoding="utf-8"))["current"]
 PUBLISHED_RELEASE_VERSION = PUBLISHED_RELEASE_TAG.removeprefix("v")
+
+
+@pytest.mark.parametrize("reply", ["range", "ignore", "bad-range", "disconnect"])
+def test_downloader_resumes_partial_bytes_and_refuses_bad_ranges(tmp_path, reply):
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if not powershell:
+        pytest.skip("PowerShell required for the shipped Windows downloader")
+    content = b"release-payload-for-range-test"
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.headers.get("Range"))
+            ranged = reply != "ignore"
+            start = 6 if reply == "bad-range" else 5
+            body = content[start:] if ranged else content
+            self.send_response(206 if ranged else 200)
+            self.send_header("Content-Length", str(len(body)))
+            if ranged:
+                self.send_header(
+                    "Content-Range", f"bytes {start}-{len(content) - 1}/{len(content)}"
+                )
+            self.end_headers()
+            self.wfile.write(body[:3] if reply == "disconnect" else body)
+            self.close_connection = True
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    target = tmp_path / "asset.bin"
+    partial = tmp_path / "asset.bin.partial"
+    partial.write_bytes(content[:5])
+    definitions = DOWNLOADER.read_text(encoding="utf8").split(
+        "New-Item -ItemType Directory -Force -Path $Destination | Out-Null", 1
+    )[0]
+    runner = tmp_path / "resume.ps1"
+    runner.write_text(
+        definitions
+        + f"\nSave-ReleaseAsset -Asset ([pscustomobject]@{{name='asset.bin';size={len(content)};browser_download_url='http://127.0.0.1:{server.server_port}/asset';digest='sha256:{hashlib.sha256(content).hexdigest()}'}}) -Target '{target.as_posix()}'\n",
+        encoding="utf8",
+    )
+    try:
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-File", str(runner)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+    assert requests == ["bytes=5-"]
+    if reply in {"range", "ignore"}:
+        assert result.returncode == 0, result.stderr
+        assert target.read_bytes() == content
+        assert not partial.exists()
+    else:
+        assert result.returncode != 0
+        assert not target.exists()
+        assert partial.read_bytes().startswith(content[:5])
 
 
 def test_windows_release_downloader_verifies_manifest_hashes() -> None:
@@ -91,11 +158,13 @@ def test_native_candidate_mode_asset_names_match_the_publisher() -> None:
     # sidecar cross-checked against the same setup.exe line.
     assert "function Read-Sha256Sums" in source
     assert "Assert-Sha256 -Path $setupPath -ExpectedHash $sums[$NativeSetupName]" in source
-    assert "Assert-Sha256 -Path $packPath -ExpectedHash $sums[$packAsset.name]" in source
+    assert "Assert-Sha256 -Path $packPath -ExpectedHash $sums[$name]" in source
     assert "[string]$sidecar.sha256 -ne $sums[$NativeSetupName]" in source
 
 
-@pytest.mark.parametrize("scenario", ["complete", "traversal", "conflict", "index-mismatch"])
+@pytest.mark.parametrize(
+    "scenario", ["complete", "legacy-models", "traversal", "conflict", "index-mismatch"]
+)
 def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenario: str) -> None:
     """Execute the actual PS5.1 extraction path using a small six-pack ZIP."""
     powershell = shutil.which("powershell")
@@ -114,7 +183,9 @@ def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenar
     }
     index = {
         "manifest": {
-            "product_version": PUBLISHED_RELEASE_VERSION,
+            "product_version": "1.0.0-beta.20"
+            if scenario == "legacy-models"
+            else PUBLISHED_RELEASE_VERSION,
             "packs": [
                 {
                     "filename": Path(path).name,
@@ -173,6 +244,8 @@ def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenar
         .replace("$args[1]", "'" + str(archive).replace("'", "''") + "'")
         .replace("$args[2]", "'" + str(root).replace("'", "''") + "'")
     )
+    if scenario == "legacy-models":
+        body = body.replace("-Manifest $m\n", "-Manifest $m -ExpectedVersion '1.0.0-beta.20'\n")
     runner.write_text(body, encoding="utf-8")
     result = subprocess.run(
         [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
@@ -180,7 +253,7 @@ def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenar
         capture_output=True,
         timeout=30,
     )
-    if scenario == "complete":
+    if scenario in {"complete", "legacy-models"}:
         assert result.returncode == 0, result.stdout + result.stderr
         assert {
             str(p.relative_to(root)).replace("\\", "/"): p.read_bytes()

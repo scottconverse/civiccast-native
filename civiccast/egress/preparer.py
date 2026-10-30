@@ -787,6 +787,7 @@ class SourcePreparer:
         meta = {
             "loudness_status": loudness.status,
             "measured_lufs": loudness.measured_lufs,
+            "loudness_measurement_source": "input_probe",
             "normalized": normalized,
             "media_duration_seconds": media_duration_seconds,
             "full_asset_conform": full_asset_conform,
@@ -1087,10 +1088,17 @@ class SourcePreparer:
         ):
             _LOG.warning(
                 "Speech leveling for %r (window: %s): the kept attempt misses the loudness "
-                "gate (worst 4-minute stretch %s LU, whole program %s LU).",
+                "gate (worst measured stretch %s LU, start %s s, end %s s, duration %s s; whole program %s LU).",
                 source_path.name,
                 window,
                 _fmt_measure(kept.worst_window_err_lu),
+                _fmt_measure(kept.worst_window_start_s),
+                _fmt_measure(kept.worst_window_end_s),
+                _fmt_measure(
+                    kept.worst_window_end_s - kept.worst_window_start_s
+                    if kept.worst_window_start_s is not None and kept.worst_window_end_s is not None
+                    else None
+                ),
                 _fmt_measure(kept.whole_err_lu),
             )
         if not selection.hard_tp_met:
@@ -1714,6 +1722,11 @@ class SourcePreparer:
                 kind=segment.kind,
                 source_ref=segment.source_ref,
                 schedule_occurrence_id=segment.schedule_occurrence_id,
+                source_offset_seconds=(
+                    segment.source_offset_seconds
+                    if segment.source_offset_seconds is not None
+                    else segment.inpoint_seconds
+                ),
             ),
             PreparedSegmentRecord(
                 label=segment.label,
@@ -2042,6 +2055,11 @@ class SourcePreparer:
                     kind=segment.kind,
                     source_ref=segment.source_ref,
                     schedule_occurrence_id=segment.schedule_occurrence_id,
+                    source_offset_seconds=(
+                        segment.source_offset_seconds
+                        if segment.source_offset_seconds is not None
+                        else segment.inpoint_seconds
+                    ),
                 )
                 # The scratch output is thrown away -- the value of this call
                 # is its SIDE EFFECT, the promoted ``conform-cache/{key}.ts``.
@@ -3253,6 +3271,11 @@ class SourcePreparer:
                 kind=segment.kind,
                 source_ref=segment.source_ref,
                 schedule_occurrence_id=segment.schedule_occurrence_id,
+                source_offset_seconds=(
+                    segment.source_offset_seconds
+                    if segment.source_offset_seconds is not None
+                    else segment.inpoint_seconds
+                ),
             ),
             PreparedSegmentRecord(
                 label=segment.label,

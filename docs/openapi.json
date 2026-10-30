@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "CivicCast",
-    "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-rc.1"
+    "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, submitted values omitted). Integrators should branch on status code first, then on the type of `detail`.",
+    "version": "1.0.0-rc.2"
   },
   "paths": {
     "/health": {
@@ -41782,6 +41782,18 @@
             "type": "array",
             "title": "Gap Blocks"
           },
+          "repeat_schedule": {
+            "type": "boolean",
+            "title": "Repeat Schedule",
+            "default": false
+          },
+          "repeat_block_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Repeat Block Ids"
+          },
           "export_formats": {
             "items": {
               "type": "string"
@@ -46738,6 +46750,11 @@
             "title": "Auto Start",
             "default": false
           },
+          "repeat_schedule": {
+            "type": "boolean",
+            "title": "Repeat Schedule",
+            "default": false
+          },
           "allow_software_fallback": {
             "type": "boolean",
             "title": "Allow Software Fallback",
@@ -47262,6 +47279,44 @@
               }
             ],
             "title": "Last Error"
+          },
+          "preparation_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "preparing",
+                  "settling"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preparation Status"
+          },
+          "preparation_elapsed_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preparation Elapsed Seconds"
+          },
+          "expected_handoff_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Handoff At"
           }
         },
         "additionalProperties": false,

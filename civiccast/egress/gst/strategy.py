@@ -915,6 +915,7 @@ class GstPlayoutStrategy:
     """``EncoderStrategy`` that runs the GStreamer engine in a per-channel worker."""
 
     name = "gstreamer-playout-worker"
+    observes_source_output = True
     supports_live_swap = True
     # Item 3: class-level fallback ONLY, for anything that reads the attribute off
     # the class rather than an instance. Every real instance overrides this in

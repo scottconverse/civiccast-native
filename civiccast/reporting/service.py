@@ -49,15 +49,40 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from civiccast.metadata.models import CustomFieldDefDb, CustomFieldValueDb
 from civiccast.reporting.models import AsRunLogEntry, AsRunLogEntryDb, Slug
 from civiccast.reporting.store import ReportingStore
+
+
+def _window_airtime(session: Session, from_ts: datetime, to_ts: datetime) -> ColumnElement[Any]:
+    """Clip closed airtime to the requested interval on SQLite and PostgreSQL."""
+    row = AsRunLogEntryDb
+    start = case((row.actual_start < from_ts, from_ts), else_=row.actual_start)
+    end = case((row.actual_end > to_ts, to_ts), else_=row.actual_end)
+    if session.get_bind().dialect.name == "sqlite":
+        seconds = func.round((func.julianday(end) - func.julianday(start)) * 86400)
+    else:
+        seconds = func.floor(func.extract("epoch", end - start))
+    return case(
+        ((row.actual_start >= from_ts) & (row.actual_end <= to_ts), row.duration_s),
+        (end <= start, 0),
+        else_=seconds,
+    )
+
+
+def _overlaps_window(from_ts: datetime, to_ts: datetime) -> ColumnElement[bool]:
+    row = AsRunLogEntryDb
+    return (row.actual_start < to_ts) & (
+        (row.actual_end > from_ts) | ((row.duration_s == 0) & (row.actual_start >= from_ts))
+    )
+
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
 
@@ -253,23 +278,23 @@ class ReportingService:
         index-friendly on the ``(station_id, actual_start)`` index path.
         """
         with self._session() as session:
+            airtime = _window_airtime(session, from_ts, to_ts)
             stmt = (
                 select(
                     AsRunLogEntryDb.asset_id.label("asset_id"),
                     func.count().label("play_count"),
-                    func.sum(AsRunLogEntryDb.duration_s).label("total_airtime_s"),
+                    func.sum(airtime).label("total_airtime_s"),
                     func.min(AsRunLogEntryDb.actual_start).label("first_aired"),
                     func.max(AsRunLogEntryDb.actual_start).label("last_aired"),
                 )
                 .where(AsRunLogEntryDb.station_id == station_id)
-                .where(AsRunLogEntryDb.actual_start >= from_ts)
-                .where(AsRunLogEntryDb.actual_start < to_ts)
+                .where(_overlaps_window(from_ts, to_ts))
                 .where(AsRunLogEntryDb.asset_id.is_not(None))
                 .group_by(AsRunLogEntryDb.asset_id)
                 # Sort by total airtime desc, ties broken by asset_id asc — so
                 # the row order is deterministic across runs / backends.
                 .order_by(
-                    func.sum(AsRunLogEntryDb.duration_s).desc(),
+                    func.sum(airtime).desc(),
                     AsRunLogEntryDb.asset_id.asc(),
                 )
             )
@@ -347,11 +372,12 @@ class ReportingService:
             # below are bound (sentinel + field_id + window + station/channel).
             uncategorized = UNCATEGORIZED_LABEL
             category_col = func.coalesce(CustomFieldValueDb.value, uncategorized)
+            airtime = _window_airtime(session, from_ts, to_ts)
 
             stmt = (
                 select(
                     category_col.label("category"),
-                    func.sum(AsRunLogEntryDb.duration_s).label("total_seconds"),
+                    func.sum(airtime).label("total_seconds"),
                     func.count().label("entry_count"),
                 )
                 .select_from(AsRunLogEntryDb)
@@ -361,15 +387,14 @@ class ReportingService:
                     & (CustomFieldValueDb.field_id == field_id),
                 )
                 .where(AsRunLogEntryDb.station_id == station_id)
-                .where(AsRunLogEntryDb.actual_start >= from_ts)
-                .where(AsRunLogEntryDb.actual_start < to_ts)
+                .where(_overlaps_window(from_ts, to_ts))
                 .group_by(category_col)
                 # Uncategorized last: CASE puts the sentinel into bucket 1,
                 # everything else into bucket 0. Then within each bucket, order
                 # by total_seconds desc, ties broken by category name asc.
                 .order_by(
                     case((category_col == uncategorized, 1), else_=0).asc(),
-                    func.sum(AsRunLogEntryDb.duration_s).desc(),
+                    func.sum(airtime).desc(),
                     category_col.asc(),
                 )
             )

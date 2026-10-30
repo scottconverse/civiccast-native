@@ -1,8 +1,36 @@
+# New PEG operator: install and run three channels
+
+Use the complete kit and helper matching your release; the small installer alone is
+not enough. The public download is RC1; RC2 source instructions describe the next
+candidate and its new repeat/status controls. Allow download/staging, installed
+runtime and station media space separately. Start with [Windows installation](../INSTALL-WINDOWS.md).
+
+1. Install the complete matching kit and wait for a successful completion.
+2. Open the local operator console, complete First Setup, and save the recovery kit.
+   Existing sign-in after reinstall means station data was preserved; use its recovery.
+3. Set Station Profile and time zone. Configure Public, Education and Government in
+   Channels with the outputs you intend to use and distinct channel branding.
+4. Upload local video through Assets, wait for validation and review/publish it.
+5. Schedule recordings on each channel with their actual durations and second-level
+   starts. Approve the schedule and use Commit to Air. Check Published playout plan.
+6. For a repeating rotation in RC2, save Repeat the published sequence for each
+   channel. Only the final contiguous marked group repeats. Automatic startup is
+   a separate control. No environment edit, service restart or API workaround is needed.
+7. Start the configured channels and watch moving program video, audible audio and
+   a program transition in preview. If live captions are enabled, check visible
+   captions and the channel caption status; a successful web request alone is not playback.
+
+Use the built-in Manual for the full steps, error recovery and responsibilities.
+Preparation is not on-air proof. Do not repeatedly reload an already pending handoff.
+
+---
+
+## Additional workflow reference
+
 # CivicCast Beta 18 - Field-Test Quick Start (historical)
 
-For the current Beta 20 package, begin with the [Beta 20 tester quickstart](tester/START-HERE.md)
-and [Beta 20 user manual](USER-MANUAL.md). This page preserves the Beta 18
-field-test path.
+The following section preserves the Beta 18 field-test path only. Use the current
+operator instructions above and the manual matching your installed package.
 
 Beta 18 adds guided Cablecast station import to the native Windows station,
 building on Beta 17's subscriber delivery, Podcast publication, and

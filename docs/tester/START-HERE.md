@@ -1,3 +1,10 @@
+> **RC2 source update:** The current public download is RC1. For the next RC2
+> operator run, use its matching packaged manual and built-in Help to install,
+> set up and run Public, Education and Government from the normal UI. Use
+> [the operator quick start](../QUICKSTART-OPERATOR.md) as the entry point.
+> Do not substitute API calls or environment edits for an operator task that
+> the manual says is available in the UI. The Beta20 instructions below are historical.
+
 # Beta 20 tester quickstart
 
 **`v1.0.0-beta.20` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20). Check the [package verification record](../releases/v1.0.0-beta.20-verification.md) for the exact signed installer and scoped results.

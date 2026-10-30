@@ -1,8 +1,8 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-rc.1 (unpublished native Windows candidate)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-rc.2 (native Windows line)
 author: The CivicCast Authors
-date: 2026-10-29
+date: 2026-10-30
 urlcolor: blue
 toccolor: black
 ---
@@ -56,7 +56,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
+This manual describes the unpublished 1.0.0-rc.2 candidate. RC1 is the current published pre-release. The manual bundled with a release describes that release; source documentation can describe newer controls. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
 
 The October 17 documentation correction reconciles operating instructions and
 refreshes the CLI, API and settings references. Existing installed Help may still
@@ -202,7 +202,7 @@ These are the words used most in Part I. Each is explained again where it first 
 
 ### Source edition and release evidence
 
-This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Keep each historical result with its named release. For publication, download, installation, and acceptance status, use the matching release page and verification record; do not infer status from this manual.
+This manual describes the unpublished 1.0.0-rc.2 candidate. RC1 remains the current published pre-release. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow the version-specific verification record for that package. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. Keep each historical result with its named release. For publication, download, installation, and acceptance status, use the matching release page and verification record; do not infer status from this manual.
 
 **Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This remains a Beta 11 host measurement; it does not establish performance of the current package. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
@@ -705,12 +705,12 @@ For a repeating rotation of two recordings:
 
 1. Add both recordings to **Schedule** on the same channel. Give each item its intended duration and put the second immediately after the first: its start is the first item's start plus its duration.
 2. Use **Publish to residents** or the channel's **Commit to Air** control to approve both items. Items left **Scheduled** do not air.
-3. Ask the station administrator to set `CIVICCAST_SCHEDULE_LOOP=1` in the Windows service environment, then restart the service between programs. The default is a finite schedule; loop mode repeats the published sequence. See [service environment settings](#configuration-env-how).
-4. Watch the first transition on the channel. The loop preserves gaps between schedule entries, so use contiguous entries for uninterrupted programming.
+3. In **Channels**, select the channel. Under **Channel startup and repeat**, enable **Repeat the published sequence**, then **Save automation settings**. No service restart or API call is needed. This is separate from **Keep this channel on air**, which controls automatic startup.
+4. Check **Published playout plan**. Entries marked **In repeat sequence** form the last contiguous published sequence; a gap greater than one second starts a new group. Older groups do not repeat. Watch the first transition and return to the first recording. Disable repeat for a finite schedule.
 
 For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
 
-In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from the engine's source-transition proof. The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
+In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from an output observation (not a TV receiver). The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 
 ### Repeat a program on a schedule (Program Guide)
 
@@ -983,7 +983,7 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 > **Warning:** Importing a PDF or an external meeting into an agenda that is already **published** moves it back to **draft**. Review it and publish again.
 
-### Set up and review a PrimeGov meeting
+#### Set up and review a PrimeGov meeting
 
 A station administrator opens **Agendas**, then **Agenda source setup**, chooses **Use Longmont / PrimeGov** (or PrimeGov and the municipality's **Tenant / site code**), then clicks **Save agenda source**. Public PrimeGov agendas need no password. Saving applies immediately and survives a restart; no service restart or environment editing is needed. Only a setup administrator can save these settings. Records clerks and meeting operators can then use the saved defaults.
 
@@ -994,7 +994,6 @@ PrimeGov uses an agenda first when available. Choose the packet option when you 
 Review the numbered titles, parent/child order and warnings. Load the **original PDF** and use the source-page links to inspect the matching pages. Loading a large original may take time. Previewing does not write agenda items. Only **Confirm** applies a complete preview; partial, failed or cancelled previews cannot be confirmed. Review the resulting draft and publish separately. Import confirmation can reopen a published agenda as a draft.
 
 RC1 includes offline English OCR for scanned pages. It does not send page images to a provider. If text extraction and OCR cannot recover a page within the processing limits, the preview remains incomplete. Keep the original, inspect the indicated pages and obtain a legible replacement or enter reviewed items manually. A warning is not a claim that an unreadable page was recovered.
-
 
 > **For IT staff:** turning on agenda import is covered in [Part II, Integrations](#ch-integrations).
 
@@ -1348,7 +1347,7 @@ Use the same **Outgoing channel feed** box.
 
 ### Keep a channel on air all day (the 24/7 setting)
 
-The box **Run this channel 24/7** holds the setting **Keep this channel on air**. Only a Setup admin can change it. Everyone else sees "Automation settings require the setup admin role."
+The box **Channel startup and repeat** holds the setting **Keep this channel on air**. Only a Setup admin can change it. Everyone else sees "Automation settings require the setup admin role."
 
 The checkbox's own hint reads "Starts the feed automatically after restarts and crashes." The same box has **Allow software (CPU) encoding fallback**, a choice of **Station slate** or **Community bulletins** under "Between programs, show", a **Slate message**, and two optional output names for network video (**NDI output name (optional)**) and a video card (**SDI output device (optional)**). To save any change, click **Save automation settings**. It is enabled only after you change something, and "Unsaved changes" appears beside it.
 
@@ -1559,7 +1558,7 @@ CG board and legacy slides now wrap supported title, organization, and message t
 
 *CG* is short for "character generator", the part of a broadcast system that puts text and graphics on screen. In CivicCast the **CG Board** is the "community board" a channel can show between programs: a card with station and community announcements. It is **not** the lower-third banner (that is on **Channels**, see above).
 
-The board is shown in the gaps between programs when the channel's filler is set to **Community bulletins** (on **Channels**, in "Run this channel 24/7", under "Between programs, show"). Otherwise it shows the **Station slate**. If no bulletins are approved, the channel falls back to the slate.
+The board is shown in the gaps between programs when the channel's filler is set to **Community bulletins** (on **Channels**, in "Channel startup and repeat", under "Between programs, show"). Otherwise it shows the **Station slate**. If no bulletins are approved, the channel falls back to the slate.
 
 Saved manual ticker text is included in the public board snapshot and the outgoing board picture. Changes appear when the board next refreshes. If a bulletin cannot be rendered, CivicCast reports the preparation error and uses the station slate rather than repeatedly relaunching a broken bulletin encoder.
 
@@ -2397,7 +2396,7 @@ Open **Live captions** in the resident portal and choose the public channel. Sha
 
 This is the channel’s automatic **English** live sidecar, not an approved official transcript. Live translation is unavailable. The first snapshot says **Latest available captions; waiting for new input**; only a later changed feed says it is receiving new captions. An empty/missing feed says captions are unavailable. After 30 seconds without a changed sidecar, the display clears its text and reports no new input. Silence can also produce that message. It retries automatically; changing channels immediately clears the previous channel’s text. Recorded translations remain selectable in the recording player after staff review.
 
-### RC1 translation review limitation
+#### RC1 translation review limitation
 
 Qualified human language review for Spanish, Simplified Chinese, Filipino/Tagalog, Vietnamese and Arabic is pending. RC1 software workflow checks cover editing, review decisions, publication and player track selection; they do not establish translation accuracy. Model-assisted checks are not qualified human review. Have a competent speaker review material translated records before relying on them.
 
@@ -2522,10 +2521,10 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 | Tab | Columns | Use it to |
 | --- | --- | --- |
 | **Shows** | Asset, Plays, Total airtime, First aired (UTC), Last aired (UTC) | See each recording once, with how many times it aired |
-| **As-Run** | Channel, Planned start (UTC), Actual on-air start (UTC), Start variance, End (UTC), Duration, Source, Asset, Category, Verified | Compare the intended schedule with each actual change on air |
+| **As-Run** | Channel, Planned start (UTC), Actual on-air start (UTC), Start variance, End (UTC), Duration, Source, Asset, Category, Output start observed | Compare the intended schedule with each actual change on air |
 | **Hours by Category** | Category, Entries, Total airtime, Hours | See airtime per category, such as "Council" |
 
-The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live). **Actual on-air start** comes from the engine's source-transition proof; **Start variance** shows how early or late it was against the planned start. VOD playback preroll does not change that timestamp. CivicCast does not persist a separate preroll timestamp.
+The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live). **Actual on-air start** comes from the engine observing a selected source frame pass encoding into progressing output. Internal playlist changes update the source label and ledger; preparing a playlist is not an on-air start. **Start variance** compares that observation with the planned start. This is output-path evidence, not measurement at a television receiver. VOD preroll does not itself create an as-run entry.
 
 The **Source** column uses these words:
 
@@ -2535,7 +2534,7 @@ The **Source** column uses these words:
 - `slate`: the safety card the station shows in place of video, for example when a feed fails.
 - `spot`: a sponsor message. In beta.11 this word never appears. See Underwriting below.
 
-**Verified** reads "yes" for every row the playout engine wrote, because a row exists only when the engine confirmed that it went on air.
+**Output start observed** identifies an engine observation, not a physical receiver check. An open row shows **Awaiting end** and **Not finalized** until the next source or stop closes it. Continuations of one scheduled program across preparation windows stay one play; a new rotation counts as another play. Shows and category totals clip airtime to the requested report window. Historical Beta20 rows are retained unchanged and are not retroactively repaired.
 
 #### Download a report file
 
@@ -2545,7 +2544,7 @@ The **Hours by Category** tab has no download buttons. Read it on screen.
 
 > **Known issue (beta.11):** The **Hours by Category** tab needs a *custom field* (an extra label you add to recordings, such as "category"). An unknown name shows: `No custom field named "{key}" is defined for this station. Define it in Setup > Custom Fields, then re-run the report.` Only the Setup admin role can open **Custom Fields**, while Reports is for the Support admin role. If you are not both, ask your Setup admin.
 
-> **Note:** A copy of the as-run list is also available to the public at `/api/public/reports/as-run` with no sign-in. It leaves out Category and Verified. Reports does not tell you this, so do not treat the as-run list as private.
+> **Note:** A copy of the as-run list is also available to the public at `/api/public/reports/as-run` with no sign-in. It leaves out Category and output-start evidence. Reports does not tell you this, so do not treat the as-run list as private.
 
 > **For IT staff:** The public as-run endpoint is described in [Chapter 13](#ch-security).
 
@@ -3303,7 +3302,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) and the version-specific verification record for the package you use to confirm publication, download, installation, and acceptance status. Run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
+This manual describes the unpublished 1.0.0-rc.2 candidate. RC1 remains the current published pre-release. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) and the version-specific verification record for the package you use to confirm publication, download, installation, and acceptance status. Run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical.
 
 The complete offline kit contains the installer, its verification metadata, runtime packs, and signed station index/model packs. The exact file list comes from the matching release manifest; the Chapter 10 tree shows the working layout rather than every download or checksum file. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -3384,7 +3383,7 @@ This chapter walks through Windows setup, first run, first setup in the operator
 
 ### Before you start
 
-- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies `station-models.json` and every matching `station-models.zip.*` part, assembles the complete kit, then runs setup with `/S`.
+- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies the release assets, reuses matching published model packs where specified, assembles the complete kit, then runs setup with `/S`.
 - You checked the installer's hash and signature ([Chapter 9](#ch-planning), "Download and verify what you need").
 - You have a Windows administrator account. Allow about 55 GB on the install drive for a prepared offline kit, or about 100 GB when the download preparation and installation share one drive, plus space for media and recordings.
 - The computer will stay on, awake and connected to power for the whole install.
@@ -3430,6 +3429,55 @@ Place runtime packs in the `packs\` subfolder beside `setup.exe`. The four runti
 > **Note:** Windows setup stages signed runtime packs under the `packs\` subfolder beside `setup.exe`. The release helper verifies and assembles the separate station-model archive into the kit; setup itself does not fetch missing station packs. The first-run window's model and caption acquisition does not replace the signed station index or station packs needed for activation. Silent `/S` setup skips that GUI acquisition flow.
 
 > **Tip:** Run setup from a local drive or a USB drive. A network share that you mapped to a drive letter in your own Windows session is usually not visible to the elevated setup (standard Windows behavior; not tested with CivicCast). Use the UNC path or copy the kit.
+
+### First-time PEG operator: three channels
+
+Use this route on a clean Windows computer. You do not need an API client, service
+environment edits or development tools.
+
+1. Download the complete kit using the matching release helper linked above, then
+   install it and wait for setup to finish successfully. The small setup executable
+   alone is not the kit. Keep the computer awake and allow the administrator prompt.
+2. Open the installed operator console. Complete **First Setup**, save/print the
+   recovery kit and confirm it is stored safely. Set the station name and time zone
+   in **Station Profile**. If the console instead offers admin sign-in, station
+   data already exists: reinstalling preserves accounts and does not reset a password.
+   Use that station's existing sign-in or recovery kit; do not delete data to reset it.
+3. Open **Assets**, upload your local video files through the normal upload form,
+   and wait for validation/processing. Review and publish the recordings using the
+   Assets/Publish controls described in [Before the meeting](#ch-before-meeting).
+   Upload success alone does not schedule or put a recording on air.
+4. In **Channels**, configure Public, Education and Government with the output you
+   actually intend to use. Check the selected output configuration before starting.
+   Set distinct channel names/branding; the station name is a separate setting.
+5. On **Schedule**, add each recording to its intended channel with its real duration
+   and a start time including seconds when needed. For back-to-back programs, the
+   next start equals the preceding start plus its duration. Use the station time zone.
+6. Approve the items and use **Commit to Air** as described in the Channels workflow.
+   Check **Published playout plan**; draft items are not an on-air plan. If you want
+   a repeating rotation, enable **Repeat the published sequence** for each channel
+   and save. Only the marked final contiguous sequence repeats.
+7. Start the three configured channels. Watch the current program label and local
+   preview for moving video and audible program audio. If live captions are enabled
+   in Station Profile, use each channel's caption status and visible captions to
+   check them; an HTTP response alone does not establish captions or moving video.
+   Observe a program change before leaving the station unattended.
+
+Follow the screen's reported error and the relevant troubleshooting task if a step
+fails. Do not substitute hidden API calls for a missing operator workflow.
+
+### Download retries and space
+
+The kit is large because it includes offline runtimes and models. Plan approximately
+25 GiB of payload; multipart model preparation can temporarily hold parts, the
+assembled archive and extracted models (roughly 66 GiB before the installed copy and
+station media). The install-drive requirements remain separate. The source RC2 helper
+checks free space before model assembly, resumes `.partial` bytes when the server
+supports ranges, and reuses already verified complete files. Rerun the same helper
+with the same destination after a network interruption. Do not mix versions or delete
+station data to make a retry work. A server that does not support ranges may require
+that file to restart. These improvements apply to the helper shipped with RC2, not
+retroactively to the published RC1 helper.
 
 ### How the install runs
 
@@ -3979,7 +4027,7 @@ A channel has an **egress configuration**, stored in the database. "Egress" mean
 
 A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
 
-The Channels screen (**Run Meeting** group) edits some of this: **Run this channel 24/7** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
+The Channels screen (**Run Meeting** group) edits some of this: **Channel startup and repeat** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
 
 > **Warning:** Changes to a channel's outputs do not reach a channel that is on air. A running pipeline reads its sinks, encode profile and loudness target only when it is built. A preset or a saved configuration lands at the next Stop and Start. **Apply headend preset** on a channel that is standing by on its slate restarts it at once, and every output (the cable feed included) drops for a few seconds while the pipeline rebuilds. On a channel that is airing a program nothing is interrupted, and the screen says "Preset saved. Restart the channel to put it on air."
 
@@ -4090,7 +4138,9 @@ What you can tune (all optional, all in the service environment; defaults are wh
 
 #### Repeat the published schedule
 
-`CIVICCAST_SCHEDULE_LOOP=1` repeats the channel's published premiere sequence. The default is off, so a finite schedule ends after its last item. The loop preserves intentional gaps; make adjacent start times and durations contiguous for continuous programming. Set this variable through the service environment procedure below and restart between programs. Auto-schedule uses the station time zone, with `CIVICCAST_STATION_TZ` as the environment fallback. See the two-recording recipe in [Before the meeting](#ch-before-meeting).
+In **Channels > Channel startup and repeat**, enable **Repeat the published sequence** and click **Save automation settings**. It repeats the last contiguous group of published premiere items, identified by **In repeat sequence** in the published playout plan. A gap greater than one second starts a new group; older groups and gaps are not replayed. Use second-level start times and durations for adjacent programs.
+
+Repeat is separate from **Keep this channel on air** (automatic startup). The default for a new station is finite playback. Saved repeat settings apply to the next prepared plan without editing an environment variable or restarting the service. An old `CIVICCAST_SCHEDULE_LOOP` value is a compatibility default only until this channel setting is saved. Auto-schedule uses the station time zone. See the two-recording recipe in [Before the meeting](#ch-before-meeting).
 
 ### Configure captions {#configuration-captions}
 
@@ -4124,6 +4174,8 @@ The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service**
 **Live runtime:** Native stations use Whistle on CPU as the primary engine, with Whisper as fallback. Whistle inference is serialized by one station-wide lock across channels. The first recognition is published immediately, including low-confidence text; overlap is deduplicated without requiring two readings to agree. Whistle requests have a 30-second deadline. On failure, Whisper supplies backup captions while a fresh Whistle process is tried after an initial 30-second cooldown. Further failed recovery attempts back off to 60, 120, 240 and at most 300 seconds. Only one recovery probe runs at a time, and successful recognition restores that channel to Whistle automatically. Whisper fallback requests allow 120 seconds by default; set `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` to a finite value from 1 to 600 seconds to change that deadline. A failed Whisper child is closed and replayed once immediately; a repeated replacement failure starts a 30-second retry cooldown. `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper as the primary engine instead.
 
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off. When you turn the profile switch off, queued audio drains and speech recognition stops on the next tap-worker scan; caption routing is removed from the video when each channel next starts. When you turn it on, recognition resumes on the next scan, and each channel needs to start again before its video includes captions.
+
+Whistle processes each new five-second segment with one second of prior context by default, rather than retranscribing five seconds of overlap on every call. Each channel keeps all new input in an ordinary completed window. The native engine remains serialized across channels; this reduces duplicate work, not the need for sufficient CPU. Explicit overlap settings still apply. A bounded three-channel trial supports this capacity correction; it is not a guarantee of transcript accuracy or a long soak.
 
 For the live tap, audio is collected in 5-second segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scanned every 2 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and kept in a bounded queue. If recognition falls behind, old working audio can be shed so playout retains priority. Whisper-specific CPU thread and worker settings control its runtime; they do not override Whistle's station-wide inference lock. The playout worker has priority over caption work.
 
@@ -4546,6 +4598,21 @@ These instructions describe the published Beta 20 edition. Use the release page 
 
 This chapter is for the IT person who keeps a CivicCast station running on native Windows. It explains the Windows service and logs, daily and weekly checks, disk use, backup and restore, and updates.
 
+### Preparing is not yet on air
+
+Channels shows **Preparing the next source** while media is being conformed and
+**Next source prepared; waiting for the output handoff** while a prepared replacement settles. The elapsed time and
+planned boundary help distinguish slow preparation from a completed switch. A ready
+replacement is not proof it aired. Check the current program label and moving output;
+do not repeatedly press Reload, Start or Stop while an existing command is pending.
+A missed boundary should be reported with the preparation time and observed output
+change; timestamp differences alone are not a measured viewer outage.
+
+A loudness warning names the worst measured stretch, including its start/end and
+actual length. A short final stretch is not described as a whole four-minute window.
+Cached source loudness is an input measurement, not a new measurement of the final
+processed output. Warnings retain their existing advisory behavior.
+
 ### Before you start
 
 You need:
@@ -4945,6 +5012,13 @@ This chapter describes the published Beta 20 edition. For package results, use t
 ## Security and privacy {#ch-security}
 
 This chapter explains how to manage staff access, limit network exposure, protect resident data, and verify CivicCast packages. It covers roles, tokens, first-admin recovery, HTTPS, the public and staff APIs, retention, signatures and checksums. Complete first setup on the station computer and follow the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md) before making the resident portal available remotely.
+
+### Invalid sign-in and setup requests
+
+Malformed setup, sign-in and recovery requests return field locations and safe
+validation messages without echoing submitted passwords, recovery codes or validator
+context. Do not attach real credentials to a support report. Ordinary incorrect
+credentials still use the existing authentication and rate-limit responses.
 
 ### Before you start
 
@@ -5644,7 +5718,7 @@ Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 6
 
 ### Rotation and source-preview checks
 
-- If a channel stops after the last scheduled program, check that its items are published and that `CIVICCAST_SCHEDULE_LOOP=1` is set in the service environment for a repeating rotation. The loop preserves gaps: adjoining entries need contiguous start times and durations. See [the continuous scheduling recipe](#ch-before-meeting).
+- If a channel stops after the last scheduled program, check that its items are published and that **Repeat the published sequence** is saved in **Channels > Channel startup and repeat**. Check the items marked **In repeat sequence** in the published plan. Only the last contiguous group repeats; adjoining entries need second-accurate start times and durations. See [the continuous scheduling recipe](#ch-before-meeting).
 - If the trim or summary source preview cannot play, confirm the original file remains available and package the recording for HLS playback. Use the preview's retry or renewal action after correcting the source. A summary citation outside a trimmed copy needs a package covering that passage; it should not be reviewed against a different time range.
 - If **Publish** counts items needing action, its **Needs action** filter includes required blocked outputs as well as failed outputs. Open each listed next step to resolve it.
 
@@ -10235,7 +10309,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 | Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-rc.1 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
+| CivicCast program and web portals | 1.0.0-rc.2 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
@@ -10292,7 +10366,7 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual describes the unpublished RC1 candidate. Beta 20 remains the current published release. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies that published package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual describes the unpublished RC2 candidate. RC1 is the current published pre-release. The [Beta 20 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.20-verification.md) identifies that published package; the [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |

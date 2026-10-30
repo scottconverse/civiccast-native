@@ -253,6 +253,8 @@ class ChannelPlayoutPlan(BaseModel):
     # sample-contract blocks; that source is reserved for test fixtures.
     blocks: list[PlayoutBlock]
     gap_blocks: list[PlayoutBlock]
+    repeat_schedule: bool = False
+    repeat_block_ids: list[str] = Field(default_factory=list)
     export_formats: list[str]
     proof_boundary: str
     not_claimed: list[str]
@@ -511,6 +513,7 @@ def build_channel_playout_plan(
     *,
     schedule_items: list[ScheduleItemResponse] | None = None,
     now: datetime | None = None,
+    repeat_schedule: bool = False,
 ) -> ChannelPlayoutPlan:
     """Build a software playout plan from scheduled rows only.
 
@@ -521,12 +524,24 @@ def build_channel_playout_plan(
     profile = _require_profile(channel_id)
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
     blocks = _blocks_from_schedule(profile, schedule_items or [])
+    from civiccast.egress.source_plan import _contiguous_schedule_run
+
+    published = [
+        item
+        for item in (schedule_items or [])
+        if item.channel_id == channel_id and item.mode == "premiere" and item.state == "published"
+    ]
+    repeat_blocks = (
+        _contiguous_schedule_run(published, timedelta(seconds=1)) if repeat_schedule else []
+    )
     return ChannelPlayoutPlan(
         generated_at=current_time,
         channel=profile,
         source="schedule-store",
         blocks=blocks,
         gap_blocks=_gap_blocks(profile, blocks),
+        repeat_schedule=repeat_schedule,
+        repeat_block_ids=[f"schedule-{item.id}" for item in repeat_blocks],
         export_formats=["json", "csv-ready"],
         proof_boundary=PLAYOUT_PLAN_PROOF_BOUNDARY,
         not_claimed=_PLAYOUT_PLAN_NOT_CLAIMED,
@@ -905,7 +920,7 @@ def _blocks_from_schedule(
 ) -> list[PlayoutBlock]:
     blocks: list[PlayoutBlock] = []
     for item in sorted(schedule_items, key=lambda row: row.scheduled_at):
-        if item.mode != "premiere" or item.state != "scheduled":
+        if item.mode != "premiere" or item.state not in {"scheduled", "published"}:
             continue
         title = item.asset_title or item.asset_id
         blocks.append(

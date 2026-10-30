@@ -383,7 +383,7 @@ Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 6
 
 ## Rotation and source-preview checks
 
-- If a channel stops after the last scheduled program, check that its items are published and that `CIVICCAST_SCHEDULE_LOOP=1` is set in the service environment for a repeating rotation. The loop preserves gaps: adjoining entries need contiguous start times and durations. See [the continuous scheduling recipe](#ch-before-meeting).
+- If a channel stops after the last scheduled program, check that its items are published and that **Repeat the published sequence** is saved in **Channels → Channel startup and repeat**. Check the items marked **In repeat sequence** in the published plan. Only the last contiguous group repeats; adjoining entries need second-accurate start times and durations. See [the continuous scheduling recipe](#ch-before-meeting).
 - If the trim or summary source preview cannot play, confirm the original file remains available and package the recording for HLS playback. Use the preview's retry or renewal action after correcting the source. A summary citation outside a trimmed copy needs a package covering that passage; it should not be reviewed against a different time range.
 - If **Publish** counts items needing action, its **Needs action** filter includes required blocked outputs as well as failed outputs. Open each listed next step to resolve it.
 

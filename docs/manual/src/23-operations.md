@@ -2,6 +2,21 @@
 
 This chapter is for the IT person who keeps a CivicCast station running on native Windows. It explains the Windows service and logs, daily and weekly checks, disk use, backup and restore, and updates.
 
+## Preparing is not yet on air
+
+Channels shows **Preparing the next source** while media is being conformed and
+**Next source prepared; waiting for the output handoff** while a prepared replacement settles. The elapsed time and
+planned boundary help distinguish slow preparation from a completed switch. A ready
+replacement is not proof it aired. Check the current program label and moving output;
+do not repeatedly press Reload, Start or Stop while an existing command is pending.
+A missed boundary should be reported with the preparation time and observed output
+change; timestamp differences alone are not a measured viewer outage.
+
+A loudness warning names the worst measured stretch, including its start/end and
+actual length. A short final stretch is not described as a whole four-minute window.
+Cached source loudness is an input measurement, not a new measurement of the final
+processed output. Warnings retain their existing advisory behavior.
+
 ## Before you start
 
 You need:

@@ -352,6 +352,7 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
               </span>
               <input
                 type="datetime-local"
+                step={1}
                 value={startLocal}
                 onChange={(e) => {
                   setStartLocalOverride(e.target.value)

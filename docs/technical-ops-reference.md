@@ -1232,7 +1232,7 @@ version from the station you are monitoring.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-rc.1","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-rc.2","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the
@@ -1360,3 +1360,14 @@ The `v1.0.0-rcNN` line this document used to describe is the retired WSL2/Linux
 deployment, published from the archived repository. Its release and
 verification artifacts are not in this repository and its rc numbering does
 not continue here.
+
+
+## RC2 operator corrections
+
+Use the source-matched manual and built-in Help for second-level scheduling, repeat
+controls, three-channel setup and download recovery. Per-channel repeat settings
+replace environment editing for ordinary operators. Preparation status is transient;
+as-run output observations are not physical receiver measurements. Historical rows
+are not rewritten. Whistle uses one second of overlap with each five seconds of new
+input by default; overload/fallback limits still apply. Authentication validation
+responses omit submitted inputs and custom validator context.

@@ -6,13 +6,17 @@ system. Staff use one operator console; residents watch through a separate
 portal. Optional cloud services may charge their own usage fees, while CivicCast
 has no per-minute software fee.
 
-## RC1 preparation
+## RC2 development
 
-`v1.0.0-rc.1` is an **unpublished candidate**. RC1 work covers administrator agenda setup, bundled offline OCR, managed agenda recovery and installed workflow acceptance. It is not available as a public release. Qualified human language review remains pending; translation accuracy is not human-validated. Beta20 below remains the public installation target.
+`v1.0.0-rc.2` is an **unpublished candidate** addressing the R9 Beta20 operator findings: credential redaction, caption workload, as-run boundaries, scheduling/repeat controls and matching manual/help. Human language review remains pending; no human-validated translation claim is made.
 
 ## Current published package
 
-[`v1.0.0-beta.20`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20) is the current published native Windows pre-release. The [Beta 20 verification record](docs/releases/v1.0.0-beta.20-verification.md) identifies the exact package and scoped acceptance. The package was revised October 29, 2026 with retained/resumable PDF processing and ordered agenda preview/confirmation; revision source `ead567a33614a65554a69ef186342d691c43b7dc`, setup SHA-256 `8a37e2bc48d1f0d63fde088c682730f9b2b49e812e674168ddf462b5b01b9f34`, while the published tag target is unchanged. Scanned-page OCR requires separately installed Tesseract and English data; bundling is deferred to a later version. Beta20 adds recovery station-state replacement ACL repair that preserves private-key protection, dependency security corrections, bounded relay log retention and efficient draining, and CG text wrapping/reduction; long text may render small, so preview at intended resolution. Roku required acceptance is software/API mocks only, with no hardware testing. Short-transcript summary generation passed on installed signed 34e213fe with local gemma4:e4b; this is not a long-meeting benchmark. Caption acceptance observed an 8.763 s sample delay with brief prior-program carryover; this limitation remains.
+[`v1.0.0-rc.1`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.1)
+is the current published native Windows pre-release. The [RC1 package record](docs/releases/v1.0.0-rc.1-verification.md)
+identifies its signed source, checks and incomplete installed acceptance. Unchanged model packs
+come from the existing Beta20 release. Source is developing **unpublished candidate v1.0.0-rc.2**
+with R9 operator corrections; these changes are not in the RC1 download.
 
 ## Previous published package (Beta 19)
 
@@ -42,12 +46,12 @@ identities are recorded in
 
 ## Install and run
 
-Download the signed Beta 20 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools. Use Windows 11 x64 and a Windows administrator account. Allow about **100 GB free** when preparation and installation share a drive (including roughly **22 GB of model downloads**), plus recording space. Keep the complete kit for offline installation:
+Download the signed RC1 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools. Use Windows 11 x64 and a Windows administrator account. Allow about **100 GB free** when preparation and installation share a drive (including roughly **22 GB of model downloads**), plus recording space. Keep the complete kit for offline installation:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta20.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.20/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta20"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-RC1.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-rc.1/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-RC1"
 ```
 
 Keep the PowerShell window open until it reports **Done**. During silent setup,
@@ -64,7 +68,7 @@ The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs
 Source contributors can inspect the [station operations record](docs/ops/station-operations-goal.md),
 [Sprint 2](docs/ops/sprint2-unattended.md), and
 [Sprint 3](docs/ops/sprint3-output-completion.md) for the implementation scope
-and focused evidence behind Beta 16. Use the current published Beta 20
+and focused evidence behind Beta 16. Use the current published RC1
 release page for installation.
 
 ```bash
@@ -136,8 +140,8 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-release. The [Beta 20 verification record](docs/releases/v1.0.0-beta.20-verification.md)
-describes the current package boundary and scoped acceptance, and the Beta 11
+release. The [RC1 verification record](docs/releases/v1.0.0-rc.1-verification.md)
+describes the current published package boundary and scoped acceptance, and the Beta 11
 host report is separately scoped historical runtime evidence.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit

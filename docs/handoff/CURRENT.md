@@ -1,4 +1,51 @@
-# CURRENT — ACTIVE: RC1 offline agenda readiness — October 29, 2026
+# CURRENT — ACTIVE: RC2 R9 operator corrections — October 30, 2026
+
+Scott authorized the R9 Beta20 corrections and all affected operator documentation,
+manual and built-in help. Worktree `C:/Dev/cc-rc2-r9`, branch
+`fix/rc2-r9-operator-workflows`, base published RC1 `6571f841`.
+Published RC1 is immutable. No station/R9 soak actions, model uploads or subagents.
+
+Implemented: safe credential validation responses; lower live Whistle overlap with
+three-channel bounded capacity evidence; second-level scheduling; per-channel repeat
+control and published preview; selected/encoded source boundary observations and
+logical as-run accounting/window clipping; preparation status; migration explanations;
+precise loudness warnings; resumable verified downloads and existing model reuse.
+Branding reversion remains unconfirmed; historical tester orchestration is separate.
+
+Executed focused evidence: auth 36 plus 9 expanded/valid-flow and 4 paywall cases;
+caption 140; scheduling UI 24; repeat/store/source/cable 128 plus corrected fixture 1;
+as-run/reporting 166 plus new recorder/daemon/window cases; migration 0098; loudness
+30; downloader 12 (actual PowerShell range/failure fixtures); existing three screens
+92. Native production worker checks observed three internal sources and a prerolled
+replacement playlist; both passed with clean teardown. Native caption trials used
+preserved components and read-only R9 WAVs: warm three-channel 5s arrivals processed
+in 3.65/3.64s with full new input retained. Bounded proof, not a soak/installed claim.
+Mypy passed seven changed modules. No broad unrelated media rerun.
+
+Documentation now matches RC2: clean operator install/three-channel recipe, manual
+chapters, quick start, built-in Help, screen copy, API reference/types and public
+package pointers. Published RC1 status/limitations are documented without modifying
+its assets. PDF/DOCX and packaged manual JSON are generated and current.
+Source/version identity is `1.0.0-rc.2`; no RC2 tag or publication exists.
+
+Additional focused results: 2 normal repeat/loading UI cases, preparation API plus
+nonpersistent status (caught/fixed state DB serialization), source graph/roundtrip
+5 cases, loudness cached measurement provenance, actual Beta20-version archive reuse,
+and 13 release/version policy cases passed. Ruff/format on all 42 changed Python
+files and mypy on the changed service/daemon/reporting/native graph modules pass.
+Affected diff reviewed by the implementing agent; no independent reviewer claimed.
+Manual PDF/DOCX consistency and packaged Help consistency pass.
+
+F2 handoff lateness is only partly explained by original evidence; diagnostics now
+separate preparation from settlement, not a claim to eliminate all timing delay.
+F3 branding was not reproduced. Existing tester orchestration incidents are recorded
+as separate. No new model bytes or station operations. RC1 accepted PTS limitation
+remains historical/accepted; no repair loop was reopened.
+
+Next: ordinary signed-off source commit, push and PR, then applicable required CI.
+No installer build/publication dispatched. No owned background helpers/jobs.
+
+## Historical RC1 state (superseded assignment; evidence retained)
 
 ## RC1 current assignment (supersedes historical completion below)
 

@@ -117,10 +117,10 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 | Tab | Columns | Use it to |
 | --- | --- | --- |
 | **Shows** | Asset, Plays, Total airtime, First aired (UTC), Last aired (UTC) | See each recording once, with how many times it aired |
-| **As-Run** | Channel, Planned start (UTC), Actual on-air start (UTC), Start variance, End (UTC), Duration, Source, Asset, Category, Verified | Compare the intended schedule with each actual change on air |
+| **As-Run** | Channel, Planned start (UTC), Actual on-air start (UTC), Start variance, End (UTC), Duration, Source, Asset, Category, Output start observed | Compare the intended schedule with each actual change on air |
 | **Hours by Category** | Category, Entries, Total airtime, Hours | See airtime per category, such as "Council" |
 
-The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live). **Actual on-air start** comes from the engine's source-transition proof; **Start variance** shows how early or late it was against the planned start. VOD playback preroll does not change that timestamp. CivicCast does not persist a separate preroll timestamp.
+The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live). **Actual on-air start** comes from the engine observing a selected source frame pass encoding into progressing output. Internal playlist changes update the source label and ledger; preparing a playlist is not an on-air start. **Start variance** compares that observation with the planned start. This is output-path evidence, not measurement at a television receiver. VOD preroll does not itself create an as-run entry.
 
 The **Source** column uses these words:
 
@@ -130,7 +130,7 @@ The **Source** column uses these words:
 - `slate`: the safety card the station shows in place of video, for example when a feed fails.
 - `spot`: a sponsor message. In beta.11 this word never appears. See Underwriting below.
 
-**Verified** reads "yes" for every row the playout engine wrote, because a row exists only when the engine confirmed that it went on air.
+**Output start observed** identifies an engine observation, not a physical receiver check. An open row shows **Awaiting end** and **Not finalized** until the next source or stop closes it. Continuations of one scheduled program across preparation windows stay one play; a new rotation counts as another play. Shows and category totals clip airtime to the requested report window. Historical Beta20 rows are retained unchanged and are not retroactively repaired.
 
 ### Download a report file
 
@@ -140,7 +140,7 @@ The **Hours by Category** tab has no download buttons. Read it on screen.
 
 > **Known issue (beta.11):** The **Hours by Category** tab needs a *custom field* (an extra label you add to recordings, such as "category"). An unknown name shows: `No custom field named "{key}" is defined for this station. Define it in Setup → Custom Fields, then re-run the report.` Only the Setup admin role can open **Custom Fields**, while Reports is for the Support admin role. If you are not both, ask your Setup admin.
 
-> **Note:** A copy of the as-run list is also available to the public at `/api/public/reports/as-run` with no sign-in. It leaves out Category and Verified. Reports does not tell you this, so do not treat the as-run list as private.
+> **Note:** A copy of the as-run list is also available to the public at `/api/public/reports/as-run` with no sign-in. It leaves out Category and output-start evidence. Reports does not tell you this, so do not treat the as-run list as private.
 
 > **For IT staff:** The public as-run endpoint is described in [Chapter 13](#ch-security).
 

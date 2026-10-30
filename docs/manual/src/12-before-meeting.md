@@ -169,12 +169,12 @@ For a repeating rotation of two recordings:
 
 1. Add both recordings to **Schedule** on the same channel. Give each item its intended duration and put the second immediately after the first: its start is the first item's start plus its duration.
 2. Use **Publish to residents** or the channel's **Commit to Air** control to approve both items. Items left **Scheduled** do not air.
-3. Ask the station administrator to set `CIVICCAST_SCHEDULE_LOOP=1` in the Windows service environment, then restart the service between programs. The default is a finite schedule; loop mode repeats the published sequence. See [service environment settings](#configuration-env-how).
-4. Watch the first transition on the channel. The loop preserves gaps between schedule entries, so use contiguous entries for uninterrupted programming.
+3. In **Channels**, select the channel. Under **Channel startup and repeat**, enable **Repeat the published sequence**, then **Save automation settings**. No service restart or API call is needed. This is separate from **Keep this channel on air**, which controls automatic startup.
+4. Check **Published playout plan**. Entries marked **In repeat sequence** form the last contiguous published sequence; a gap greater than one second starts a new group. Older groups do not repeat. Watch the first transition and return to the first recording. Disable repeat for a finite schedule.
 
 For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
 
-In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from the engine's source-transition proof. The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
+In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from an output observation (not a TV receiver). The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 
 ## Repeat a program on a schedule (Program Guide)
 

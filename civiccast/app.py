@@ -30,6 +30,7 @@ from typing import Any, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi import status as http_status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
@@ -101,6 +102,7 @@ from civiccast.auth.router import staff_router as auth_staff_router
 from civiccast.auth.security_headers import security_headers_middleware
 from civiccast.auth.store import PostgresStaffTokenStore
 from civiccast.auth.tokens import validate_staff_token_config
+from civiccast.auth.validation import request_validation_response
 from civiccast.cable.router import public_router as cable_public_router
 from civiccast.cable.router import staff_router as cable_staff_router
 from civiccast.captions.cdn_republish import VodPackageCdnRepublisher
@@ -2322,7 +2324,7 @@ def create_app() -> FastAPI:
             "Error contract (audit QA-005): the `detail` field's SHAPE varies by "
             "error class - a string for domain errors (404/409/503), an object "
             "for structured conflicts (409 with version fields), and an array of "
-            "field errors for validation failures (422, FastAPI standard). "
+            "field errors for validation failures (422, submitted values omitted). "
             "Integrators should branch on status code first, then on the type "
             "of `detail`."
         ),
@@ -2336,6 +2338,7 @@ def create_app() -> FastAPI:
         openapi_url=None if lan_only_station else "/openapi.json",
         lifespan=_app_lifespan,
     )
+    app.exception_handler(RequestValidationError)(request_validation_response)
     if lan_only_station:
         _LOG.info(
             "%s is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: "

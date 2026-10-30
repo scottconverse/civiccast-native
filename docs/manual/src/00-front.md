@@ -47,7 +47,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This manual describes the unpublished 1.0.0-rc.1 candidate. Beta 20 remains the current published release. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
+This manual describes the unpublished 1.0.0-rc.2 candidate. RC1 is the current published pre-release. The manual bundled with a release describes that release; source documentation can describe newer controls. For publication, download, installation, and acceptance status, use the matching release page and the version-specific verification record; do not infer status from this manual.
 
 The October 17 documentation correction reconciles operating instructions and
 refreshes the CLI, API and settings references. Existing installed Help may still

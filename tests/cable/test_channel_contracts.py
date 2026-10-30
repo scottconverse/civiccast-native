@@ -731,6 +731,26 @@ def test_channel_playout_plan_is_empty_without_schedule_rows() -> None:
     assert plan.proof_boundary == "software-schedule-to-playout-plan"
 
 
+def test_published_programs_remain_visible_and_repeat_preview_matches_last_group() -> None:
+    first = _schedule_item("weather", "Weather", _NOW, 75).model_copy(update={"state": "published"})
+    second = _schedule_item("news", "News", _NOW + timedelta(seconds=75), 55).model_copy(
+        update={"state": "published"}
+    )
+    later = _schedule_item("council", "Council", _NOW + timedelta(hours=1), 120).model_copy(
+        update={"state": "published"}
+    )
+    plan = build_channel_playout_plan(
+        "public", schedule_items=[first, second, later], repeat_schedule=True
+    )
+    assert [block.title for block in plan.blocks] == ["Weather", "News", "Council"]
+    assert plan.repeat_block_ids == [f"schedule-{later.id}"]
+    assert len(plan.gap_blocks) == 1
+    continuous = build_channel_playout_plan(
+        "public", schedule_items=[first, second], repeat_schedule=True
+    )
+    assert continuous.repeat_block_ids == [f"schedule-{first.id}", f"schedule-{second.id}"]
+
+
 def test_sample_channel_now_next_reports_fallback_when_live_source_fails() -> None:
     now_next = build_sample_channel_now_next(
         "government",

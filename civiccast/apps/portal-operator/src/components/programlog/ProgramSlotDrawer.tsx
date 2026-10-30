@@ -166,6 +166,7 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
+      second: '2-digit',
     })
   })()
 
@@ -298,6 +299,7 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
               </span>
               <input
                 type="datetime-local"
+                step={1}
                 value={startLocal}
                 onChange={(e) => {
                   startEdited.current = true
@@ -336,6 +338,7 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
                 </span>
                 <input
                   type="datetime-local"
+                  step={1}
                   value={repeatUntilLocal}
                   onChange={(e) => setRepeatUntilLocal(e.target.value)}
                   aria-invalid={repeatUntilInvalid}

@@ -179,3 +179,25 @@ def test_close_with_earlier_actual_end_clamps_to_zero_duration(
     # row was open here so the clamp values are what land.
     assert rows[0].actual_end == t0
     assert rows[0].duration_s == 0
+
+
+def test_horizon_continuation_is_one_play_but_repeat_is_another(
+    reporting_store: ReportingStore,
+) -> None:
+    recorder = StoreAsRunRecorder(reporting_store)
+    start = datetime(2026, 10, 30, tzinfo=UTC)
+    for seconds, offset in ((0, 0), (30, 30), (60, 60), (90, 0)):
+        recorder.record_transition(
+            channel_id="gov",
+            source_kind="program",
+            asset_id="asset-a",
+            source_label="A",
+            actual_start=start + timedelta(seconds=seconds),
+            proof_event_id=f"proof-{seconds}",
+            schedule_item_id="occurrence-a",
+            source_offset_seconds=offset,
+        )
+    recorder.close_open(channel_id="gov", actual_end=start + timedelta(seconds=120))
+    rows = reporting_store.list_as_run("civiccast-station")
+    assert len(rows) == 2
+    assert [row.duration_s for row in rows] == [90, 30]

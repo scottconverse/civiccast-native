@@ -397,6 +397,7 @@ class PostgresEgressStore:
             values = {
                 "enabled": config.enabled,
                 "auto_start": config.auto_start,
+                "repeat_schedule": config.repeat_schedule,
                 "allow_software_fallback": config.allow_software_fallback,
                 "fill_policy": config.fill_policy,
                 "ndi_relay_name": config.ndi_relay_name,
@@ -576,7 +577,9 @@ class PostgresEgressStore:
             existing = session.execute(
                 select(EgressStateDb).where(EgressStateDb.channel_id == row.channel_id)
             ).scalar_one_or_none()
-            values = row.model_dump()
+            values = row.model_dump(
+                exclude={"preparation_status", "preparation_elapsed_seconds", "expected_handoff_at"}
+            )
             if existing is None:
                 session.add(EgressStateDb(**values))
             else:
@@ -607,7 +610,9 @@ class PostgresEgressStore:
             existing = session.execute(
                 select(EgressStateDb).where(EgressStateDb.channel_id == row.channel_id)
             ).scalar_one_or_none()
-            values = row.model_dump()
+            values = row.model_dump(
+                exclude={"preparation_status", "preparation_elapsed_seconds", "expected_handoff_at"}
+            )
             if existing is None:
                 session.add(EgressStateDb(**values))
             else:
@@ -819,10 +824,17 @@ class PostgresEgressStore:
 
 
 def _config_from_rows(row: EgressConfigDb, sink_rows: Sequence[EgressSinkDb]) -> EgressConfig:
+    from civiccast.egress.source_plan import schedule_loop_enabled_from_env
+
     return EgressConfig(
         channel_id=row.channel_id,
         enabled=row.enabled,
         auto_start=row.auto_start,
+        repeat_schedule=(
+            row.repeat_schedule
+            if row.repeat_schedule is not None
+            else schedule_loop_enabled_from_env()
+        ),
         allow_software_fallback=row.allow_software_fallback,
         fill_policy=cast(Literal["slate", "bulletins"], row.fill_policy),
         ndi_relay_name=row.ndi_relay_name,

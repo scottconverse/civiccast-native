@@ -2,7 +2,24 @@
 
 ## [Unreleased]
 
-Unpublished candidate `v1.0.0-rc.1`: administrator agenda setup, bundled offline OCR, managed agenda backup/restore, and shipped dependency coverage. Readiness evidence is tracked in the current handoff; no RC1 publication is claimed.
+Unpublished candidate `v1.0.0-rc.2` addresses the R9 Beta20 operator report.
+
+- Redact submitted credentials and custom validator context from 422 responses.
+- Reduce repeated live-caption inference work while retaining new audio input.
+- Observe internal playlist source changes for current labels and as-run accounting;
+  keep one program across preparation horizons and clip report-window airtime.
+- Support second-level schedule editing, saved per-channel repeat controls and
+  published-plan visibility without API workarounds or service environment edits.
+- Explain preparation/handoff status, preserved setup accounts and loudness windows.
+- Resume verified release downloads and reuse matching existing model packs.
+- Update the manual, built-in help and installation instructions for a new operator.
+
+## [1.0.0-rc.1] - 2026-10-30
+
+Published signed RC1 with administrator agenda setup, offline OCR, managed recovery
+and packaged dependency corrections. Source CI passed. The owner stopped the
+remaining isolated installed acceptance and authorized publication for R7 testing;
+unexecuted acceptance is not claimed passed. See the RC1 verification record.
 
 ## [1.0.0-beta.20] - 2026-10-21
 

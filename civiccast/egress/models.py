@@ -218,6 +218,8 @@ class EgressConfigDb(Base):
     auto_start: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # NULL preserves the legacy station-wide setting until the operator saves.
+    repeat_schedule: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     allow_software_fallback: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
@@ -437,6 +439,7 @@ class EgressConfig(BaseModel):
     # CA-2 channel automation: "this channel runs 24/7" — the lifespan
     # automation driver re-issues a start after app/machine restarts.
     auto_start: bool = False
+    repeat_schedule: bool = False
     # CPU fallback for an explicit hardware encoder request. Default False
     # refuses unavailable explicit hardware instead of silently switching to
     # CPU. Declarative h264 keeps automatic hardware-first/CPU selection.
@@ -605,6 +608,11 @@ class EgressStateRow(BaseModel):
     updated_at: datetime
     pid: Annotated[int | None, Field(default=None, ge=0)] = None
     last_error: Annotated[str | None, Field(default=None, max_length=1000)] = None
+    # Live API projection from the daemon; deliberately not persisted as status
+    # after a service restart, when an old in-memory preparation no longer exists.
+    preparation_status: Literal["preparing", "settling"] | None = None
+    preparation_elapsed_seconds: float | None = None
+    expected_handoff_at: datetime | None = None
 
 
 class EgressHealthSample(BaseModel):
@@ -775,6 +783,8 @@ class EgressSourceSegment(BaseModel):
     #: occurrences may air the same asset, so this cannot be inferred from
     #: ``source_ref`` alone.
     schedule_occurrence_id: Annotated[str | None, Field(default=None, max_length=80)] = None
+    #: Original program position retained even after conforming trims into a new file.
+    source_offset_seconds: Annotated[float | None, Field(default=None, ge=0)] = None
     #: Opaque credential HANDLE for a live segment whose protocol supports one
     #: (WP-07: SRT only). Never the secret itself -- this model is serialized
     #: into ``TakeoverSession.source_plan_json`` (a durable audit row) and into

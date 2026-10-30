@@ -830,6 +830,16 @@ def graph_from_config(
     program = PlaylistLeg(
         label="program",
         subchain_kinds=tuple(segment.kind for segment in program_segments),
+        subchain_sources=tuple(
+            {
+                "kind": segment.kind,
+                "asset_id": segment.source_ref if segment.kind == "program" else None,
+                "label": segment.label,
+                "schedule_item_id": segment.schedule_occurrence_id,
+                "source_offset_seconds": str(segment.source_offset_seconds or 0),
+            }
+            for segment in program_segments
+        ),
         output_gain_db=(
             program_segments[0].board_audio_gain_db
             if program_segments

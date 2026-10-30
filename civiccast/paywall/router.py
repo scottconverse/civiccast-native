@@ -44,13 +44,12 @@ from typing import Any, Literal, Protocol
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
+from civiccast.auth.validation import request_validation_response
 from civiccast.paywall.models import (
     AccessGrant,
     AccessGrantInput,
@@ -306,33 +305,9 @@ class _PaywallStaffRoute(APIRoute):
             try:
                 return await original_handler(request)
             except RequestValidationError as exc:
-                errors = []
-                for error in exc.errors():
-                    safe_error = dict(error)
-                    if "signing_secret" in safe_error.get("loc", ()):
-                        safe_error.pop("input", None)
-                    elif "input" in safe_error:
-                        safe_error["input"] = _redact_signing_secret_values(safe_error["input"])
-                    errors.append(safe_error)
-                return JSONResponse(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    content={"detail": jsonable_encoder(errors)},
-                )
+                return await request_validation_response(request, exc)
 
         return handler
-
-
-def _redact_signing_secret_values(value: object) -> object:
-    """Preserve validation context while redacting nested secret fields."""
-
-    if isinstance(value, dict):
-        return {
-            key: "[redacted]" if key == "signing_secret" else _redact_signing_secret_values(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_redact_signing_secret_values(item) for item in value]
-    return value
 
 
 staff_router = APIRouter(
