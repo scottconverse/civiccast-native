@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -60,6 +61,16 @@ def _build(tmp_path: Path, root: Path, license_path: Path) -> dict[str, object]:
 
 def test_component_identity_is_stable() -> None:
     assert builder.OLLAMA_RUNTIME_COMPONENT == "native-ollama-runtime"
+
+
+def test_installer_self_test_version_matches_the_reviewed_runtime_pack() -> None:
+    source = (ROOT / "civiccast/apps/installer/src-tauri/src/main.rs").read_text(encoding="utf-8")
+    version = re.search(r'const NATIVE_OLLAMA_VERSION: &str = "([^"]+)";', source)
+    assert version is not None
+    assert version.group(1) == builder.OLLAMA_VERSION
+    assert (
+        version.group(1) == builder.load_lock(builder.LOCK_PATH)["artifacts"]["ollama"]["version"]
+    )
 
 
 def test_end_to_end_pack_verifies_and_is_rooted_at_ollama_exe(tmp_path: Path) -> None:

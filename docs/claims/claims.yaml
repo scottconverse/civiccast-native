@@ -48,6 +48,12 @@
 # inputs and producer test/attestation requirements are unchanged. The added
 # transfer job is inventoried but is not an evidence producer. Same-run
 # claims verification must still pass; this renews no installed/hardware claim.
+# PR284: floor-only renewal for the added Ollama regression: 2145 pure and
+# 2384 non-integration tests; floors 2095/2334 retain the 50-test margin.
+# Existing producer, contract, and claim requirements are unchanged.
+# PR284 owner-accepted RC1 audioPTS limitation: preserve failed JUnit and
+# classify only the documented exact failure; renew these six workflow bindings.
+# Producer, contract, and claim requirements remain unchanged; see CURRENT.md.
 schema_version: 1
 
 governed_doc_set:
@@ -162,7 +168,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
+        blob: 38a82b968324c454c7d1e9bb61547075db1a8cba
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -242,7 +248,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
+        blob: 38a82b968324c454c7d1e9bb61547075db1a8cba
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -299,7 +305,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
+        blob: 38a82b968324c454c7d1e9bb61547075db1a8cba
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -364,7 +370,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
+        blob: 38a82b968324c454c7d1e9bb61547075db1a8cba
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -1127,7 +1133,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
+        blob: 38a82b968324c454c7d1e9bb61547075db1a8cba
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -2055,7 +2061,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: ff6dcb2ea8e5f00890e9cad65d9b0402167c920f
+        blob: 38a82b968324c454c7d1e9bb61547075db1a8cba
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000

@@ -1213,9 +1213,9 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # installed runtime is absent, and both native lanes forbid skips.
     # Re-derived by an actual collect-only run on this tree, not by
     # arithmetic: (2084, 2326) -> (2085, 2327).
-    # RC1 native packaging/security regressions: actual collection is 2144 pure,
-    # 2386 total. Executed lanes retain the standard maximum 50-test floor margin.
-    assert (collect("not windows_only"), collect()) == (2144, 2386)
+    # RC1 native packaging/security regressions: actual collection is 2145 pure,
+    # 2387 total. Executed lanes retain the standard maximum 50-test floor margin.
+    assert (collect("not windows_only"), collect()) == (2145, 2387)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
@@ -1450,3 +1450,138 @@ def test_nonrelease_artifacts_expire_after_one_day() -> None:
             for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/upload-artifact"):
                     assert step["with"]["retention-days"] == "1", path.name
+
+
+def test_windows_media_owner_acceptance_keeps_the_failed_junit(tmp_path: Path) -> None:
+    import xml.etree.ElementTree as ET
+    from unittest.mock import patch
+
+    import pytest
+
+    from scripts.verify_windows_media_junit import classify_media_junit
+
+    root = ET.Element("testsuite")
+    case = ET.SubElement(
+        root,
+        "testcase",
+        classname="tests.egress.test_gst_engine_wsl",
+        name="test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air",
+    )
+    failure = ET.SubElement(
+        case,
+        "failure",
+        message=(
+            "AssertionError: CTRL reload committed\n"
+            "WORKER_RESULT {'error': None, 'teardown_clean': True}\n"
+            "assert {66: 1} == {}"
+        ),
+    )
+    failure.text = ">       assert _pes_pts_backward_steps(out_ts) == {}, text"
+    junit = tmp_path / "media.xml"
+    ET.ElementTree(root).write(junit)
+    original = junit.read_bytes()
+    assert classify_media_junit(junit, 1, 1) == (0, 1)
+    assert junit.read_bytes() == original
+    with (
+        patch("scripts.verify_windows_media_junit.__version__", "1.0.0-rc.2"),
+        pytest.raises(ValueError, match="Unaccepted media failure"),
+    ):
+        classify_media_junit(junit, 1, 1)
+    case.remove(failure)
+    ET.ElementTree(root).write(junit)
+    assert classify_media_junit(junit, 0, 1) == (1, 0)
+    workflow, _ = _workflow(WORKFLOWS[1])
+    assert (
+        'classify_media_junit(Path("junit-windows-media.xml"), int(code), len(nodes))' in workflow
+    )
+    assert "::warning::owner-accepted RC1 limitation" in workflow
+    assert "{passed} passed, {accepted} failed-owner-accepted, no skips" in workflow
+    assert "assert _pes_pts_backward_steps(out_ts) == {}, text" in (
+        ROOT / "tests/egress/test_gst_engine_wsl.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_windows_media_owner_acceptance_rejects_other_outcomes(tmp_path: Path) -> None:
+    import copy
+    import xml.etree.ElementTree as ET
+
+    import pytest
+
+    from scripts.verify_windows_media_junit import classify_media_junit
+
+    root = ET.Element("testsuite")
+    case = ET.SubElement(
+        root,
+        "testcase",
+        classname="tests.egress.test_gst_engine_wsl",
+        name="test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air",
+    )
+    failure = ET.SubElement(
+        case,
+        "failure",
+        message=(
+            "AssertionError: CTRL reload committed\n"
+            "WORKER_RESULT {'error': None, 'teardown_clean': True}\n"
+            "assert {66: 1} == {}"
+        ),
+    )
+    failure.text = ">       assert _pes_pts_backward_steps(out_ts) == {}, text"
+    junit = tmp_path / "media.xml"
+    for scenario in (
+        "classname",
+        "name",
+        "repeated-pts",
+        "other-pid",
+        "other-assertion",
+        "other-source",
+        "worker-error",
+        "not-committed",
+        "skip",
+        "error",
+        "second-failure",
+        "duplicate-case",
+        "exit0",
+        "exit2",
+        "exit3",
+        "exit4",
+        "exit5",
+        "incomplete",
+    ):
+        changed = copy.deepcopy(root)
+        node = changed.find("testcase")
+        failed = node.find("failure")
+        code, minimum = 1, 1
+        if scenario in ("classname", "name"):
+            node.set(scenario, "some_other_test")
+        elif scenario in ("repeated-pts", "other-pid", "other-assertion"):
+            replacement = {
+                "repeated-pts": "assert {66: 2} == {}",
+                "other-pid": "assert {65: 1} == {}",
+                "other-assertion": "assert False",
+            }[scenario]
+            failed.set(
+                "message", failed.get("message").replace("assert {66: 1} == {}", replacement)
+            )
+        elif scenario == "other-source":
+            failed.text = ">       assert False"
+        elif scenario in ("worker-error", "not-committed"):
+            failed.set(
+                "message",
+                failed.get("message").replace(
+                    "'error': None" if scenario == "worker-error" else "CTRL reload committed",
+                    "absent",
+                ),
+            )
+        elif scenario in ("skip", "error"):
+            ET.SubElement(node, "skipped" if scenario == "skip" else "error")
+        elif scenario == "second-failure":
+            ET.SubElement(node, "failure", message="another failure")
+        elif scenario == "duplicate-case":
+            changed.append(copy.deepcopy(node))
+        elif scenario.startswith("exit"):
+            code = int(scenario[-1])
+        else:
+            minimum = 2
+        ET.ElementTree(changed).write(junit)
+        with pytest.raises(ValueError):
+            classify_media_junit(junit, code, minimum)
