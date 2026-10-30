@@ -309,6 +309,19 @@ def test_sample_rehearsal_source_probe_validates_the_local_file_not_the_network(
     live_source_store = LiveSourceStore(session_factory)
     postgres_store = PostgresAssetStore(session_factory)
 
+    # New sample creation uses a private recording and no longer creates the
+    # old placeholder camera. Preserve coverage for existing installations by
+    # explicitly seeding the unchanged legacy source this probe recognizes.
+    live_source_store.create(
+        LiveSourceCreate(
+            live_source_id=SAMPLE_REHEARSAL_SOURCE_ID,
+            channel_id="government",
+            name="CivicCast sample test source",
+            source_type="rtmp",
+            endpoint_url="rtmp://127.0.0.1/live/civiccast-sample-rehearsal",
+        )
+    )
+
     sample_bytes = b"validated-bundled-sample-media"
 
     def write_bundled_sample(path: Path) -> None:

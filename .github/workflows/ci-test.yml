@@ -895,14 +895,14 @@ jobs:
         # tests; preserve the 50-test margin (2218). The exact native closure
         # baseline regression adds one portable case:2269 non-integration,
         # floor2219 keeps that same margin.
-        # Current native CI collection: 2384 Windows non-integration tests;
-        # floor 2334 keeps the standard 50-test margin.
+        # Current native CI collection: 2385 Windows non-integration tests;
+        # floor 2335 keeps the standard 50-test margin.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2334 \
+            --floor 2335 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
