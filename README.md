@@ -8,7 +8,7 @@ has no per-minute software fee.
 
 ## RC2 development
 
-`v1.0.0-rc.2` is an **unpublished candidate** addressing the R9 Beta20 operator findings: credential redaction, caption workload, as-run boundaries, scheduling/repeat controls and matching manual/help. Human language review remains pending; no human-validated translation claim is made.
+`v1.0.0-rc.2` is an **unpublished candidate**, not available as a public release, addressing the R9 Beta20 operator findings: credential redaction, caption workload, as-run boundaries, scheduling/repeat controls and matching manual/help. Human language review remains pending; no human-validated translation claim is made.
 
 ## Current published package
 

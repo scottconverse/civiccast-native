@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -24,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from civiccast.auth.validation import PUBLIC_VALIDATION_MESSAGES
 from civiccast.db import Base
 from civiccast.egress.schema_currency import (
     EGRESS_SCHEMA_VERSION,
@@ -45,7 +47,9 @@ def reject_control_chars(value: str, *, field_name: str) -> str:
     means "no overlay" for the lower-third text) and padding is preserved, not
     stripped -- callers that want that behavior pass the raw value through."""
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
-        raise ValueError(f"{field_name} cannot contain control characters")
+        raise PydanticCustomError(
+            "control_characters", PUBLIC_VALIDATION_MESSAGES["control_characters"]
+        )
     return value
 
 

@@ -1,6 +1,7 @@
 # CivicCast FAQ
 
-Questions and practical answers for CivicCast Beta 20.
+Questions and practical answers for CivicCast. Source documentation describes
+the unpublished RC2 candidate; public downloads remain RC1.
 
 ## What is CivicCast?
 
@@ -176,7 +177,7 @@ tokens, passwords, private keys, resident data, or private meeting content.
 
 ## Release status and evidence
 
-Beta 20 is the [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20); its [verification record](docs/releases/v1.0.0-beta.20-verification.md) identifies the signed package and scoped checks.
+RC1 is the [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.1); its [verification record](docs/releases/v1.0.0-rc.1-verification.md) identifies the signed package and scoped checks.
 
 Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
 

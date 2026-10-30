@@ -36,7 +36,17 @@ def test_credential_validation_does_not_echo_input(path, payload, caplog) -> Non
     assert all(error["loc"][0] == "body" for error in errors)
 
 
-@pytest.mark.parametrize("kind", ["value_error", "union_tag_invalid", "json_invalid"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "value_error",
+        "union_tag_invalid",
+        "json_invalid",
+        "control_characters",
+        "recording_location",
+        "empty_publish_selection",
+    ],
+)
 def test_validation_message_and_context_cannot_echo_secret(kind) -> None:
     app = create_app()
 

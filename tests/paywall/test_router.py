@@ -459,17 +459,15 @@ class TestConfigCrud:
         assert stored.signing_secret == _SECRET
 
     @pytest.mark.parametrize(
-        ("payload", "expected_loc", "expected_safe_input"),
+        ("payload", "expected_loc"),
         [
             (
                 [{"signing_secret": "top-level-list-secret-sentinel"}],
                 ["body"],
-                [{"signing_secret": "[redacted]"}],
             ),
             (
                 {"unexpected": {"nested": {"signing_secret": "nested-dict-secret-sentinel"}}},
-                ["body", "unexpected"],
-                {"nested": {"signing_secret": "[redacted]"}},
+                ["body", "(extra field)"],
             ),
         ],
     )
@@ -477,7 +475,6 @@ class TestConfigCrud:
         self,
         payload: object,
         expected_loc: list[str],
-        expected_safe_input: object,
     ) -> None:
         client = _client()
 
@@ -492,7 +489,8 @@ class TestConfigCrud:
         assert error["type"]
         assert error["loc"] == expected_loc
         assert error["msg"]
-        assert error["input"] == expected_safe_input
+        assert "input" not in error
+        assert "ctx" not in error
 
     def test_put_different_config_id_same_station_is_409(self) -> None:
         client = _client()

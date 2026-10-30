@@ -19,6 +19,12 @@ hashes are change-detection inputs for source review, not the original spike's
 bytes. The historical D6 trust-root language below is not an active
 owner-approval requirement.
 
+RC2 source review (2026-10-30): the engine/graph changes add selected-source
+metadata and output-boundary observations. Focused native three-source and
+prerolled replacement checks passed in the development runtime. Renewed source
+bindings detect future drift; they do not qualify RC2 for session-0, boot or
+installed-service behavior. The July observation remains historical.
+
 ## The experiment
 
 A temporary Windows service (`CivicCastSession0Spike`: NSSM wrapper, **LocalSystem,

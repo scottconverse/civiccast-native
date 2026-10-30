@@ -1480,7 +1480,8 @@ def test_windows_media_owner_acceptance_keeps_the_failed_junit(tmp_path: Path) -
     junit = tmp_path / "media.xml"
     ET.ElementTree(root).write(junit)
     original = junit.read_bytes()
-    assert classify_media_junit(junit, 1, 1) == (0, 1)
+    with patch("scripts.verify_windows_media_junit.__version__", "1.0.0-rc.1"):
+        assert classify_media_junit(junit, 1, 1) == (0, 1)
     assert junit.read_bytes() == original
     with (
         patch("scripts.verify_windows_media_junit.__version__", "1.0.0-rc.2"),

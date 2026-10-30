@@ -54,6 +54,10 @@
 # PR284 owner-accepted RC1 audioPTS limitation: preserve failed JUnit and
 # classify only the documented exact failure; renew these six workflow bindings.
 # Producer, contract, and claim requirements remain unchanged; see CURRENT.md.
+# RC2 R9: renew engine/graph/test source tripwires for source-output observations.
+# Focused native three-source and prerolled replacement checks passed; historical
+# hardware/session-0 observations stay historical, not transferred to RC2.
+# Current required Windows media CI still executes the bound test file.
 schema_version: 1
 
 governed_doc_set:
@@ -465,7 +469,7 @@ entries:
     inputs:
       prose:
         path: docs/evidence/native-engine-gate.md
-        blob: ce6c0d9cf146ef6ec84031d08a7412fa99e6ffc6
+        blob: 80038afe884c19efe9c9f2f9dccb66db3d3a5b78
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/ worker.py + engine.py + graph.py at
       # integration-branch HEAD, zero modifications — the exact files WSL
@@ -1106,13 +1110,13 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: e005e4f560fffc961f6b643c81d8f46858c623c2
+          blob: 968422d7ef31f641b56cda9f977825752e7e4c70
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 54fc1e5dd16c1fcdbe237b713dd3a9ed9ebbe638
+          blob: d3044a541b976f8b03e364c61a74622bf19b61e4
         - path: civiccast/egress/gst/control.py
           # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
           # restart timeline floor; source tests cover long-running drift.
@@ -1122,7 +1126,7 @@ entries:
           blob: 79031e2589c818c3763e825b55827d700b95d2ea
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 6d00f9d736bb634b5a3a3914c7d25f7635a0ece5
+        blob: 6dcc17000e49f28131e6358bccf3e079f5cd708c
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1155,7 +1159,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 54fc1e5dd16c1fcdbe237b713dd3a9ed9ebbe638
+          blob: d3044a541b976f8b03e364c61a74622bf19b61e4
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -1240,7 +1244,7 @@ entries:
     inputs:
       prose:
         path: docs/evidence/session0-service-broadcast.md
-        blob: d40cb8262fb72e3f26d388c3b8a56cf4869d4c3e
+        blob: 65ff1c559c714ac7a4f0ab751fc95775331073b7
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/{worker,engine,graph,control}.py copied
       # unmodified from program/native-windows @ 3b4b245...". All four are
@@ -2034,13 +2038,13 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: e005e4f560fffc961f6b643c81d8f46858c623c2
+          blob: 968422d7ef31f641b56cda9f977825752e7e4c70
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 54fc1e5dd16c1fcdbe237b713dd3a9ed9ebbe638
+          blob: d3044a541b976f8b03e364c61a74622bf19b61e4
         - path: civiccast/egress/gst/control.py
           # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
           # restart timeline floor; source tests cover long-running drift.
@@ -2050,7 +2054,7 @@ entries:
           blob: 79031e2589c818c3763e825b55827d700b95d2ea
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 6d00f9d736bb634b5a3a3914c7d25f7635a0ece5
+        blob: 6dcc17000e49f28131e6358bccf3e079f5cd708c
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py

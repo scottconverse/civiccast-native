@@ -17,6 +17,12 @@ The registry's current code hashes are change-detection inputs for source
 review; they do not identify the original spike's bytes. The historical D6
 trust-root language below is not an active owner-approval requirement.
 
+RC2 source review (2026-10-30): the engine/graph changes add selected-source
+metadata and output-boundary observations. Focused native three-source and
+prerolled replacement checks passed in the development runtime. The registry
+bindings were renewed for these changed files and tests; this does not renew
+the historical hardware result or establish installed RC2 acceptance.
+
 ## Gate behaviors (charter: switching, recovery, multichannel)
 
 1. **Hot source-swapping** — `SWAPS=4 INTERVAL=2 python worker.py demo-graph.json`

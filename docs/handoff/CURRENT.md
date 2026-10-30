@@ -42,15 +42,28 @@ F3 branding was not reproduced. Existing tester orchestration incidents are reco
 as separate. No new model bytes or station operations. RC1 accepted PTS limitation
 remains historical/accepted; no repair loop was reopened.
 
-PR https://github.com/scottconverse/civiccast-native/pull/285 is open; first head
-188706fd pushed 86 KiB, no LFS/models. Both required input-transfer run-once helpers
-completed successfully and exited. Hosted CI caught a duplicate handwritten frontend
-state type and a release-posture guard that only parsed beta tags. Client now uses
-the generated state type; actual `npm run build` passes (earlier `tsc --noEmit` did
-not build referenced projects). Posture control now accepts RC release metadata and
-still checks all prior betas. Collection failure caused dependent claim failures;
-no test execution was waived. One ordinary follow-up push follows focused checks.
-No installer build/publication dispatched. No owned local background helpers/jobs.
+PR https://github.com/scottconverse/civiccast-native/pull/285 is open. Follow-up
+corrections to head 56d2923c address the 43 failed required Unit cases:
+current Alembic 0098 fixtures; reviewed engine/graph/test claim tripwires with
+historical evidence limitations preserved; public RC1 architecture/support/manual
+pointers; explicit RC1-only acceptance fixture; and useful static operator validation
+messages without submitted values/context. Unknown extra-field names remain hidden.
+Public manual PDF/DOCX copies are the existing signed RC1 kit companions, not RC2
+installed evidence. Source manual and packaged Help remain the RC2 edition.
+
+Focused correction log: work/rc2-unit-correction-focused.log (45 passed; 9 follow-ups,
+including inherited local staff-token configuration); corrected isolated test environment
+and remaining copy yielded 20 passed in work/rc2-validation-followup.log. Updated
+claim bindings/evidence pass 2 focused verifier cases in work/rc2-claims-rebind-focused.log.
+Ruff passes. No skipped producer or waived required test. No RC2 installer exists.
+
+Old current-head Unit run 41018363680 failed; same-run claims failed as a consequence
+and native transfer is still queued. Prior waiter 22081/PID24784 is terminal.
+No local Runner.Listener/Worker is active. Next: one ordinary signed commit/push,
+new-head required CI with its two reviewed-input run-once transfers, one waiter,
+then normal merge on applicable green CI. No model upload, station action or RC2
+publication is authorized by this state file. Owner has not approved new delegation;
+no agents launched during these corrections.
 
 ## Historical RC1 state (superseded assignment; evidence retained)
 
