@@ -34,6 +34,8 @@ const SERVICE_URL: &str = "http://127.0.0.1:8000";
 const SERVICE_HEALTH_ADDR: &str = "127.0.0.1:8000";
 const RUNTIME_HOST_MUTEX_ADDR: &str = "127.0.0.1:38474";
 const CIVICCAST_VERSION: &str = "1.0.0-rc.1";
+// Must match the reviewed runtime pack, not the older model acquisition version.
+const NATIVE_OLLAMA_VERSION: &str = "0.40.13";
 const INSTALLER_SHUTDOWN_MARKER: &str = "shutdown-request";
 
 
@@ -784,6 +786,57 @@ mod tests {
             }
             let _ = fs::remove_file(&self.stdout_path);
             let _ = fs::remove_file(&self.stderr_path);
+        }
+    }
+
+    #[test]
+    fn native_ollama_cli_version_accepts_captured_no_daemon_output() {
+        // Actual fresh LocalSystem RC1 installation output, before a daemon exists.
+        let captured = "Warning: could not connect to a running Ollama instance\nWarning: client version is 0.40.13\n";
+        assert!(native_ollama_cli_version_matches(0, captured));
+        assert!(native_ollama_cli_version_matches(
+            0,
+            &captured.replace('\n', "\r\n")
+        ));
+        assert!(native_ollama_cli_version_matches(
+            0,
+            "ollama version is 0.40.13\n"
+        ));
+    }
+
+    #[test]
+    fn native_ollama_cli_version_refuses_wrong_or_unrelated_output() {
+        for output in [
+            "ollama version is 0.30.6",
+            "ollama version is 0.40.130",
+            "unrelated output mentioning 0.40.13",
+            "Warning: could not connect to a running Ollama instance",
+            "Warning: client version is 0.40.13",
+            "Warning: could not connect to a running Ollama instance\nWarning: client version is 0.30.6",
+            "ollama version is 0.40.13\nunrelated output",
+            "",
+        ] {
+            assert!(!native_ollama_cli_version_matches(0, output), "{output:?}");
+        }
+        for code in [-1, 1, 67] {
+            assert!(!native_ollama_cli_version_matches(
+                code,
+                "ollama version is 0.40.13"
+            ));
+            assert!(!native_ollama_cli_version_matches(code, "Warning: could not connect to a running Ollama instance\nWarning: client version is 0.40.13"));
+        }
+    }
+
+    #[test]
+    fn native_ollama_daemon_version_still_requires_the_exact_server_response() {
+        validate_native_ollama_version_response(r#"{"version":"0.40.13"}"#).unwrap();
+        for body in [
+            r#"{"version":"0.30.6"}"#,
+            r#"{"version":"0.40.130"}"#,
+            r#"{"client_version":"0.40.13"}"#,
+            "Warning: could not connect to a running Ollama instance\nWarning: client version is 0.40.13",
+        ] {
+            assert!(validate_native_ollama_version_response(body).is_err(), "{body:?}");
         }
     }
 
@@ -4939,16 +4992,7 @@ impl NativeOllamaSelfTestServer {
                     let body = response.text().map_err(|error| {
                         format!("Could not read native AI version response: {error}")
                     })?;
-                    let version: serde_json::Value =
-                        serde_json::from_str(&body).map_err(|error| {
-                            format!("Native AI version response was invalid: {error}")
-                        })?;
-                    if version.get("version").and_then(serde_json::Value::as_str) != Some("0.30.6")
-                    {
-                        return Err(format!(
-                            "Staged native AI runtime reported an unreviewed version: {body}"
-                        ));
-                    }
+                    validate_native_ollama_version_response(&body)?;
                     return Ok(());
                 }
             }
@@ -5541,6 +5585,34 @@ fn finalize_captions_large_acquisition(_acquisition_root: &Path) -> Result<(), S
     Ok(())
 }
 
+/// Check the executable version without requiring the daemon to be running yet.
+/// Daemon readiness and real model inference remain separate activation checks.
+fn native_ollama_cli_version_matches(exit_code: i32, output: &str) -> bool {
+    if exit_code != 0 {
+        return false;
+    }
+    let lines: Vec<&str> = output.trim().lines().map(str::trim).collect();
+    let version = format!("ollama version is {NATIVE_OLLAMA_VERSION}");
+    let client = format!("Warning: client version is {NATIVE_OLLAMA_VERSION}");
+    lines == [version.as_str()]
+        || lines
+            == [
+                "Warning: could not connect to a running Ollama instance",
+                client.as_str(),
+            ]
+}
+
+fn validate_native_ollama_version_response(body: &str) -> Result<(), String> {
+    let version: serde_json::Value = serde_json::from_str(body)
+        .map_err(|error| format!("Native AI version response was invalid: {error}"))?;
+    if version.get("version").and_then(serde_json::Value::as_str) != Some(NATIVE_OLLAMA_VERSION) {
+        return Err(format!(
+            "Staged native AI runtime reported an unreviewed version: {body}"
+        ));
+    }
+    Ok(())
+}
+
 /// The pre-activation runtime/caption/AI self-test CHECKS -- everything
 /// `run_native_pre_activation_self_test` used to do except writing the
 /// receipt. Extracted (K1 fix) so the flat-layout activation path can run
@@ -5610,7 +5682,7 @@ fn run_native_pre_activation_checks(staging: &Path) -> Result<(), String> {
             "dependencies/ollama/ollama.exe",
             &["--version"],
             "native-ollama",
-            "0.30.6",
+            NATIVE_OLLAMA_VERSION,
         ),
     ];
     for (relative, arguments, name, expected) in checks {
@@ -5619,7 +5691,12 @@ fn run_native_pre_activation_checks(staging: &Path) -> Result<(), String> {
             .to_str()
             .ok_or_else(|| format!("Staged native runtime path is not Unicode: {relative}"))?;
         let (exit_code, output) = run_bounded_command(program_text, name, arguments, 30)?;
-        if exit_code != 0 || !output.to_lowercase().contains(&expected.to_lowercase()) {
+        let matches = if name == "native-ollama" {
+            native_ollama_cli_version_matches(exit_code, &output)
+        } else {
+            exit_code == 0 && output.to_lowercase().contains(&expected.to_lowercase())
+        };
+        if !matches {
             return Err(format!(
                 "Staged native runtime self-test failed for {relative} (exit {exit_code}): {}",
                 output.trim()

@@ -6,8 +6,10 @@ Owner request: merged corrections, one consolidated signed RC1 candidate, isolat
 installed acceptance and cleanup. STOP before RC1 tagging/publication/public asset
 replacement. Beta20 publication is complete. Never probe or modify the host station.
 
-Candidate: C:/Dev/cc-pdf-processing, fix/rc1-installer-space. RC1 implementation is merged in2be5b99d; original base was main
-25c9dcc4a5202339f77d2ff165a3e534dd772d95 (PR281). Version identity: 1.0.0-rc.1; manual parser accepts dotted RC syntax. Preserve unrelated Windows recovery documents.
+Candidate: C:/Dev/cc-pdf-processing, fix/rc1-ollama-probe, base merged3addb10e.
+Version1.0.0-rc.1. Signed3addb10e kit FAILED real clean installation and is NOT
+ready. Bounded correction fixes stale installer Ollama version checks below.
+Preserve unrelated Windows recovery documents; one active candidate.
 
 Required outcomes: administrator UI agenda enablement/tenant persistence; bundled
 pinned offline Tesseract/English/DLLs/licenses; automatic managed agenda backup and
@@ -51,24 +53,128 @@ No third blind retry. Runner12243 and waiter32300 are terminal; no owned worker.
 Completed component packs+five builder reports moved safely out of runner cleanup
 to C:/CivicCastTester/rc1-preserved-components/2be5b99d9ea402d4b0756975ae98cb70cb1e9b35.
 
-Bounded follow-up fix prepared on fix/rc1-installer-space:
-- NSIS required-sidecar declaration6600000KiB (6758400000bytes),9.98% over
-  actual reports. Actual-report proof chat work/rc1-installer-size-proof.json.
-  Keep exact candidate size guard, optional-CUDA exclusion and measured ARP size.
-- PyAV reuse directory creation idempotent; exact wheel size/SHA checks unchanged.
-- Four affected existing policy checks pass; Ruff/format/diff pass. No new tests,
-  dependencies, model downloads, renderer rebuild or runtime component changes.
-Next: focused PR/required CI/normal merge, then finish one consolidated RC1 kit
-with corrected installer sizing. Reuse unaffected checks/model packs and retained
-source/manual evidence; no tag/publication. All installed acceptance remains pending.
+Follow-up PR283 normally squash-merged October30 00:29:03Z.
+Final head2e3be4ceae382e861b28552d6f07f7bf5552f0d5; merged source
+3addb10e0a8cdfaafd5854c4643d503721e95b1a. Identical git tree
+ff8ae87370a34c4950aad08b13ecbc56587c18d0. ALL required checks passed,
+including unit+claims. Optional randomized also passed. WebKit video.play timeout
+resolved on ONE failed-job retry, unchanged source/assertions; trace retained.
+Snapshot chat work/rc1-pr283-final.json. No review comments/findings. CI waiter
+18363/PID23880 terminal. Corrected NSIS6600000KiB bound retains exact size guard;
+PyAV scratch mkdir idempotent, wheelSHA unchanged. Four focused checks passed.
+
+Corrected signed build40980003673 dispatched against exact merge3addb10e,
+no public upload/release. Protected Beta20 station supplies unchanged model packs.
+Headroom before dispatch11.49GiB RAM/140.09GiB disk. One hidden workflow waiter
+session25858/PID36516,parent31460,start2026-10-30T00:30:08Z:
+gh run watch40980003673 --exit-status --interval45 -> chat
+work/rc1-build-40980003673-wait.log; Ctrl-C only cancels watcher.
+K1 session31622 terminal SUCCESS00:33:48Z; exact-source manual also SUCCESS.
+Owned installer-assets runner session59068 started00:34:18Z, job123818941433.
+Runner process identity receipt chat work/rc1-build-40980003673-runner-assets.json.
+Terminal expected after installer-assets only.
+Next start separate run-once listener for OWNED queued installer-assets, then
+kit assembly; do not leave persistent runner for automatic GateA jobs.
+For explicit cancellation use gh run cancel40980003673, wait worker exit, then
+Ctrl-C owned listener/watcher if needed; verify identities first.
+Build40980003673 attempt1 TERMINAL FAILED00:42:15Z, no installer/completekit.
+K1/manual succeeded. App pack built+verified: b2c67e0e6c3a816a3f2198158c23a230530ca04a2bd5dc928c88e09b7d1e2f79,
+582639306bytes. Server pack refused existing cached OpenSSL libcrypto DLL:
+C:/actions-runner/_work/_temp/civiccast-server-pack-cache/extracted/openssl-security-cache/openssl-3.5.9-runtime.
+Exact hash guard remains intact. Failure log chat work/rc1-build-40980003673-failure.log.
+Assets runner59068 and workflow waiter25858 terminal; no active owned runner.
+Bounded offline_ocr agent diagnoses actual/expected hashes/cache cause before retry.
+Diagnosis: DLL absent, both overlay cache leaves EMPTY (not modified DLL proof).
+Trusted two archives and all17memberpins pass. Root verified no runner, exact
+scope/non-reparse/empty and deleted ONLY two leaves NONRECURSIVELY. Receipts
+chat work/rc1-cache-diagnosis/{empty-overlay-cache-diagnosis,empty-leaf-removal}.json.
+Attempt2 same source dispatched FAILED JOBS ONLY; K1/manual retained success.
+Assets runner session19199 started00:46:49Z, running correct assetsjob00:46:51Z;
+one waiter session36440 -> work/rc1-build-40980003673-attempt2-wait.log.
+Exact process identities in work/rc1-build-40980003673-attempt2-processes.json.
+Same cancellation procedure, verify current identities. Attempt2 COMPLETE SUCCESS:
+assets01:11:34Z, assembly01:15:32Z. Both runner19199/64877 and waiter36440 terminal.
+Final complete kit C:/CivicCastTester/kit-staging/3addb10e0a8cdfaafd5854c4643d503721e95b1a.
+Installer261527144bytes, SHA2568144e6486001c05306a59002f71dcc656c39f79a593fadffdfbee920e9942e68,
+Valid ScottConverse Authenticode+Microsoft timestamp (chat work/rc1-final-installer-identity.json).
+All5pack verification, sizeguard, bootstraptrust, packagedGstsmoke and signing pass.
+Final security rebind chat work/rc1-packaged-security/final-source-reconciliation.json:
+all dependency hashes unchanged, prior153+12-vendor scan reused, no repeat scan.
+Automatically queued INFORMATIONAL GateA40984757876 cancellation requested to
+avoid duplicate parallel acceptance; verify terminal once, no persistent runner.
+
+Actual isolated installation FAILED before browser/OCR/recovery acceptance.
+Guest55cc46ee-87c5-4c40-8205-9c666d315f22,hostname5FDAD1C7-5457-4,
+LocalSystem,8GiB, signed setupSHA8144e648...942e68; source3addb10e.
+Install exit123 after d4 activation returned67: bundled Ollama0.40.13 --version
+returned0 and its actual no-daemon/client-version warning. Installer still
+expected0.30.6. Subsequent daemon /api/version also had stale0.30.6; both needfix.
+Failure contained: no service registered, installed runtime rolled back, no PG
+marker, browser execution or backup archive; installer/lifecycle processes ended.
+Guest logs+failure-preservation.json retained at
+C:/CivicCastTester/rc1-installed-3addb10e-20261029/failed-install-evidence and parent.
+Unused generated test secrets were not exported (no account/archive was created).
+Original/checkpoint/recording fixtures remain host-side. Owned guest STOPPED and
+verified ABSENT from running sandboxes, guest-terminal.json01:43:40Z. No other
+VM or host station touched. Stage waiter54982 terminal. No active guest/runner.
+Failed signed installer+small build reports retained and installerSHA rechecked
+at chat outputs/rc1-failed-3addb10e; old fullkit may be pruned by corrected build.
+Protected Beta20 complete rollback remains unchanged. Auto informational GateA
+40984757876 CANCELLED/COMPLETED (force-cancel after normal request stayedqueued).
+
+Bounded source fix prepared by agenda_recovery, root affected-diff reviewed:
+- One installer NATIVE_OLLAMA_VERSION0.40.13 matches authoritative runtime lock.
+- Both CLI self-test and actual daemon-version response use it. CLI accepts exact
+  real no-daemon two-line output or exact normalversion only with exit0; wrong/
+  suffix/partial/unrelated output and failed execution refused. Daemon HTTP and
+  actual model inference checks remain intact.
+- New existing-suite Python regression binds installer pin to builder+lock;
+  9focused Python checks pass, Ruff/diffcheck/rustfmt syntaxpass. Three Rust
+  regressions prepared for required WindowsCI, NOT locally executed. No local
+  full installer build or host daemon/station probes.
+Next: commit/push focused correction, requiredCI/normalmerge, corrected signed
+candidate (real package-invalidating activation defect); then all still-pending
+installed acceptance/cleanup. Reuse unaffected packs/source/manual/security
+proofs. Before assets job remove ONLY verifiedempty OpenSSL/security-overlay
+cache leaves if runnercleanup left them (see diagnosis); archive/memberpins stay.
+No tag/publication. Human language review pending NONBLOCKING as noted above.
+Final3add manual receipt source37d386db...same reviewed source, hashesverified:
+PDF ade428ea7dd15ab1589eb843986d227669920a581d92ddeba41be04087c7d5bb1,
+DOCX d93d28539890d13828f40bc3dabada6cc6891fce5754b9e324839586d0b82744e.
+Final-source dependency binding at chat work/rc1-packaged-security/final-source-reconciliation.json.
 
 Final2be5b99d manual PDF/DOCX+receipt retained at chat outputs/rc1-final-manual-2be5b99d;
 file sizes/hashes and render manifest verified. Source37d386db... equals prior
 visually reviewed manual. PDFsha e6c290684e778dbe10156a16f781be4618e6f1b703ab791461201fdbcf6f464a;
 DOCXsha379a2e1e25893475500d9fc467eb034337b99b10dc9b9624a903e6df7bfe7271.
 Isolated acceptance inputs ready; C:/CivicCastTester/rc1-installed-2be5b99d-20261029/
-acceptance.wsb is PREPARED ONLY and must be rebound to final signed-source kit.
-No guest launched. Station untouched; protected Beta20/rollback kits unchanged.
+acceptance.wsb is obsolete preparation only. Current8GiB configs bound to3addb10e
+at C:/CivicCastTester/rc1-installed-3addb10e-20261029/acceptance.wsb and
+C:/CivicCastTester/rc1-upgrade-3addb10e-20261029/acceptance.wsb. Neither launched.
+Prepared browser check now clicks Page4 (not first page), asserts #page=4 and
+requires root to visually inspect actual page4 screenshot; syntax checked only.
+Failed main guest stopped as recorded above; upgrade guest not launched. Station untouched; protected Beta20/rollback kits unchanged.
+Recovery-secret export helpers prepared in chat work/rc1-acceptance; syntax passed.
+Host RSA key generated at C:/CivicCastTester/rc1-recovery-key-20261029 with
+CurrentUser-DPAPI private key and user/System-only ACL, OUTSIDE guest mappings.
+Only public key copied into acceptance inputs; SHA256
+c462d5ed924744f62b6de0cdb4e2358d4a858325cdf365fc03706d7a0e31ce2e.
+Prepared main lifecycle no longer repeats same-version RC1 reinstall; separate
+Beta20-to-RC1 upgrade is the required preservation check. Changed helper syntax
+passes; neither guest executed. Guest export/host retention NOT executed.
+Require retained encrypted backup and
+host-protected passphrase receipt before any eventual owned-guest disposal.
+Latest headroom17:45MT:10.88GiB available RAM,144.29GiB free disk. Recheck before
+build/guest; prepared12GiB guest exceeds current free RAM, use8GiB if still enough
+headroom or wait for owned build release. Never stop owner applications.
+Packaged security reconciliation found12 nested setuptools vendored distributions
+not separately enumerated by static inventory; one focused actual-version audit
+reports zero findings. Supplemental inventory/pack hash binding COMPLETE at chat work/rc1-packaged-security.
+All83top-leveldependencies match;249selectivechecks/218files PASS;246GStreamer
+closure entries match manifest/report. Twelve exact vendoredversions zero findings
+and zero skips. Fullsignature verification reused from originalbuilder reports,
+not independently repeated. No product/source changes for this; current recurring
+static pipeline omits nested cohort, candidate supplement explicitly covers it.
 
 Last fully tested head5bbf881015d39a1a5ba611075887da21e8c95db6.
 Historical pre-merge failures below are resolved; signed build/installed acceptance pending.
