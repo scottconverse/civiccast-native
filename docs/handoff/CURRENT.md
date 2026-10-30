@@ -132,9 +132,34 @@ Bounded source fix prepared by agenda_recovery, root affected-diff reviewed:
   9focused Python checks pass, Ruff/diffcheck/rustfmt syntaxpass. Three Rust
   regressions prepared for required WindowsCI, NOT locally executed. No local
   full installer build or host daemon/station probes.
-Next: commit/push focused correction, requiredCI/normalmerge, corrected signed
-candidate (real package-invalidating activation defect); then all still-pending
-installed acceptance/cleanup. Reuse unaffected packs/source/manual/security
+PR284 OPEN: https://github.com/scottconverse/civiccast-native/pull/284
+Headdf2d90a4227419eddae0d4203e75f54acba14b0b, requiredCI running.
+One hidden waiter session13693/PID36928,parent21872,start01:47:12Z,
+gh pr checks284 --watch --interval45 -> chat work/rc1-pr284-ci-wait.log.
+Ctrl-C stops watcher only. Both input-transfer run-once runners10461/89502
+succeeded/terminal; no persistent runner or guest.
+First head: Windows Rust compile+new regressions PASS. Lint failed only formatter
+on new Python regression; root ran pinned Ruff0.15.12 format+check, now passes.
+Windows native job failed BEFORE tests: Chocolatey feed504 for FFmpeg9.0.2,
+then ffmpeg command missing. No testresults/zero pass claim; no workflow change
+or retry of this obsolete head. Logs chat work/rc1-pr284-{lint,native,public}-failure.log.
+Public WebKit again failed transient readyState>=3 on2second clip (got2).
+Bounded trace diagnosis complete: play resolved40ms, everybuffer-state poll2,
+allHLS/VTT200; trace has no ended/currentTime evidence, so no claimed endcause.
+Existing embed test now latches2presentedframes/media-time advance and requires
+>0.1splayback advance, nullplay/mediaerrors; caption/mobile/revoke assertions
+unchanged. Focused existing Chromiumtest1PASS13.5s, UIbuild/ESLint/diffpass.
+Local VITE_CIVICCAST_API_PROXY_TARGET used owned503server at56200, freshpreview;
+0unmockedrequests received, no8000target configured (not packetcapture claim).
+All owned test helpers stopped. Local exactWebKit absent, no download; required
+CI must verify WebKit. Root reviewed affecteddiff and batches with formatter.
+No productfeature change, assertion weakening, optional gates or broad local loop.
+Resource note before NEXT guest:8GiB cannot hold largest9,608,338,848-byte
+single model blob plus Windows/runtime. Original12GiB plan is appropriate if
+headroom permits; last host free13.12GiB after stoppedguest. Recheck beforelaunch,
+preserve ownerapps/station, no concurrent guest/build. Do not blindly reuse8GiB.
+Next: requiredCI/normalmerge, corrected signed candidate (actual package-invalidating
+activation defect), then all still-pending installed acceptance/cleanup. Reuse unaffected packs/source/manual/security
 proofs. Before assets job remove ONLY verifiedempty OpenSSL/security-overlay
 cache leaves if runnercleanup left them (see diagnosis); archive/memberpins stay.
 No tag/publication. Human language review pending NONBLOCKING as noted above.

@@ -68,7 +68,9 @@ def test_installer_self_test_version_matches_the_reviewed_runtime_pack() -> None
     version = re.search(r'const NATIVE_OLLAMA_VERSION: &str = "([^"]+)";', source)
     assert version is not None
     assert version.group(1) == builder.OLLAMA_VERSION
-    assert version.group(1) == builder.load_lock(builder.LOCK_PATH)["artifacts"]["ollama"]["version"]
+    assert (
+        version.group(1) == builder.load_lock(builder.LOCK_PATH)["artifacts"]["ollama"]["version"]
+    )
 
 
 def test_end_to_end_pack_verifies_and_is_rooted_at_ollama_exe(tmp_path: Path) -> None:

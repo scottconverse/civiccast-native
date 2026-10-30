@@ -727,8 +727,26 @@ test('built embed plays captions on an external origin and clears withdrawn play
   await expect(player.getByRole('main', { name: 'Embedded station player' })).toBeVisible()
   await expect(player.getByRole('button', { name: 'English', exact: true })).toBeVisible()
   await expect(player.getByRole('button', { name: 'Spanish', exact: true })).toBeVisible()
-  await player.locator('video').evaluate(async (node: HTMLVideoElement) => { node.muted = true; await node.play() })
-  await expect.poll(() => player.locator('video').evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(3)
+  const video = player.locator('video')
+  const playbackStart = await video.evaluate((node: HTMLVideoElement) => {
+    node.muted = true
+    // Prove advancement with presented frames, not a transient buffering level.
+    // Latch the evidence so a driver poll cannot miss this two-second clip.
+    node.requestVideoFrameCallback((_now, first) => {
+      node.requestVideoFrameCallback((_next, second) => {
+        node.dataset.presentedFrameAdvance = String(second.mediaTime - first.mediaTime)
+      })
+    })
+    const start = node.currentTime
+    void node.play().catch((error: unknown) => { node.dataset.playbackError = String(error) })
+    return start
+  })
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement, start) => ({
+    timeAdvanced: node.currentTime > start + 0.1,
+    framesAdvanced: Number(node.dataset.presentedFrameAdvance ?? 0) > 0,
+    playbackError: node.dataset.playbackError ?? null,
+    mediaError: node.error?.message ?? null,
+  }), playbackStart)).toEqual({ timeAdvanced: true, framesAdvanced: true, playbackError: null, mediaError: null })
   await player.getByRole('button', { name: 'Spanish', exact: true }).press('Enter')
   await expect(player.getByRole('button', { name: 'Spanish', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(() => player.locator('video').evaluate((node: HTMLVideoElement) => Array.from(node.textTracks).flatMap((track) => Array.from(track.cues ?? []).map((cue) => (cue as VTTCue).text)).join(' '))).toContain('La mocion')
