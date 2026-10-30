@@ -825,12 +825,12 @@ jobs:
           tests/tools/test_capture_emitted_hls_audio_proof.py::test_real_ffmpeg_measures_normalized_synthetic_window
           """.strip().splitlines()
           code = pytest.main([*nodes, "-q", "-ra", "--no-cov", "--junitxml=junit-windows-media.xml"])
-          if code:
-              sys.exit(code)
-          cases = list(ET.parse("junit-windows-media.xml").iter("testcase"))
-          assert len(cases) >= len(nodes), "Selected cases did not all execute"
-          assert all(not any(c.find(tag) is not None for tag in ("skipped", "failure", "error")) for c in cases), "Selected coverage was skipped or failed"
-          print(f"Required coverage executed: {len(cases)} passed, no skips")
+          from pathlib import Path
+          from scripts.verify_windows_media_junit import classify_media_junit
+          passed, accepted = classify_media_junit(Path("junit-windows-media.xml"), int(code), len(nodes))
+          if accepted:
+              print("::warning::owner-accepted RC1 limitation: immediate finite reload emitted one audio PID66 backward PTS step; failed JUnit retained (Scott, 2026-10-29; CURRENT.md)")
+          print(f"Required coverage executed: {passed} passed, {accepted} failed-owner-accepted, no skips")
           '@ | uv run python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

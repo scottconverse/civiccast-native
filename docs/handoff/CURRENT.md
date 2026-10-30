@@ -2,6 +2,62 @@
 
 ## RC1 current assignment (supersedes historical completion below)
 
+Owner acceptance (Scott, 2026-10-29, direct instruction relayed by the authorized
+watcher): RC1 may proceed with the specific observed immediate finite playlist
+reload result: one backward audio PES PTS step, `{66: 1}`, in
+`test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air`.
+Evidence: [required Windows job123859869545](https://github.com/scottconverse/civiccast-native/actions/runs/40993003702/job/123859869545)
+on29dcca4c:56media passed/1failed. Both incoming streams prerolled; commit,
+continued output, worker survival and clean teardown assertions passed; the prior
+planar-audio-tail case passed. The final codec probe after the failing PTS
+assertion was not reached. This is an accepted limitation, not a test pass or
+proof that timestamps are correct. Sustained/repeated stalls, readiness failures,
+other PIDs/counts/assertions, skips and errors remain outside this acceptance.
+No further media diagnosis, retry or rebuild was authorized to perfect this case.
+
+CI preserves the original assertion and failed JUnit unchanged. Only that exact
+class/name, source assertion and `{66: 1}` result with standard pytest exit1
+are classified as failed-owner-accepted ONLY for version1.0.0-rc.1; later versions
+reject this exception. CI prints an explicit warning and separate
+passed/accepted counts. All other failures, skips, errors, incomplete execution
+and nonstandard exits fail required CI. Governed workflow bindings are renewed
+only for this documented classification; existing producer requirements remain.
+Local scratch reproduction was interrupted during fixture generation on the stop
+instruction (no completed tests); no owned pytest/worker remains. No product code,
+station configuration or host service was changed. Retained log:
+chat work/rc1-pr284-29d-native-failure.log; original JUnit downloaded to
+chat work/rc1-pr284-29d-junit/junit-windows-media.xml without rewriting it.
+
+Classification validation:4focused policy checks passed, including18negative
+scenarios; actual saved JUnit classified56passed/1accepted without mutation
+(SHAe63f19f4275fdffbc869202e312facf93cd2705a5c5595bca694362758826708).
+Root added RC1-only version guard; both classifier tests pass3.54s including
+future-version rejection. Ruff/format/diff pass; governance checks pass.
+No product/media rerun. New normal push follows.
+
+Current unit producer still running; waiter42022 remains. All other early required
+checks pass; reproducibility still pending at last panel read. No new signed build.
+
+LATEST ACTIVE CANDIDATE: PR284 head29dcca4c9af697adea4823c8bad7c372bdc9dced,
+normal push completed. Required CI run40993003702, reproducibility40993003681.
+One waiter session42022/PID29008/start2026-10-30T02:40:21Z, log chat
+work/rc1-pr284-29dcca4c-required-wait.log; Ctrl-C cancels watcher only.
+Native input transfer session10501 terminal SUCCESS02:40:52Z. Reviewed-input
+transfer session73408 terminal SUCCESS02:41:14Z (run-once, no persistent
+listener). Process receipt chat work/rc1-pr284-29dcca4c-processes.json.
+Next handle required CI terminal results; same media readiness failure requires
+focused diagnosis before further retry. Then normal merge, signed corrected build,
+all outstanding isolated installed acceptance and cleanup. STOP before publication.
+All earlier CI/waiter entries below are historical unless explicitly noted here.
+Owner follow-up via watcher: if readiness failure repeats, correct exact incoming
+boundary before another retry; no timeout/assertion weakening. Existing failure
+has NO measured restart/resumed-output interval: standalone worker test launches
+one process, records10s no-output watchdog and exit, no daemon recovery. Recovery
+duration unavailable, NOT10s. Existing source/logs inspected only; no new probe.
+New owner acceptance via watcher: roughly15–30s acceptable for one-off successful
+recovery. This is an estimate/preference, NOT measured outage, required new test,
+or waiver of required CI. Current audioPTS failure is a different condition.
+
 Count correction reviewed: purefloor2095/Windowsfloor2334, exact2145/2387;
 both affected policy tests PASS27.10s, narrow governance/diff checks PASS.
 Six workflow blob bindings renewed to230d6303d11c2a7a2896dd5291e16c122a6c5edc;
