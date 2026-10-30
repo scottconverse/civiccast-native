@@ -38,12 +38,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Public directives follow the published release, even while the source version
 # advances to an owner-held next candidate. Use the authored release truth.
-CURRENT_TAG = yaml.safe_load(
+_RELEASE_TRUTH = yaml.safe_load(
     (REPO_ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
-)["current"]
-_BETA_MATCH = re.fullmatch(r"v1\.0\.0-beta\.(\d+)", CURRENT_TAG)
-assert _BETA_MATCH is not None, f"Update release posture guard for {CURRENT_TAG}"
-CURRENT_BETA = int(_BETA_MATCH.group(1))
+)
+CURRENT_TAG = _RELEASE_TRUTH["current"]
+_CURRENT_MATCH = re.fullmatch(r"v1\.0\.0-(beta|rc)\.(\d+)", CURRENT_TAG)
+assert _CURRENT_MATCH is not None, f"Update release posture guard for {CURRENT_TAG}"
+# RC publication supersedes every published beta. Keep checking the complete
+# earlier beta range instead of failing during collection on the new tag shape.
+CURRENT_BETA = (
+    int(_CURRENT_MATCH.group(2))
+    if _CURRENT_MATCH.group(1) == "beta"
+    else 1
+    + max(
+        int(match.group(1))
+        for entry in _RELEASE_TRUTH["entries"]
+        if (match := re.fullmatch(r"v1\.0\.0-beta\.(\d+)", entry["tag"]))
+    )
+)
 
 # Curated active release surfaces â€” the union of the front doors, the
 # tester path, and the adoption/public copy this repo already treats as

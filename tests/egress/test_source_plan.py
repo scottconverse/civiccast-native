@@ -78,6 +78,26 @@ def _asset(path: Path, *, asset_id: str = "council-meeting") -> StaffAssetRow:
     )
 
 
+def test_repeat_setting_changes_without_restarting_source_provider(tmp_path):
+    start = datetime(2026, 10, 29, tzinfo=UTC)
+    media = tmp_path / "program.mp4"
+    media.write_bytes(b"fixture")
+    item = _schedule_item(scheduled_at=start, duration_seconds=110)
+    enabled = {"gov": False}
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _: [item],
+        asset_resolver=lambda _: _asset(media),
+        now_provider=lambda: start + timedelta(seconds=220),
+        loop_schedule_provider=lambda channel: enabled[channel],
+        media_duration_resolver=lambda _: 120.0,
+    )
+    assert provider("gov") is None
+    enabled["gov"] = True
+    assert provider("gov") is not None
+    enabled["gov"] = False
+    assert provider("gov") is None
+
+
 def test_build_slate_source_args_uses_canonical_profile_and_escapes_message(
     tmp_path: Path,
 ) -> None:

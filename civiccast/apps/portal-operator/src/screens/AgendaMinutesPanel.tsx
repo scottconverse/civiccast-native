@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
-import { createAgendaMinutes, getStaffIdentity, listSummaryReviewItems } from '../api/client'
+import { ApiError, createAgendaMinutes, getStaffIdentity, listSummaryReviewItems } from '../api/client'
 
 export function AgendaMinutesPanel({ agendaId, assetId }: { agendaId: string; assetId: string }) {
   const [open, setOpen] = useState(false)
@@ -31,7 +31,7 @@ function MinutesCreator({ agendaId, assetId }: { agendaId: string; assetId: stri
     </select></label>
     {summaries.isError && <p role="alert">Summary list unavailable. Manual drafting remains available; retry the summary list after storage recovers.</p>}
     <button type="button" disabled={!canWrite || create.isPending} onClick={() => create.mutate()}>Create draft minutes</button>
-    {create.isError && <p role="alert">{create.error.message}</p>}
+    {create.isError && <p role="alert">{create.error instanceof ApiError ? (create.error.detail ?? create.error.message) : create.error.message} <Link to="/review">Open caption review</Link></p>}
     {create.isSuccess && <p role="status">Draft created. <Link to="/summary">Open Summary review to edit citations, motions and votes, then approve and export.</Link></p>}
   </div>
 }

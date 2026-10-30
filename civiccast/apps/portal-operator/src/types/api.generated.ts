@@ -1185,6 +1185,8 @@ export interface ChannelPlayoutPlan {
   source: 'schedule-store' | 'sample-contract'
   blocks: Array<PlayoutBlock>
   gap_blocks: Array<PlayoutBlock>
+  repeat_schedule?: boolean
+  repeat_block_ids?: Array<string>
   export_formats: Array<string>
   proof_boundary: string
   not_claimed: Array<string>
@@ -1958,6 +1960,7 @@ export interface EgressConfig {
   channel_id: string
   enabled: boolean
   auto_start?: boolean
+  repeat_schedule?: boolean
   allow_software_fallback?: boolean
   fill_policy?: 'slate' | 'bulletins'
   ndi_relay_name?: string | null
@@ -2028,6 +2031,9 @@ export interface EgressStateRow {
   updated_at: string
   pid?: number | null
   last_error?: string | null
+  preparation_status?: 'preparing' | 'settling' | null
+  preparation_elapsed_seconds?: number | null
+  expected_handoff_at?: string | null
 }
 
 export interface EgressStorageStatusResponse {

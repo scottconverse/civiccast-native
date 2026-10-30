@@ -1145,7 +1145,15 @@ export function LiveRoomScreen() {
     retry: false,
   })
 
-  const sources = sourcesQuery.data ?? EMPTY_SOURCES
+  // Private readiness uses a recorded sample, not an RTMP listener. Legacy
+  // rehearsal rows are internal to that flow and cannot be taken live.
+  const sources = (sourcesQuery.data ?? EMPTY_SOURCES).filter((source) => !(
+    source.live_source_id === 'civiccast-sample-test-source' &&
+    source.channel_id === 'government' &&
+    source.source_type === 'rtmp' &&
+    source.endpoint_url === 'rtmp://127.0.0.1/live/civiccast-sample-rehearsal' &&
+    !source.credentials_handle
+  ))
   const canOperateMeeting =
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'meeting_operator')
   const canEditSources =

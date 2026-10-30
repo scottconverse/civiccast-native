@@ -29,6 +29,7 @@ class _FakeScheduleStore:
     def __init__(self) -> None:
         self.created: list[object] = []
         self.cancelled: list[object] = []
+        self.published_ids: set[str] = set()
         self._next = 0
 
     def create(self, payload):  # type: ignore[no-untyped-def]
@@ -40,6 +41,13 @@ class _FakeScheduleStore:
 
     def cancel(self, schedule_id):  # type: ignore[no-untyped-def]
         self.cancelled.append(schedule_id)
+
+    def list(self, **kwargs):  # type: ignore[no-untyped-def]
+        return [
+            _manual_item(id=f"sched-{index}", state="published", **payload.model_dump())
+            for index, payload in enumerate(self.created, 1)
+            if f"sched-{index}" in self.published_ids
+        ]
 
 
 def _asset_resolver(asset_id: str):  # type: ignore[no-untyped-def]
@@ -99,6 +107,7 @@ def _client() -> Iterator[tuple[TestClient, _FakeScheduleStore]]:
         app.dependency_overrides[get_program_log_store] = lambda: store
         app.dependency_overrides[get_program_log_materializer] = lambda: materializer
         app.dependency_overrides[get_program_log_asset_titler] = lambda: _asset_resolver
+        app.dependency_overrides[get_schedule_store] = lambda: schedule
         yield (
             TestClient(app, headers={"Authorization": "Bearer operator-token-a"}),
             schedule,
@@ -225,13 +234,15 @@ def test_naive_datetime_is_rejected() -> None:
 def test_public_guide_serves_sanitized_airable_entries_only() -> None:
     """CA-5: residents see WHAT AIRS — never skips, ids, or internal detail."""
 
-    with _client() as (client, _schedule):
+    with _client() as (client, schedule):
         client.post("/api/staff/programlog/slots", json=_create_payload())
         client.post(
             "/api/staff/programlog/slots",
             json=_create_payload(asset_id="missing-asset", recurrence="once"),
         )
 
+        assert client.get("/api/public/programlog/channels/public/guide").json() == []
+        schedule.published_ids.add("sched-1")
         guide = client.get("/api/public/programlog/channels/public/guide")
 
         assert guide.status_code == 200
@@ -249,12 +260,13 @@ def test_public_guide_serves_sanitized_airable_entries_only() -> None:
 
 
 def test_public_guide_uses_title_override_when_present() -> None:
-    with _client() as (client, _schedule):
+    with _client() as (client, schedule):
         client.post(
             "/api/staff/programlog/slots",
             json=_create_payload(recurrence="once", title_override="Council Replay"),
         )
 
+        schedule.published_ids.add("sched-1")
         entries = client.get("/api/public/programlog/channels/public/guide").json()
 
         assert entries[0]["title"] == "Council Replay"
@@ -455,3 +467,31 @@ def test_channel_log_surfaces_a_manual_item_from_the_REAL_schedule_store() -> No
     assert entry["asset_id"] == "council-2026-06-10"
     assert entry["duration_seconds"] == 3600
     assert entry["slot_id"] == ""
+
+
+def test_resident_guide_includes_manual_published_items_without_duplicates():
+    with _client() as (client, _):
+        client.post("/api/staff/programlog/slots", json=_create_payload(recurrence="once"))
+        log = client.get("/api/staff/programlog/channels/public/log").json()
+        same = _manual_item(id=log[0]["schedule_item_id"], channel_id="public", state="published")
+        manual = _manual_item(
+            id="published-short",
+            channel_id="public",
+            state="published",
+            duration_seconds=38,
+            asset_title="Short recording",
+        )
+        excluded = [
+            _manual_item(id="draft", channel_id="public", state="scheduled"),
+            _manual_item(id="cancelled", channel_id="public", state="cancelled"),
+            _manual_item(id="embargo", channel_id="public", mode="embargo"),
+        ]
+        client.app.dependency_overrides[get_schedule_store] = lambda: _ManualScheduleStore(
+            [same, manual, *excluded]
+        )
+        entries = client.get("/api/public/programlog/channels/public/guide").json()
+        assert len(entries) == 2
+        assert any(e["title"] == "Short recording" and e["duration_seconds"] == 38 for e in entries)
+        assert all(
+            set(e) == {"title", "starts_at", "duration_seconds", "channel_id"} for e in entries
+        )

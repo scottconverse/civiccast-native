@@ -1862,6 +1862,16 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
               Sign in with the local admin password if this browser lost its console token.
             </p>
+            <p className="m-0 mt-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+              Reinstalling or upgrading preserves station settings and accounts. An older installation
+              may also have migrated its saved settings from the Windows service profile. This is
+              an existing station, not an empty first installation. Use its saved recovery kit if
+              you do not know the administrator password; reinstalling does not reset it.
+            </p>
+            <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              The station name identifies this installation. Channel names, on-screen logos and
+              public-page branding are configured separately after sign-in.
+            </p>
           </section>
           <CommissioningDefaultsPanel profile={stateQuery.data.profile} className="lg:col-span-2" />
 

@@ -744,3 +744,11 @@ describe('LiveRoomScreen persisted meeting recovery', () => {
     await waitFor(() => expect(localStorage.getItem('civiccast.liveRoom.sessionId')).toBe(createdId))
   })
 })
+
+it('does not offer the private rehearsal placeholder as a live camera', async () => {
+  vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+  vi.mocked(listLiveSources).mockResolvedValue([source({ live_source_id: 'civiccast-sample-test-source', endpoint_url: 'rtmp://127.0.0.1/live/civiccast-sample-rehearsal', name: 'Private sample placeholder' })])
+  renderLiveRoomScreen()
+  await waitFor(() => expect(listLiveSources).toHaveBeenCalled())
+  expect(screen.queryByText('Private sample placeholder')).toBeNull()
+})

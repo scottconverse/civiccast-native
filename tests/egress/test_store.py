@@ -33,6 +33,17 @@ def _strip_tz(value: datetime) -> datetime:
     return value.replace(tzinfo=None) if value.tzinfo else value
 
 
+def test_repeat_intent_is_persistent_and_independent_of_auto_start(store, monkeypatch):
+    monkeypatch.setenv("CIVICCAST_SCHEDULE_LOOP", "1")
+    config = _config().model_copy(update={"repeat_schedule": True, "auto_start": False})
+    store.upsert_config(config)
+    assert store.get_config("gov").repeat_schedule is True
+    assert store.get_config("gov").auto_start is False
+    store.upsert_config(config.model_copy(update={"repeat_schedule": False, "auto_start": True}))
+    assert store.get_config("gov").repeat_schedule is False
+    assert store.get_config("gov").auto_start is True
+
+
 @pytest.fixture
 def engine() -> Iterator[Engine]:
     eng = create_engine("sqlite:///:memory:", future=True)

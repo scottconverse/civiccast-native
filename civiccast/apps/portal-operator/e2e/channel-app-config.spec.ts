@@ -443,7 +443,7 @@ test('setup admin can save 24/7 automation settings (CA-5)', async ({ page }) =>
   const requests = await mockChannelOps(page)
   await page.goto('/#/channels')
 
-  await expect(page.getByRole('heading', { name: 'Run this channel 24/7' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Channel startup and repeat' })).toBeVisible()
 
   await page.getByLabel(/Keep this channel on air/).check()
   await page.getByRole('radio', { name: /Community bulletins/ }).click()
@@ -476,7 +476,7 @@ test('automation settings stay read-only without setup admin role', async ({ pag
   const requests = await mockChannelOps(page, { roles: ['meeting_operator'] })
   await page.goto('/#/channels')
 
-  await expect(page.getByRole('heading', { name: 'Run this channel 24/7' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Channel startup and repeat' })).toBeVisible()
   await expect(
     page.getByText('Automation settings require the setup admin role.'),
   ).toBeVisible()

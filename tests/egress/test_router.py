@@ -1919,3 +1919,35 @@ def test_config_put_refuses_an_hls_sink_traversing_out_of_the_root(
     assert r.status_code == 422, r.text
     assert "outside the allowed root" in r.json()["detail"]
     assert store.get_config("gov") is None
+
+
+def test_state_exposes_live_preparation_without_persisting_it(client, store, monkeypatch):
+    monkeypatch.setattr("psutil.pid_exists", lambda _pid: True)
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            pid=1234,
+            current_source_label="Current program",
+            updated_at=datetime.now(UTC),
+        )
+    )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            client.app.state,
+            "egress_daemon",
+            SimpleNamespace(
+                source_preparation_status=lambda _channel: {
+                    "preparation_status": "preparing",
+                    "preparation_elapsed_seconds": 12.5,
+                    "expected_handoff_at": datetime(2026, 10, 30, 12, tzinfo=UTC),
+                }
+            ),
+            raising=False,
+        )
+        result = client.get("/api/staff/egress/channels/gov/state")
+        assert result.status_code == 200
+        assert result.json()["preparation_status"] == "preparing"
+        assert result.json()["preparation_elapsed_seconds"] == 12.5
+        assert result.json()["current_source_label"] == "Current program"
+        assert store.read_state("gov").preparation_status is None

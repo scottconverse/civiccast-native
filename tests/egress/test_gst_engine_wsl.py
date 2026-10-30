@@ -1128,6 +1128,104 @@ def _av_demo_graph(nsrc: int = 2):
     )
 
 
+def test_playlist_reports_each_source_only_after_encoded_output(tmp_path: Path) -> None:
+    """Internal concat transitions must survive selection and encoder buffering."""
+    base = graphmod.demo_test_graph(nsrc=2)
+    sources = tuple(
+        {
+            "kind": "program",
+            "asset_id": f"asset-{i}",
+            "label": f"Program {i}",
+            "schedule_item_id": f"occurrence-{i}",
+        }
+        for i in range(3)
+    )
+    program = graphmod.PlaylistLeg(
+        label="program",
+        subchain_sources=sources,
+        subchains=tuple(
+            (
+                _E("videotestsrc", props={"is-live": False, "pattern": i, "num-buffers": 30}),
+                _E("capsfilter", props={"caps": _CAPS}),
+            )
+            for i in range(3)
+        ),
+    )
+    out_ts = tmp_path / "source-boundaries.ts"
+    graph = _paced_filesink_graph(replace(base, sources=(program, base.sources[1])), out_ts)
+    proc, _control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        proc.wait(timeout=25)
+        assert proc.returncode == 0, log.read_text()
+    finally:
+        _reap(proc)
+    observed = [
+        json.loads(line.partition(" ")[2])
+        for line in log.read_text().splitlines()
+        if line.startswith("CIVICCAST_SOURCE_OUTPUT ")
+    ]
+    assert [row["asset_id"] for row in observed] == ["asset-0", "asset-1", "asset-2"], (
+        log.read_text()
+    )
+    assert len({row["event_id"] for row in observed}) == 3
+    assert len({row["pid"] for row in observed}) == 1
+    assert all(row["pid"] > 0 for row in observed)
+    if os.name != "nt":
+        assert observed[0]["pid"] == proc.pid
+    assert out_ts.stat().st_size > 0
+
+
+def test_prerolled_playlist_keeps_source_identity_after_reload(tmp_path: Path) -> None:
+    base = graphmod.demo_test_graph(nsrc=2)
+
+    def program(first: int, buffers: int):
+        return graphmod.PlaylistLeg(
+            label="program",
+            subchains=tuple(
+                (
+                    _E(
+                        "videotestsrc",
+                        props={"is-live": False, "num-buffers": buffers, "pattern": i},
+                    ),
+                    _E("capsfilter", props={"caps": _CAPS}),
+                )
+                for i in range(3)
+            ),
+            subchain_sources=tuple(
+                {
+                    "kind": "program",
+                    "asset_id": f"asset-{first + i}",
+                    "label": f"Program {first + i}",
+                    "schedule_item_id": f"occurrence-{first + i}",
+                }
+                for i in range(3)
+            ),
+        )
+
+    out_ts = tmp_path / "reload-sources.ts"
+    graph = _paced_filesink_graph(replace(base, sources=(program(0, 300), base.sources[1])), out_ts)
+    reload_path = tmp_path / "reload-sources.json"
+    reload_path.write_text(
+        graphmod.graph_to_json(replace(graph, sources=(program(3, 30), base.sources[1])))
+    )
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        _wait_for_log(log, "CIVICCAST_SOURCE_OUTPUT ")
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload committed")
+        proc.wait(timeout=25)
+        assert proc.returncode == 0, log.read_text()
+    finally:
+        _reap(proc)
+    observations = [
+        json.loads(line.partition(" ")[2])
+        for line in log.read_text().splitlines()
+        if line.startswith("CIVICCAST_SOURCE_OUTPUT ")
+    ]
+    incoming = [row["asset_id"] for row in observations if int(row["asset_id"].split("-")[-1]) >= 3]
+    assert incoming == ["asset-3", "asset-4", "asset-5"], log.read_text()
+
+
 def test_live_worker_forks_selected_program_audio_into_atomic_caption_wavs(
     tmp_path: Path,
 ) -> None:

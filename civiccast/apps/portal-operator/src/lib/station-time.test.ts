@@ -22,6 +22,14 @@ describe('station wall-clock scheduling', () => {
     expect(stationWallClockToDate('2026-03-08T02:30', 'America/Denver')).toBeNull()
   })
 
+  it('preserves second precision for contiguous short recordings', () => {
+    const instant = stationWallClockToDate('2026-10-29T15:01:15', 'America/Denver')
+    expect(instant?.toISOString()).toBe('2026-10-29T21:01:15.000Z')
+    expect(dateToStationDateTimeLocal(instant!, 'America/Denver')).toBe('2026-10-29T15:01:15')
+    expect(stationWallClockToDate('2026-10-29T15:01:60', 'America/Denver')).toBeNull()
+    expect(stationWallClockToDate('2026-03-08T02:30:15', 'America/Denver')).toBeNull()
+  })
+
   it('chooses the earlier instant during a repeated fall clock hour', () => {
     expect(stationWallClockToDate('2026-11-01T01:30', 'America/Denver')?.toISOString())
       .toBe('2026-11-01T07:30:00.000Z')

@@ -2,6 +2,13 @@
 
 This chapter explains how to manage staff access, limit network exposure, protect resident data, and verify CivicCast packages. It covers roles, tokens, first-admin recovery, HTTPS, the public and staff APIs, retention, signatures and checksums. Complete first setup on the station computer and follow the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md) before making the resident portal available remotely.
 
+## Invalid sign-in and setup requests
+
+Malformed setup, sign-in and recovery requests return field locations and safe
+validation messages without echoing submitted passwords, recovery codes or validator
+context. Do not attach real credentials to a support report. Ordinary incorrect
+credentials still use the existing authentication and rate-limit responses.
+
 ## Before you start
 
 - You need Administrator rights on the station computer, and the Setup admin role in the console for the staff-token API calls.

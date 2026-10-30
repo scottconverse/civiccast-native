@@ -197,7 +197,7 @@ export function CommitReportRow({
         <span className="font-semibold">{report.title}</span>
         <Badge label={reportStatusLabel(status)} tone={reportTone(status)} />
         <span className="cc-mono text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-          aired {formatWhen(report.scheduled_at)} · approved by {report.approved_by_operator_id}
+          scheduled for {formatWhen(report.scheduled_at)} · approved by {report.approved_by_operator_id}
         </span>
       </div>
       {report.dispatch_error_detail && (

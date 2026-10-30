@@ -38,6 +38,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -51,6 +52,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from civiccast.auth.validation import PUBLIC_VALIDATION_MESSAGES
 from civiccast.db import Base
 from civiccast.live.readiness import (
     PROBE_STATE_NEVER_PROBED,
@@ -824,11 +826,8 @@ class RecordingTargetCreate(BaseModel):
         from civiccast.live.finalization_worker import _local_recording_path
 
         if _local_recording_path(value) is None:
-            raise ValueError(
-                "target_uri must be a local location the finalization worker "
-                "can read: a file:// URI (e.g. file:///C:/recordings), a "
-                "Windows drive path (C:\\recordings), or an absolute POSIX "
-                "path. Relative paths and non-file schemes are not supported."
+            raise PydanticCustomError(
+                "recording_location", PUBLIC_VALIDATION_MESSAGES["recording_location"]
             )
         return value
 

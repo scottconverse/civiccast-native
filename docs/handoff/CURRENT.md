@@ -1,4 +1,105 @@
-# CURRENT — ACTIVE: RC1 offline agenda readiness — October 29, 2026
+# CURRENT — ACTIVE: RC2 R7/R9 operator corrections — October 30, 2026
+
+Scott resumed RC2 after the complete read-only R7 results review. One candidate
+on fix/rc2-r9-operator-workflows / PR285; version1.0.0-rc.2. Published RC1 stays intact.
+No station/soak changes, model uploads, broad test ladder, unrelated scope or agents.
+
+R7 source corrections implemented: model-data-only service Modify permission;
+minutes+seconds in both schedule drawers; persistent actionable watch-folder and
+minutes errors; private sample instead of dead RTMP camera; published manual and
+recurring guide entries; planned-versus-actual as-run start; measured GStreamer
+FPS/bitrate restricted to current-worker logs; visible release download bytes.
+Prior R9 credential redaction, caption overlap/capacity, timing/repeat/accounting,
+preparation, loudness, migration and verified download corrections are retained.
+
+Executed: 16 Windows identity/ACL checks, scheduling UI checks, 19 watch-folder,
+35 sample/live/minutes UI, 15 Commit-to-Air, 13 published-guide API, 22 as-run,
+42 watchdog/health checks. New production caption tap consumed15/15 saved-audio
+segments without discard; native CEA-708 decode-back recovered15/15 cues across
+three isolated workers. All workers ended normally. Bounded development-host
+proof, not installed tester acceptance or a sustained caption-uptime claim.
+Detailed executed evidence/limits: docs/ops/evidence/rc2-r7-corrections.md.
+Changed ESLint/TypeScript, Ruff, five-module mypy and current claim bindings pass.
+
+Manual chapters, consolidated Markdown, PDF/DOCX and built-in Help regenerated;
+both source-bound render consistency checks pass. Existing scanner report now
+has one exact GLib2.88.4/CVE-2026-58016 application-reachability triage, with
+upstream/reference/PE/source review and expiry; not an upstream-fixed claim or
+blanket waiver. Saved report reconciliation passes without another broad scan.
+
+Paused CI41072320499/41072320432 and waiter89258 are terminal. No current jobs.
+Next: commit/push this reviewed batch, applicable required CI and same-run claims,
+normal merge, one signed RC2 candidate reusing unchanged model packs, then the
+focused failed-operator actions/three-channel caption observations. No RC2 kit,
+installer, installed acceptance, tag or publication exists yet. No ETA asserted.
+Human language review pending/nonblocking; historical accepted RC1 PTS remains.
+
+## Existing RC2 implementation and earlier evidence
+
+Scott authorized the R9 Beta20 corrections and all affected operator documentation,
+manual and built-in help. Worktree `C:/Dev/cc-rc2-r9`, branch
+`fix/rc2-r9-operator-workflows`, base published RC1 `6571f841`.
+Published RC1 is immutable. No station/R9 soak actions, model uploads or subagents.
+
+Implemented: safe credential validation responses; lower live Whistle overlap with
+three-channel bounded capacity evidence; second-level scheduling; per-channel repeat
+control and published preview; selected/encoded source boundary observations and
+logical as-run accounting/window clipping; preparation status; migration explanations;
+precise loudness warnings; resumable verified downloads and existing model reuse.
+Branding reversion remains unconfirmed; historical tester orchestration is separate.
+
+Executed focused evidence: auth 36 plus 9 expanded/valid-flow and 4 paywall cases;
+caption 140; scheduling UI 24; repeat/store/source/cable 128 plus corrected fixture 1;
+as-run/reporting 166 plus new recorder/daemon/window cases; migration 0098; loudness
+30; downloader 12 (actual PowerShell range/failure fixtures); existing three screens
+92. Native production worker checks observed three internal sources and a prerolled
+replacement playlist; both passed with clean teardown. Native caption trials used
+preserved components and read-only R9 WAVs: warm three-channel 5s arrivals processed
+in 3.65/3.64s with full new input retained. Bounded proof, not a soak/installed claim.
+Mypy passed seven changed modules. No broad unrelated media rerun.
+
+Documentation now matches RC2: clean operator install/three-channel recipe, manual
+chapters, quick start, built-in Help, screen copy, API reference/types and public
+package pointers. Published RC1 status/limitations are documented without modifying
+its assets. PDF/DOCX and packaged manual JSON are generated and current.
+Source/version identity is `1.0.0-rc.2`; no RC2 tag or publication exists.
+
+Additional focused results: 2 normal repeat/loading UI cases, preparation API plus
+nonpersistent status (caught/fixed state DB serialization), source graph/roundtrip
+5 cases, loudness cached measurement provenance, actual Beta20-version archive reuse,
+and 13 release/version policy cases passed. Ruff/format on all 42 changed Python
+files and mypy on the changed service/daemon/reporting/native graph modules pass.
+Affected diff reviewed by the implementing agent; no independent reviewer claimed.
+Manual PDF/DOCX consistency and packaged Help consistency pass.
+
+F2 handoff lateness is only partly explained by original evidence; diagnostics now
+separate preparation from settlement, not a claim to eliminate all timing delay.
+F3 branding was not reproduced. Existing tester orchestration incidents are recorded
+as separate. No new model bytes or station operations. RC1 accepted PTS limitation
+remains historical/accepted; no repair loop was reopened.
+
+PR https://github.com/scottconverse/civiccast-native/pull/285 remains OPEN at
+9fa75f500637fc57858e651246c64376e66754d4, ordinarily signed/pushed October30 14:31 UTC.
+The 43 previous Unit failures were addressed: current Alembic 0098 fixtures;
+reviewed engine/graph/test claim tripwires with historical evidence limitations;
+public RC1 architecture/support/manual pointers; explicit RC1-only acceptance
+fixture; static useful validation guidance without submitted values or context.
+Public manual PDF/DOCX copies come from the existing signed RC1 kit. Source manual
+and packaged Help remain RC2. No models were uploaded (push transferred 2.02MiB).
+
+Focused results: 45 passed in the first correction selection; remaining copy and
+isolated child authentication environment yielded 20 passed. Two changed-claim
+verifier cases pass, Ruff/format pass, mypy passes the three changed validation/model
+modules. Logs work/rc2-{unit-correction-focused,validation-followup,claims-rebind-focused}.log.
+Prior current-head run41018363680 is terminal/cancelled; no test producer waived.
+
+Previous head9fa75f5 CI41072320499/optional41072320432 were cancelled at Scott's
+pause; waiter89258/PID1180 is historical/terminal. Previous scanner failure and
+upstream investigation are preserved in work/rc2-security-9fa and its failure log.
+The top section supersedes those previous pending CI/security states. Required
+new-head outcomes and the delivered candidate remain incomplete.
+
+## Historical RC1 state (superseded assignment; evidence retained)
 
 ## RC1 current assignment (supersedes historical completion below)
 

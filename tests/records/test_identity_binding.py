@@ -64,7 +64,8 @@ def test_export_fingerprint_uses_bearer_identity_not_spoofed_payload(
 
     if response.status_code in {400, 422}:
         detail = str(response.json()).lower()
-        assert "requested_by" in detail or "identity" in detail or "operator" in detail
+        assert "extra_forbidden" in detail
+        assert "operator-spoof-b" not in detail
         return
 
     assert response.status_code == 201

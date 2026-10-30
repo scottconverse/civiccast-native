@@ -53,16 +53,16 @@ The diagram shows the two ways an item gets onto the air. If you add an item you
 
 ### What residents see
 
-Residents see two different lists, built from two different sources.
+Residents see approved programmes in two views of the same published schedule.
 
 - **Coming up** on the portal home page lists programs placed with **Schedule** (or Contributors) that are **Published** and start in the future. It never lists a Scheduled item.
-- **Channel schedule** (a page of the portal, see the example below) lists the next 72 hours of airings that came from **Program Guide** recurring slots. It lists an airing as soon as the guide has built it, whether or not anyone has published it.
+- **Channel schedule** lists the next 72 hours of published premieres, including recordings added directly on **Schedule** and approved recurring **Program Guide** airings. Drafts, cancelled items and embargoes are excluded.
 
 ![The resident portal's Channel schedule page, which lists the next three days of programs for one channel.](manual/images/portal-schedule.png){width=90%}
 
 *Figure: the Channel schedule page that residents see.*
 
-> **Known issue (beta.11):** The Channel schedule page can show an airing that will not air, because it reads the guide's own list, not the published state. The guide also keeps listing an airing if you cancel that item on the Schedule screen, because nothing updates the guide when an item is cancelled. Items you add directly on the Schedule screen never appear on the Channel schedule page at all; they appear in **Coming up** after they are published. The two pages do not explain the difference to residents.
+The guide describes the approved plan. It is not proof that a programme aired. Check actual channel output and as-run records for that. Cancelling or withdrawing an item removes it from the resident guide.
 
 ## Which time zone are you typing in?
 
@@ -100,7 +100,7 @@ Use the **Schedule** screen to place one recording on a channel at one time. Thi
 4. In the **Asset** drop-down, choose the video. Each entry reads "title · asset id".
 5. In the **Channel** drop-down, choose the channel by its display name.
 6. In **Start at**, type the date and time in the station's time zone. Check the local-time preview and zone before saving.
-7. In **Duration (min)**, type the length in whole minutes. It starts at 60. The largest allowed length is 14 days.
+7. Enter **Duration minutes** and **Duration seconds**. For a 38-second clip use 0 minutes and 38 seconds. The total must be at least one second; minutes default to 60. The largest allowed length is 14 days.
 8. In **Notes (optional)**, type anything you want recorded. The box says the note is "visible in the audit log" (the station's record of who did what).
 9. Click **Schedule premiere**. The button reads "Scheduling…" while it works.
 
@@ -169,12 +169,12 @@ For a repeating rotation of two recordings:
 
 1. Add both recordings to **Schedule** on the same channel. Give each item its intended duration and put the second immediately after the first: its start is the first item's start plus its duration.
 2. Use **Publish to residents** or the channel's **Commit to Air** control to approve both items. Items left **Scheduled** do not air.
-3. Ask the station administrator to set `CIVICCAST_SCHEDULE_LOOP=1` in the Windows service environment, then restart the service between programs. The default is a finite schedule; loop mode repeats the published sequence. See [service environment settings](#configuration-env-how).
-4. Watch the first transition on the channel. The loop preserves gaps between schedule entries, so use contiguous entries for uninterrupted programming.
+3. In **Channels**, select the channel. Under **Channel startup and repeat**, enable **Repeat the published sequence**, then **Save automation settings**. No service restart or API call is needed. This is separate from **Keep this channel on air**, which controls automatic startup.
+4. Check **Published playout plan**. Entries marked **In repeat sequence** form the last contiguous published sequence; a gap greater than one second starts a new group. Older groups do not repeat. Watch the first transition and return to the first recording. Disable repeat for a finite schedule.
 
 For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
 
-In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from the engine's source-transition proof. The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
+In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from an output observation (not a TV receiver). The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 
 ## Repeat a program on a schedule (Program Guide)
 
@@ -193,7 +193,7 @@ Use **Program Guide** when a recording should air again and again, for example e
    - **Weekdays**: "Airs Monday through Friday."
 6. In **First airing**, type the date and time in the station's time zone. Check the date, time and station zone shown with the form.
 7. If you chose Daily, Weekly or Weekdays, you may fill **Repeat until (optional)** with the last date it may air. Leave it blank to repeat with no end.
-8. Either keep **Use the recording's own length** ticked, or untick it and type **Duration (min)** (at least 1).
+8. Either keep **Use the recording's own length** ticked, or untick it and enter **Duration minutes** and **Duration seconds** (at least one second in total).
 9. In **Guide title (optional)**, type a title if you want residents to see a different title than the recording's. It can be up to 200 characters.
 10. Click **Add to guide**. The button reads "Adding…".
 

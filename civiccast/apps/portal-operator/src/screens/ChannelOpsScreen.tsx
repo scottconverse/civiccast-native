@@ -102,6 +102,7 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {
     hour: 'numeric',
     minute: '2-digit',
+    second: '2-digit',
   })
 }
 
@@ -671,9 +672,11 @@ export function EgressControlPanel({
   configState,
   onRetryConfigCheck,
   startNotApplied = null,
+  loading = false,
 }: {
   channelId: string | undefined
   state: EgressStateRow | null | undefined
+  loading?: boolean
   health: EgressHealthSample[]
   config?: EgressConfig
   pendingCommand: { channelId: string; action: EgressCommandAction } | null
@@ -711,6 +714,7 @@ export function EgressControlPanel({
               ? configCheckFailedReason(channelId)
               : startWithoutConfigReason(channelId)
   const rawEgressState = state?.state ?? 'STOPPED'
+  const visibleState = state ? stateLabel(state.state) : loading ? 'Checking status…' : 'Status unavailable'
   // Tone comes from the shared toneForEgressState so this pill cannot disagree
   // with the same feed's pill on System Health. A not-on-air feed is amber
   // (attention), not the blue "info" this panel used to fall back to.
@@ -728,12 +732,12 @@ export function EgressControlPanel({
           className="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold"
           style={{ background: egressStateTone.bg, color: egressStateTone.fg }}
         >
-          {stateLabel(rawEgressState, 'Stopped')}
+          {visibleState}
         </span>
       </div>
       <div className="mt-3 grid gap-2 text-sm">
         <div className="cc-mono text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          State: {stateLabel(rawEgressState, 'Stopped')}
+          State: {visibleState}
           {state?.pid ? ` / pid ${state.pid}` : ''}
         </div>
         {state?.current_source_label && (
@@ -741,6 +745,15 @@ export function EgressControlPanel({
         )}
         {state?.last_error && (
           <div role="alert" style={{ color: 'var(--cc-err)' }}>{state.last_error}</div>
+        )}
+        {state?.preparation_status && (
+          <div role="status" style={{ color: 'var(--cc-ink-2)' }}>
+            {state.preparation_status === 'preparing' ? 'Preparing the next source' : 'Next source prepared; waiting for the output handoff'}
+            {state.preparation_elapsed_seconds != null && ` (${Math.floor(state.preparation_elapsed_seconds)} seconds)`}.
+            {state.expected_handoff_at && ` Planned boundary: ${state.expected_handoff_at}.`}
+            {' '}A planned boundary is not confirmation that the next program is on air.
+            Keep this page open; avoid repeated Reload or Stop/Start while preparation is active.
+          </div>
         )}
         {latestHealth && (
           <dl className="m-0 grid gap-2 text-xs sm:grid-cols-2" style={{ color: 'var(--cc-ink-3)' }}>
@@ -879,6 +892,7 @@ function EgressConfigPanel({
   configured: boolean
 }) {
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
+  const [repeatSchedule, setRepeatSchedule] = useState<boolean | null>(null)
   const [allowSoftwareFallback, setAllowSoftwareFallback] = useState<boolean | null>(null)
   const [fillPolicy, setFillPolicy] = useState<'slate' | 'bulletins' | null>(null)
   const [slateMessage, setSlateMessage] = useState<string | null>(null)
@@ -887,6 +901,7 @@ function EgressConfigPanel({
 
   // Edits layer over the fetched config; null means "not touched yet".
   const effectiveAutoStart = autoStart ?? config?.auto_start ?? false
+  const effectiveRepeatSchedule = repeatSchedule ?? config?.repeat_schedule ?? false
   const effectiveAllowSoftwareFallback =
     allowSoftwareFallback ?? config?.allow_software_fallback ?? false
   const effectiveFillPolicy = fillPolicy ?? config?.fill_policy ?? 'slate'
@@ -896,6 +911,7 @@ function EgressConfigPanel({
   const dirty =
     config != null &&
     (effectiveAutoStart !== (config.auto_start ?? false) ||
+      effectiveRepeatSchedule !== (config.repeat_schedule ?? false) ||
       effectiveAllowSoftwareFallback !== (config.allow_software_fallback ?? false) ||
       effectiveFillPolicy !== (config.fill_policy ?? 'slate') ||
       effectiveSlateMessage !== config.slate_message ||
@@ -911,7 +927,7 @@ function EgressConfigPanel({
       style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
       aria-label="Channel automation settings"
     >
-      <h2 className="m-0 text-lg font-semibold">Run this channel 24/7</h2>
+      <h2 className="m-0 text-lg font-semibold">Channel startup and repeat</h2>
       <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
         {channelId
           ? `Automation settings for ${channelId}. Saved settings survive restarts.`
@@ -947,6 +963,18 @@ function EgressConfigPanel({
               <span className="font-medium">Keep this channel on air</span>
               <span className="block text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
                 Starts the feed automatically after restarts and crashes.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={effectiveRepeatSchedule} disabled={!canEdit}
+              onChange={(e) => setRepeatSchedule(e.target.checked)} />
+            <span>
+              <span className="font-medium">Repeat the published sequence</span>
+              <span className="block text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                Repeats the last continuous group of published programs. Gaps over one second start a new group.
+                Check the marked programs in Playout plan before saving. Takes effect when the next plan is prepared; no service restart is needed.
               </span>
             </span>
           </label>
@@ -1071,6 +1099,7 @@ function EgressConfigPanel({
                 onSave({
                   ...config,
                   auto_start: effectiveAutoStart,
+                  repeat_schedule: effectiveRepeatSchedule,
                   allow_software_fallback: effectiveAllowSoftwareFallback,
                   fill_policy: effectiveFillPolicy,
                   slate_message: effectiveSlateMessage,
@@ -1629,6 +1658,11 @@ export function PlayoutPlanPanel({ plan }: { plan: ChannelPlayoutPlan | undefine
         )}
       </div>
       <div className="mt-3 grid gap-2">
+        {plan && <div className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          {plan.repeat_schedule ? 'Repeat is on. Only programs marked “In repeat sequence” repeat; earlier groups are excluded.'
+            : 'Repeat is off. Published programs air at their scheduled times; gaps use the configured filler.'}
+          {' '}Drafts require approval and Commit to Air before they can play.
+        </div>}
         {plan && blocks.length === 0 && (
           <div className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)', border: '1px dashed var(--cc-line)', color: 'var(--cc-ink-2)' }}>
             Nothing scheduled
@@ -1641,13 +1675,14 @@ export function PlayoutPlanPanel({ plan }: { plan: ChannelPlayoutPlan | undefine
           <div key={block.block_id} className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">{block.title}</span>
+              {plan?.repeat_block_ids?.includes(block.block_id) && <span>In repeat sequence</span>}
               <StatusPill label={block.status ?? 'scheduled'} />
               <span className="cc-mono rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
                 {block.kind}
               </span>
             </div>
             <div className="cc-mono mt-1 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-              {formatTime(block.starts_at)} / {Math.round(block.duration_seconds / 60)} min / {block.source_ref}
+              {formatTime(block.starts_at)} / {humanizeDuration(block.duration_seconds)} / {block.source_ref}
             </div>
           </div>
         ))}
@@ -2048,6 +2083,7 @@ export function ChannelOpsScreen() {
             onSave={(channelId, patch) => brandingMutation.mutate({ channelId, patch })}
           />
           <EgressControlPanel
+            loading={egressStateQuery.isPending}
             channelId={channelId}
             state={egressStateQuery.data}
             health={egressHealthQuery.data ?? []}

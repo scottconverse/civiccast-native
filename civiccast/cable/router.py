@@ -37,7 +37,11 @@ from civiccast.egress.gst.audio_tap import read_program_boundary
 from civiccast.egress.models import EgressStateRow
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import EgressStore
-from civiccast.schedule.models import SCHEDULE_STATE_SCHEDULED, ScheduleItemResponse
+from civiccast.schedule.models import (
+    SCHEDULE_STATE_PUBLISHED,
+    SCHEDULE_STATE_SCHEDULED,
+    ScheduleItemResponse,
+)
 from civiccast.schedule.router import get_schedule_store
 
 public_router = APIRouter(prefix="/api/public/channels", tags=["public", "channels"])
@@ -242,10 +246,14 @@ def staff_channel_proof_log(
 def staff_channel_playout_plan(
     channel_id: str,
     schedule_store: Any = Depends(get_schedule_store),
+    egress_store: EgressStore | None = Depends(get_egress_store),
 ) -> ChannelPlayoutPlan:
     _require_channel_profile(channel_id)
+    config = egress_store.get_config(channel_id) if egress_store is not None else None
     return build_channel_playout_plan(
-        channel_id, schedule_items=_scheduled_rows(schedule_store, channel_id)
+        channel_id,
+        schedule_items=_scheduled_rows(schedule_store, channel_id),
+        repeat_schedule=config.repeat_schedule if config is not None else False,
     )
 
 
@@ -270,7 +278,9 @@ def _scheduled_rows(schedule_store: Any, channel_id: str) -> list[ScheduleItemRe
         return None
     return cast(
         list[ScheduleItemResponse],
-        schedule_store.list(channel_id=channel_id, states=(SCHEDULE_STATE_SCHEDULED,)),
+        schedule_store.list(
+            channel_id=channel_id, states=(SCHEDULE_STATE_SCHEDULED, SCHEDULE_STATE_PUBLISHED)
+        ),
     )
 
 

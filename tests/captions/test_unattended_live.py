@@ -2,9 +2,10 @@
 
 import wave
 
-from civiccast.captions.models import CaptionHypothesis
+from civiccast.captions.models import AudioChunk, CaptionHypothesis
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.tap_worker import CaptionTapWorker
+from civiccast.captions.whistle import WhistleRuntime
 from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
 
 
@@ -99,3 +100,50 @@ def test_old_review_archive_does_not_discard_new_live_audio(tmp_path):
     assert load_caption_cues_from_timed_text(
         output / "public/captions/active.vtt", source_id="public"
     )
+
+
+def test_whistle_context_keeps_all_new_audio_without_replaying_full_segments(tmp_path):
+    """R9: six-second windows fit serial recognition without dropping five-second inputs."""
+    runtime = WhistleRuntime(
+        weights=tmp_path / "unused", library=tmp_path / "unused", fallback_config={}
+    )
+    worker = CaptionTapWorker(
+        tap_root=tmp_path / "tap",
+        caption_work_dir=tmp_path / "egress",
+        runtime=runtime,
+        review_store=InMemoryCaptionReviewStore(),
+    )
+    for channel in ("public", "education", "government"):
+        for index in range(4):
+            pcm = bytes([index + 1, 0]) * (16000 * 5)
+            current = AudioChunk(
+                chunk_id=f"{channel}-tap-{index:06d}",
+                start_seconds=index * 5,
+                end_seconds=(index + 1) * 5,
+                sample_rate_hz=16000,
+                pcm_s16le=pcm,
+            )
+            window = worker._with_overlap(channel, index, current)
+            assert window.end_seconds == current.end_seconds
+            assert window.pcm_s16le[-len(pcm) :] == pcm
+            if index:
+                assert window.start_seconds == current.start_seconds - 1
+                assert window.pcm_s16le[:32000] == bytes([index, 0]) * 16000
+                assert len(window.pcm_s16le) == 6 * 32000
+            worker._previous_segments[channel] = (index, current)
+    runtime.close()
+
+
+def test_explicit_caption_context_override_is_preserved(tmp_path):
+    runtime = WhistleRuntime(
+        weights=tmp_path / "unused", library=tmp_path / "unused", fallback_config={}
+    )
+    worker = CaptionTapWorker(
+        tap_root=tmp_path / "tap",
+        caption_work_dir=tmp_path / "egress",
+        runtime=runtime,
+        review_store=InMemoryCaptionReviewStore(),
+        overlap_seconds=4,
+    )
+    assert worker._overlap_seconds == 4
+    runtime.close()

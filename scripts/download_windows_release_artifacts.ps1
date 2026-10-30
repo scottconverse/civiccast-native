@@ -18,7 +18,7 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The defaults target the Beta 20 release tag and product version.
+The defaults target the published RC1 release and reuse its unchanged Beta20 model packs.
 For a historical release, specify both `-Tag` and `-Version` for that release.
 
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
@@ -30,8 +30,8 @@ For a historical release, specify both `-Tag` and `-Version` for that release.
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.20",
-  [string]$Version = "1.0.0-beta.20",
+  [string]$Tag = "v1.0.0-rc.1",
+  [string]$Version = "1.0.0-rc.1",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,
@@ -62,6 +62,20 @@ if ([string]::IsNullOrWhiteSpace($AssetSet)) {
 function Write-Step {
   param([string]$Message)
   Write-Host "[CivicCast] $Message"
+}
+
+function Assert-DownloadSpace {
+  param([string]$Root, [long]$RequiredBytes, [string]$Purpose)
+  $driveRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Root))
+  if ($driveRoot.StartsWith('\\')) {
+    Write-Warning "Check free space on the network share: $RequiredBytes additional bytes for $Purpose."
+    return
+  }
+  $drive = New-Object IO.DriveInfo($driveRoot)
+  Write-Step ("{0}: need {1:N2} GiB additional; {2:N2} GiB available. Installed data needs separate space." -f $Purpose, ($RequiredBytes / 1GB), ($drive.AvailableFreeSpace / 1GB))
+  if ($drive.AvailableFreeSpace -lt $RequiredBytes) {
+    throw "Insufficient space for $Purpose. Choose a larger local destination; existing downloads are preserved."
+  }
 }
 
 function Get-Release {
@@ -98,16 +112,85 @@ function Save-ReleaseAsset {
     [string]$Target
   )
 
-  if ((Test-Path -LiteralPath $Target) -and -not $Force) {
+  if ((Test-Path -LiteralPath $Target) -and -not $Force -and
+      ((Get-Item -LiteralPath $Target).Length -eq [long]$Asset.size -or -not $Asset.size)) {
     Write-Step "Using existing $Target"
     return
   }
 
-  Write-Step "Downloading $($Asset.name)"
-  Invoke-WebRequest -UseBasicParsing -Uri $Asset.browser_download_url -OutFile $Target -Headers @{
-    "Accept" = "application/octet-stream"
-    "User-Agent" = "CivicCast-Windows-Release-Downloader"
+  $partial = $Target + '.partial'
+  if ((Test-Path -LiteralPath $Target) -and -not $Force -and -not (Test-Path -LiteralPath $partial)) {
+    [IO.File]::Move($Target, $partial)
   }
+  $offset = 0L
+  if ((Test-Path -LiteralPath $partial) -and -not $Force) {
+    $offset = (Get-Item -LiteralPath $partial).Length
+  }
+  if ($Asset.size -and $offset -gt [long]$Asset.size) {
+    throw "Partial download is larger than $($Asset.name); use -Force to download it again."
+  }
+  if ($Asset.size -and $offset -eq [long]$Asset.size) {
+    if (Test-Path -LiteralPath $Target) { [IO.File]::Replace($partial, $Target, $null) }
+    else { [IO.File]::Move($partial, $Target) }
+    return # The caller still verifies the complete file's SHA-256.
+  }
+  Add-Type -AssemblyName System.Net.Http
+  $client = [Net.Http.HttpClient]::new()
+  $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get, $Asset.browser_download_url)
+  $response = $null
+  $stream = $null
+  $output = $null
+  try {
+    $request.Headers.Add('Accept', 'application/octet-stream')
+    $request.Headers.Add('User-Agent', 'CivicCast-Windows-Release-Downloader')
+    if ($offset -gt 0) {
+      $request.Headers.Range = [Net.Http.Headers.RangeHeaderValue]::new($offset, $null)
+      Write-Step "Resuming $($Asset.name) at byte $offset"
+    } else { Write-Step "Downloading $($Asset.name)" }
+    $response = $client.SendAsync($request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+    $null = $response.EnsureSuccessStatusCode()
+    $mode = [IO.FileMode]::Create
+    if ([int]$response.StatusCode -eq 206) {
+      $range = $response.Content.Headers.ContentRange
+      if (-not $range -or $range.Unit -ne 'bytes' -or $range.From -ne $offset -or
+          ($Asset.size -and $range.Length -ne [long]$Asset.size)) {
+        throw 'Download server returned an inconsistent byte range; partial file preserved.'
+      }
+      $mode = [IO.FileMode]::Append
+    } elseif ([int]$response.StatusCode -ne 200) {
+      throw "Unexpected download status $([int]$response.StatusCode)."
+    }
+    # A server ignoring Range returns 200: replace the partial, never append it.
+    $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+    $output = [IO.File]::Open($partial, $mode, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $downloaded = if ($mode -eq [IO.FileMode]::Append) { $offset } else { 0L }
+    $buffer = New-Object byte[] (1024 * 1024)
+    $progressClock = [Diagnostics.Stopwatch]::StartNew()
+    while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+      $output.Write($buffer, 0, $count)
+      $downloaded += $count
+      if ($progressClock.Elapsed.TotalSeconds -ge 5) {
+        Write-Step "$($Asset.name): $downloaded of $($Asset.size) bytes downloaded"
+        $progressClock.Restart()
+      }
+    }
+    $output.Flush()
+    Write-Step "$($Asset.name): $downloaded bytes downloaded; verifying file"
+  } finally {
+    if ($output) { $output.Dispose() }
+    if ($stream) { $stream.Dispose() }
+    if ($response) { $response.Dispose() }
+    $request.Dispose()
+    $client.Dispose()
+  }
+  if ($Asset.size -and (Get-Item -LiteralPath $partial).Length -ne [long]$Asset.size) {
+    throw "Incomplete download for $($Asset.name); rerun the same command to resume."
+  }
+  if ($Asset.digest -match '^sha256:([0-9a-fA-F]{64})$') {
+    Assert-Sha256 -Path $partial -ExpectedHash $Matches[1]
+  }
+  if (Test-Path -LiteralPath $Target) { [IO.File]::Replace($partial, $Target, $null) }
+  else { [IO.File]::Move($partial, $Target) }
 }
 
 function Get-ManifestEntry {
@@ -205,7 +288,7 @@ function Get-StationEntries {
 }
 
 function Assert-StationDirectory {
-  param([string]$Root, [object]$Manifest, [hashtable]$Entries)
+  param([string]$Root, [object]$Manifest, [hashtable]$Entries, [string]$ExpectedVersion = $Version)
   foreach ($key in $Entries.Keys) {
     $file = Join-Path $Root $key
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing station file: $file" }
@@ -215,7 +298,7 @@ function Assert-StationDirectory {
   $indexPath = Join-Path $Root 'station/station-index.json'
   Assert-Sha256 -Path $indexPath -ExpectedHash $Manifest.station_index_sha256
   $index = (Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json).manifest
-  if ($index.product_version -ne $Version -or @($index.packs).Count -ne 6) { throw 'Station index does not match the requested version and six-pack station set.' }
+  if ($index.product_version -ne $ExpectedVersion -or @($index.packs).Count -ne 6) { throw 'Station index does not match the requested version and six-pack station set.' }
   $stationSums = Read-Sha256Sums -Path (Join-Path $Root 'station/SHA256SUMS.txt')
   if ($stationSums['station-index.json'] -ne $Manifest.station_index_sha256) { throw 'Station checksum list disagrees with station index hash.' }
   $seen = @{}
@@ -231,7 +314,7 @@ function Assert-StationDirectory {
 }
 
 function Install-StationArchive {
-  param([string]$ArchivePath, [string]$Root, [object]$Manifest)
+  param([string]$ArchivePath, [string]$Root, [object]$Manifest, [string]$ExpectedVersion = $Version, [switch]$ModelsOnly)
   $entries = Get-StationEntries -Manifest $Manifest
   # Refuse reparse-point directories so validated relative paths stay in Root.
   foreach ($directory in @($Root, (Join-Path $Root 'station'))) {
@@ -256,10 +339,11 @@ function Install-StationArchive {
     } finally { $zip.Dispose() }
     # .NET extraction streams ZIP64 members and works in Windows PowerShell 5.1.
     [IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $stage)
-    Assert-StationDirectory -Root $stage -Manifest $Manifest -Entries $entries
+    Assert-StationDirectory -Root $stage -Manifest $Manifest -Entries $entries -ExpectedVersion $ExpectedVersion
     # Check every existing destination before adding any file; never overwrite
     # station data, including with -Force.
     foreach ($key in $entries.Keys) {
+      if ($ModelsOnly -and ($key -notlike '*.ccpack' -or $key -eq 'station/core.ccpack')) { continue }
       $target = Join-Path $Root $key
       if (Test-Path -LiteralPath $target) {
         if ((Get-Item -LiteralPath $target).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing reparse-point file: $target" }
@@ -268,6 +352,7 @@ function Install-StationArchive {
     }
     New-Item -ItemType Directory -Force -Path (Join-Path $Root 'station') | Out-Null
     foreach ($key in $entries.Keys) {
+      if ($ModelsOnly -and ($key -notlike '*.ccpack' -or $key -eq 'station/core.ccpack')) { continue }
       $target = Join-Path $Root $key
       if (-not (Test-Path -LiteralPath $target)) { [IO.File]::Move((Join-Path $stage $key), $target) }
     }
@@ -278,14 +363,37 @@ function Install-StationArchive {
 }
 
 function Save-StationBundle {
-  param([object]$Release, [string]$Root)
+  param([object]$Release, [string]$Root, [string]$ExpectedVersion = $Version, [switch]$ModelsOnly)
   $manifestAsset = Get-ReleaseAsset -Release $Release -Name 'station-models.json'
   $manifestPath = Join-Path $Root 'station-models.json'
   Save-ReleaseAsset -Asset $manifestAsset -Target $manifestPath
   Assert-AssetDigest -Asset $manifestAsset -Path $manifestPath
   $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
   $entries = Get-StationEntries -Manifest $manifest
+  if ($ModelsOnly) {
+    $completeModels = $true
+    foreach ($key in $entries.Keys) {
+      if ($key -notlike '*.ccpack' -or $key -eq 'station/core.ccpack') { continue }
+      $existing = Join-Path $Root $key
+      if (-not (Test-Path -LiteralPath $existing -PathType Leaf)) { $completeModels = $false; break }
+      if ((Get-FileHash -Algorithm SHA256 -LiteralPath $existing).Hash.ToLowerInvariant() -ne $entries[$key].sha256) { $completeModels = $false; break }
+    }
+    if ($completeModels) { Write-Step 'Reused all five hash-verified model packs already in this kit.'; return }
+  }
   if (@($manifest.parts).Count -eq 0) { throw 'Station bundle manifest contains no archive parts.' }
+  [long]$archiveBytes = ($manifest.parts | Measure-Object -Property size_bytes -Sum).Sum
+  [long]$unpackedBytes = ($manifest.unpacked_files | Measure-Object -Property size_bytes -Sum).Sum
+  [long]$remainingParts = 0
+  foreach ($part in $manifest.parts) {
+    $existing = Join-Path $Root $part.filename
+    [long]$have = 0
+    if (Test-Path -LiteralPath $existing -PathType Leaf) { $have = (Get-Item -LiteralPath $existing).Length }
+    elseif (Test-Path -LiteralPath ($existing + '.partial') -PathType Leaf) { $have = (Get-Item -LiteralPath ($existing + '.partial')).Length }
+    $remainingParts += [Math]::Max(0, [long]$part.size_bytes - $have)
+  }
+  [long]$assemblyBytes = $archiveBytes
+  if (Test-Path -LiteralPath (Join-Path $Root 'station-models.zip') -PathType Leaf) { $assemblyBytes = 0 }
+  Assert-DownloadSpace -Root $Root -RequiredBytes ($remainingParts + $assemblyBytes + $unpackedBytes) -Purpose 'model download, archive assembly and extraction'
   $partPaths = @()
   $number = 1
   foreach ($part in $manifest.parts) {
@@ -319,7 +427,7 @@ function Save-StationBundle {
       $createdArchive = $true
     } finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force } }
   } else { Assert-Sha256 -Path $archivePath -ExpectedHash $manifest.archive_sha256 }
-  Install-StationArchive -ArchivePath $archivePath -Root $Root -Manifest $manifest
+  Install-StationArchive -ArchivePath $archivePath -Root $Root -Manifest $manifest -ExpectedVersion $ExpectedVersion -ModelsOnly:$ModelsOnly
   if ($createdArchive) { Remove-Item -LiteralPath $archivePath -Force }
 }
 
@@ -371,26 +479,84 @@ if ($AssetSet -eq "NativeCandidate") {
 
   # 4. Optionally every *.ccpack runtime pack, each verified against SHA256SUMS.txt.
   if ($IncludePacks) {
-    $packAssets = @($release.assets | Where-Object { $_.name -like "*$NativePackSuffix" })
-    if ($packAssets.Count -eq 0) {
-      throw "-IncludePacks was requested but release '$Tag' carries no $NativePackSuffix assets."
-    }
     $runtimeNames = @('native-app-payload.ccpack', 'native-cuda-runtime.ccpack', 'native-ffmpeg-runtime.ccpack', 'native-ollama-runtime.ccpack', 'native-server-binaries.ccpack')
     $packRoot = Join-Path $Destination 'packs'
     New-Item -ItemType Directory -Force -Path $packRoot | Out-Null
-    foreach ($name in $runtimeNames) { $null = Get-ReleaseAsset -Release $release -Name $name }
-    foreach ($packAsset in $packAssets) {
-      if (-not $sums.ContainsKey($packAsset.name)) {
-        throw "$NativeSumsName does not list $($packAsset.name); refusing to trust that pack."
+    foreach ($name in $runtimeNames) {
+      if (-not $sums.ContainsKey($name)) { throw "Missing runtime checksum: $name" }
+      $packPath = Join-Path $packRoot $name
+      if ((Test-Path -LiteralPath $packPath) -and $name -eq 'native-ollama-runtime.ccpack' -and (Get-Item -LiteralPath $packPath).Length -eq 2249822889) {
+        Assert-Sha256 -Path $packPath -ExpectedHash $sums[$name]
+        continue
       }
-      if ($packAsset.name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ccpack$') { throw 'Unsafe runtime pack filename.' }
-      $packPath = Join-Path $packRoot $packAsset.name
-      Save-ReleaseAsset -Asset $packAsset -Target $packPath
-      Assert-Sha256 -Path $packPath -ExpectedHash $sums[$packAsset.name]
-      Assert-AssetDigest -Asset $packAsset -Path $packPath
+      if ($name -eq 'native-ollama-runtime.ccpack' -and @($release.assets | Where-Object { $_.name -eq $name }).Count -eq 0) {
+        $asset = Get-ReleaseAsset -Release $release -Name ($name + '.zip')
+        $zipPath = Join-Path $packRoot ($name + '.zip')
+        Save-ReleaseAsset -Asset $asset -Target $zipPath
+        Assert-Sha256 -Path $zipPath -ExpectedHash $sums[$asset.name]
+        Assert-AssetDigest -Asset $asset -Path $zipPath
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
+        try {
+          if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -cne $name -or $zip.Entries[0].Length -ne 2249822889) { throw 'Unexpected Ollama archive contents.' }
+          $extracted = $packPath + '.extracting'
+          try {
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($zip.Entries[0], $extracted, $true)
+            Assert-Sha256 -Path $extracted -ExpectedHash $sums[$name]
+            if (Test-Path -LiteralPath $packPath) { [IO.File]::Replace($extracted, $packPath, $null) }
+            else { [IO.File]::Move($extracted, $packPath) }
+          } finally { if (Test-Path -LiteralPath $extracted) { Remove-Item -LiteralPath $extracted } }
+        } finally { $zip.Dispose() }
+      } else {
+        $asset = Get-ReleaseAsset -Release $release -Name $name
+        Save-ReleaseAsset -Asset $asset -Target $packPath
+        Assert-AssetDigest -Asset $asset -Path $packPath
+      }
+      Assert-Sha256 -Path $packPath -ExpectedHash $sums[$name]
     }
-    Save-StationBundle -Release $release -Root $Destination
+
+    $overlayPrefix = if ($Version -match '^1\.0\.0-rc\.(\d+)$') { 'rc' + $Matches[1] } else { '' }
+    $hasOverlay = $overlayPrefix -and @($release.assets | Where-Object { $_.name -eq ($overlayPrefix + '-station-index.json') }).Count -eq 1
+    if (-not $hasOverlay) {
+      Save-StationBundle -Release $release -Root $Destination
+    } else {
+    # RC1 reuses the exact five already-published signed model packs from Beta20.
+    # Only the signed station index, checksum list, and tiny core pack differ.
+    $overlay = @{
+      ($overlayPrefix + '-station-index.json') = 'station-index.json'
+      ($overlayPrefix + '-station-SHA256SUMS.txt') = 'SHA256SUMS.txt'
+      ($overlayPrefix + '-station-core.ccpack') = 'core.ccpack'
+    }
+    $stationRoot = Join-Path $Destination 'station'
+    $alreadyRc1 = Test-Path -LiteralPath (Join-Path $stationRoot 'SHA256SUMS.txt')
+    if ($alreadyRc1) {
+      $alreadyRc1 = ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $stationRoot 'SHA256SUMS.txt')).Hash.ToLowerInvariant() -eq $sums[($overlayPrefix + '-station-SHA256SUMS.txt')])
+    }
+    if (-not $alreadyRc1) {
+      Write-Step 'Reusing unchanged public Beta20 model downloads; no Git LFS.'
+      $modelRelease = Get-Release -Repository $Repository -Tag 'v1.0.0-beta.20'
+      $modelManifest = Get-ReleaseAsset -Release $modelRelease -Name 'station-models.json'
+      if ($modelManifest.digest -ne 'sha256:a53474f57e81d54dc7b3b4c2f832371c9a045a74fa514689d3351994b1d385b6') { throw 'The pinned Beta20 model manifest differs.' }
+      Save-StationBundle -Release $modelRelease -Root $Destination -ExpectedVersion '1.0.0-beta.20' -ModelsOnly
+      foreach ($assetName in $overlay.Keys) {
+        $asset = Get-ReleaseAsset -Release $release -Name $assetName
+        $download = Join-Path $Destination $assetName
+        Save-ReleaseAsset -Asset $asset -Target $download
+        Assert-Sha256 -Path $download -ExpectedHash $sums[$assetName]
+        Assert-AssetDigest -Asset $asset -Path $download
+        [IO.File]::Copy($download, (Join-Path $stationRoot $overlay[$assetName]), $true)
+      }
+    }
+    $finalIndex = (Get-Content -LiteralPath (Join-Path $stationRoot 'station-index.json') -Raw | ConvertFrom-Json).manifest
+    if ($finalIndex.product_version -ne $Version -or @($finalIndex.packs).Count -ne 6) { throw 'Final station index does not match the requested version and six-pack station set.' }
+    $stationSums = Read-Sha256Sums -Path (Join-Path $stationRoot 'SHA256SUMS.txt')
+    foreach ($name in $stationSums.Keys) {
+      if ($name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*$') { throw 'Unsafe station checksum filename.' }
+      Assert-Sha256 -Path (Join-Path $stationRoot $name) -ExpectedHash $stationSums[$name]
+    }
   }
+    }
+
 } else {
   $manifestName = "civiccast-$Version-release-artifacts-manifest.json"
   $proofKitName = "civiccast-$Version-clean-windows-proof-kit.zip"
@@ -427,7 +593,7 @@ if ($Install) {
   if ($AssetSet -ne 'NativeCandidate') { throw '-Install requires NativeCandidate assets.' }
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-  $start = @{ FilePath = $setupPath; ArgumentList = '/S'; Wait = $true; PassThru = $true }
+  $start = @{ FilePath = $setupPath; ArgumentList = '/S'; Wait = $true; PassThru = $true; WindowStyle = 'Hidden' }
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $start.Verb = 'RunAs' }
   Write-Step 'Installing the verified complete kit. Please wait for setup to finish; installation progress is recorded by setup.'
   $process = Start-Process @start

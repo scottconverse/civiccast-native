@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.20
+current: v1.0.0-rc.1
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,20 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.20
+  - tag: v1.0.0-rc.1
     status: current
+    notes: >-
+      Published October 30, 2026 at 05:38:49 UTC by explicit owner direction.
+      Signed source 6571f84186ea5a9373be31f92b8f3fb883fa3863, build 41000622174 attempt 2.
+      Setup 261531432 bytes SHA256 2311071b11b44d043977bbe8973e4a0c12db7e6bbddd5d057070cf13ec9c61ac.
+      Required source CI and signed component/bootstrap/product GStreamer checks passed.
+      Owner stopped remaining isolated installed acceptance before publication;
+      those checks are unexecuted, not passed. Human language review pending and nonblocking.
+      Five unchanged model packs reuse existing Beta20 release downloads.
+      See docs/releases/v1.0.0-rc.1-verification.md for limitations.
+  - tag: v1.0.0-beta.20
+    status: superseded
+    superseded_by: v1.0.0-rc.1
     notes: >-
       Current package revised October 29, 2026 with merged PR279/280, signed source
       ead567a33614a65554a69ef186342d691c43b7dc, build40835548156, setup SHA-256

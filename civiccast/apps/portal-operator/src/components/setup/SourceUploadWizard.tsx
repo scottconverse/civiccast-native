@@ -121,8 +121,8 @@ function ResultPanel({
         {message} <strong>Next step.</strong> {nextStep}
       </p>
       <p className="m-0 mt-2">Saving media or a source does not prove playback or publish it.</p>
-      <Link to={source ? '/health' : '/assets'} className="mt-2 inline-block underline">
-        {source ? 'Check broadcast readiness' : 'Open Assets to package and publish this recording'}
+      <Link to={source || sample ? '/health' : '/assets'} className="mt-2 inline-block underline">
+        {source || sample ? 'Check broadcast readiness' : 'Open Assets to package and publish this recording'}
       </Link>
     </div>
   )

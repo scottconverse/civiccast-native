@@ -511,6 +511,30 @@ def reporting_store(tmp_path: Path) -> Iterator[ReportingStore]:
         eng.dispose()
 
 
+def test_recorder_keeps_planned_start_separate_from_observed_output(reporting_store) -> None:
+    from types import SimpleNamespace
+
+    planned = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+    actual = planned + timedelta(seconds=7)
+    item = SimpleNamespace(channel_id="gov", asset_id="asset-a", scheduled_at=planned)
+    recorder = StoreAsRunRecorder(
+        reporting_store, station_id="civiccast-station", schedule_lookup=lambda _id: item
+    )
+    recorder.record_transition(
+        channel_id="gov",
+        source_kind="program",
+        asset_id="asset-a",
+        source_label="A",
+        actual_start=actual,
+        proof_event_id="proof-1",
+        schedule_item_id="schedule-a",
+    )
+    entry = reporting_store.list_as_run("civiccast-station")[0]
+    assert entry.scheduled_start == planned
+    assert entry.actual_start == actual
+    assert entry.schedule_item_id == "schedule-a"
+
+
 def test_store_recorder_appends_and_stitches_durations(
     reporting_store: ReportingStore,
 ) -> None:
@@ -673,3 +697,40 @@ def test_reload_uses_real_recorder_stitch_end_to_end(
     assert council.duration_s == int((next_row.actual_start - council.actual_start).total_seconds())
     assert next_row.duration_s == 0  # still open until next transition / close
     assert next_row.actual_end == next_row.actual_start
+
+
+def test_native_output_events_update_labels_once_and_ignore_partial_lines(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    recorder = _FakeRecorder()
+    process = _FakeProcess()
+    daemon = _daemon(store, tmp_path, recorder, _program_plan(tmp_path), process)
+    daemon._encoder_strategy.observes_source_output = True
+    log = tmp_path / "native-worker.log"
+    daemon._stderr_logs["gov"] = log
+    events = [
+        {
+            "pid": 9999,
+            "kind": "program",
+            "asset_id": f"asset-{i}",
+            "label": f"Program {i}",
+            "event_id": f"event-{i}",
+            "observed_at": 1793318400 + i,
+            "schedule_item_id": f"occurrence-{i}",
+        }
+        for i in range(2)
+    ]
+    lines = ["CIVICCAST_SOURCE_OUTPUT " + json.dumps(event) + "\n" for event in events]
+    log.write_text(lines[0] + lines[1][:30])
+    daemon._poll_source_output("gov", process)
+    assert len(recorder.transitions) == 1
+    assert store.read_state("gov").current_source_label == "Program 0"
+    with log.open("a") as stream:
+        stream.write(lines[1][30:])
+    daemon._poll_source_output("gov", process)
+    daemon._poll_source_output("gov", process)
+    assert [row.asset_id for row in recorder.transitions] == ["asset-0", "asset-1"]
+    daemon._write_state(
+        "gov", "ON_AIR", current_source_label="Old plan first item", pid=process.pid
+    )
+    assert store.read_state("gov").current_source_label == "Program 1"

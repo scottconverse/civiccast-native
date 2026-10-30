@@ -26,7 +26,7 @@ vi.mock('../../api/client', () => ({
   uploadAssetFile: vi.fn(),
 }))
 
-import { createSetupLiveSource, getSourceSetup } from '../../api/client'
+import { createSampleRehearsalUpload, createSetupLiveSource, getSourceSetup } from '../../api/client'
 import type { SourceSetupReport } from '../../types/api.generated'
 import { SourceUploadWizard } from './SourceUploadWizard'
 
@@ -78,4 +78,12 @@ describe('SourceUploadWizard manual link', () => {
     expect(screen.getByText('Saving media or a source does not prove playback or publish it.')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Check broadcast readiness' }).getAttribute('href')).toBe('/health')
   })
+})
+
+it('routes the recorded sample to private readiness instead of a dead RTMP source', async () => {
+  vi.mocked(createSampleRehearsalUpload).mockResolvedValue({ status: 'ready', title: 'CivicCast sample rehearsal', message: 'Sample recording created.', next_step: 'Check broadcast readiness.', live_source_id: null, source_type: null })
+  renderWizard()
+  fireEvent.click(await screen.findByRole('button', { name: /Bundled sample video/i }))
+  fireEvent.click(screen.getByRole('button', { name: 'Create sample media' }))
+  expect((await screen.findByRole('link', { name: 'Check broadcast readiness' })).getAttribute('href')).toBe('/health')
 })

@@ -4412,3 +4412,4 @@ def test_full_asset_conform_rides_and_the_cache_meta_says_ride(tmp_path: Path) -
     assert len(metas) == 1
     assert metas[0]["loudness_method"] == "ride"
     assert metas[0]["full_asset_conform"] is True
+    assert metas[0]["loudness_measurement_source"] == "input_probe"

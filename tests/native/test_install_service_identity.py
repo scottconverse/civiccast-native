@@ -104,6 +104,41 @@ def test_virtual_account_configuration_uses_null_password(installed, monkeypatch
     assert calls[0][9] is None
 
 
+def test_model_data_is_writable_but_runtime_stays_read_only(installed, monkeypatch):
+    import win32security
+
+    from civiccast.native.service_identity import SERVICE_SID, restrict_data_directory
+
+    root, state = installed
+    state["account"] = SERVICE_ACCOUNT
+    model = root / "models" / "ollama" / "manifests-v2" / "old.json"
+    model.parent.mkdir(parents=True)
+    model.write_text("{}", encoding="utf-8")
+    legacy = root / "packs" / "local-ai-model" / "models" / "manifests"
+    legacy.mkdir(parents=True)
+    monkeypatch.setattr(migration, "restrict_data_directory", restrict_data_directory)
+    monkeypatch.setattr(migration, "_grant_tree", grant_windows_tree)
+
+    migration.configure_service_identity(root)
+
+    def service_mask(path):
+        acl = win32security.GetFileSecurity(
+            str(path), win32security.DACL_SECURITY_INFORMATION
+        ).GetSecurityDescriptorDacl()
+        return next(
+            acl.GetAce(index)[1]
+            for index in range(acl.GetAceCount())
+            if win32security.ConvertSidToStringSid(acl.GetAce(index)[2]) == SERVICE_SID
+            and not acl.GetAce(index)[0][1] & win32security.INHERITED_ACE
+        )
+
+    assert service_mask(model) == 0x001301BF
+    assert service_mask(model.parent.parent) == 0x001301BF
+    assert service_mask(legacy) == 0x001301BF
+    assert service_mask(root) == 0x001200A9
+    assert service_mask(root / "runtime" / "python.exe") == 0x001200A9
+
+
 def test_data_root_grant_does_not_override_protected_installer_subtrees(installed, monkeypatch):
     import win32security
 

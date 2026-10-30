@@ -1,0 +1,217 @@
+{
+  "scope": "Five 5-second arrivals per channel; saved R9 speech, development host, not installed R7 acceptance",
+  "tap_status": "PASS",
+  "cycles": [
+    {
+      "elapsed_seconds": 5.04685530000279,
+      "scan": {
+        "consumed_segments": 3,
+        "quarantined_segments": 0,
+        "committed_review_items": 0,
+        "dropped_overload_segments": 0,
+        "expired_unconfirmed_cues": 0,
+        "channels": [
+          "education",
+          "government",
+          "public"
+        ],
+        "overloaded_channels": [],
+        "paused_channels": []
+      },
+      "providers": {
+        "public": [
+          "whistle-primary",
+          null
+        ],
+        "education": [
+          "whistle-primary",
+          null
+        ],
+        "government": [
+          "whistle-primary",
+          null
+        ]
+      }
+    },
+    {
+      "elapsed_seconds": 2.5791453999991063,
+      "scan": {
+        "consumed_segments": 3,
+        "quarantined_segments": 0,
+        "committed_review_items": 0,
+        "dropped_overload_segments": 0,
+        "expired_unconfirmed_cues": 0,
+        "channels": [
+          "education",
+          "government",
+          "public"
+        ],
+        "overloaded_channels": [],
+        "paused_channels": []
+      },
+      "providers": {
+        "public": [
+          "whistle-primary",
+          null
+        ],
+        "education": [
+          "whistle-primary",
+          null
+        ],
+        "government": [
+          "whistle-primary",
+          null
+        ]
+      }
+    },
+    {
+      "elapsed_seconds": 4.23002880000422,
+      "scan": {
+        "consumed_segments": 3,
+        "quarantined_segments": 0,
+        "committed_review_items": 0,
+        "dropped_overload_segments": 0,
+        "expired_unconfirmed_cues": 0,
+        "channels": [
+          "education",
+          "government",
+          "public"
+        ],
+        "overloaded_channels": [],
+        "paused_channels": []
+      },
+      "providers": {
+        "public": [
+          "whistle-primary",
+          null
+        ],
+        "education": [
+          "whistle-primary",
+          null
+        ],
+        "government": [
+          "whistle-primary",
+          null
+        ]
+      }
+    },
+    {
+      "elapsed_seconds": 3.3563781999982893,
+      "scan": {
+        "consumed_segments": 3,
+        "quarantined_segments": 0,
+        "committed_review_items": 0,
+        "dropped_overload_segments": 0,
+        "expired_unconfirmed_cues": 0,
+        "channels": [
+          "education",
+          "government",
+          "public"
+        ],
+        "overloaded_channels": [],
+        "paused_channels": []
+      },
+      "providers": {
+        "public": [
+          "whistle-primary",
+          null
+        ],
+        "education": [
+          "whistle-primary",
+          null
+        ],
+        "government": [
+          "whistle-primary",
+          null
+        ]
+      }
+    },
+    {
+      "elapsed_seconds": 4.7866893999962485,
+      "scan": {
+        "consumed_segments": 3,
+        "quarantined_segments": 0,
+        "committed_review_items": 0,
+        "dropped_overload_segments": 0,
+        "expired_unconfirmed_cues": 0,
+        "channels": [
+          "education",
+          "government",
+          "public"
+        ],
+        "overloaded_channels": [],
+        "paused_channels": []
+      },
+      "providers": {
+        "public": [
+          "whistle-primary",
+          null
+        ],
+        "education": [
+          "whistle-primary",
+          null
+        ],
+        "government": [
+          "whistle-primary",
+          null
+        ]
+      }
+    }
+  ],
+  "transport_status": "PASS",
+  "feed": {
+    "channels": 3,
+    "cues_dropped_before_delivery": 0,
+    "cues_sent": 15,
+    "sent_channels": [
+      "education",
+      "government",
+      "public"
+    ]
+  },
+  "native_manifest": "runtime-manifest.json verified against 246 on-disk file(s) (sibling trust artifacts excluded)",
+  "channels": {
+    "education": {
+      "status": "PASS",
+      "cue_count": 5,
+      "transport_stream_bytes": 3724656,
+      "decode_back": {
+        "detail": "caption text survived the embed+decode-back round trip, decoded entirely in-tree via tsdemux -> h264parse -> h264ccextractor -> ccconverter -> cea608tott (no ffmpeg): 'WEBVTT\\r\\n\\r\\n00:00:01.558 --> 00:00:04.991\\r\\nfire moves from house to house.\\r\\nSo if our goal is to have\\r\\n\\r\\n00:00:04.991 --> 00:00:05.591\\r\\nrealists\\r\\n\\r\\n00:00:06.391 --> 00:00:09.325\\r\\nrealistic simulations of fire\\r\\nbehavior. In the built\\r\\n\\r\\n00:00:09.325 --> 00:00:10.725\\r\\nenvironment we really\\r\\n\\r\\n00:00:11.458 --> 00:00:14.025\\r\\nneed to account for this. I have\\r\\na colleague, Maria Freddyani,\\r\\n\\r\\n00:00:14.025 --> 00:00:15.391\\r\\nwho was doing exactly that.\\r\\n\\r\\n00:00:15.825 --> 00:00:18.525\\r\\nShe has figured out a way to\\r\\nmodel these embers by\\r\\n\\r\\n00:00:18.525 --> 00:00:19.291\\r\\nconsidering\\r\\n\\r\\n00:00:20.125 --> 00:00:22.958\\r\\nthem to be, more or less,\\r\\nparticles in the air, their big\\r\\n\\r\\n00:00:22.958 --> 00:00:23.958\\r\\nparticles, they are.\\r\\n\\r\\n'",
+        "exit_code": 0,
+        "normalized_text_check": true,
+        "status": "PASS",
+        "stderr": ""
+      }
+    },
+    "government": {
+      "status": "PASS",
+      "cue_count": 5,
+      "transport_stream_bytes": 3722964,
+      "decode_back": {
+        "detail": "caption text survived the embed+decode-back round trip, decoded entirely in-tree via tsdemux -> h264parse -> h264ccextractor -> ccconverter -> cea608tott (no ffmpeg): \"WEBVTT\\r\\n\\r\\n00:00:01.425 --> 00:00:04.191\\r\\nI mean, so in the city of\\r\\nBrighton, we amended out the\\r\\n\\r\\n00:00:04.191 --> 00:00:05.558\\r\\nwhole board of appeal.\\r\\n\\r\\n00:00:06.291 --> 00:00:08.525\\r\\nappeals thing and replacing with\\r\\na quote-unquote curing officer\\r\\n\\r\\n00:00:08.525 --> 00:00:09.425\\r\\npiece from one guy.\\r\\n\\r\\n00:00:10.325 --> 00:00:13.058\\r\\nAnd that's because you can't get\\r\\nfive and drain community of\\r\\n\\r\\n00:00:13.058 --> 00:00:14.025\\r\\n50,000 that are.\\r\\n\\r\\n00:00:14.725 --> 00:00:19.125\\r\\nyou know, overwhelming. We have\\r\\na background in code.\\r\\n\\r\\n00:00:19.591 --> 00:00:22.191\\r\\nsomething that's line up yeah so\\r\\nit's it's it's it works works\\r\\n\\r\\n00:00:22.191 --> 00:00:22.991\\r\\nwell the only problem\\r\\n\\r\\n\"",
+        "exit_code": 0,
+        "normalized_text_check": true,
+        "status": "PASS",
+        "stderr": ""
+      }
+    },
+    "public": {
+      "status": "PASS",
+      "cue_count": 5,
+      "transport_stream_bytes": 3726348,
+      "decode_back": {
+        "detail": "caption text survived the embed+decode-back round trip, decoded entirely in-tree via tsdemux -> h264parse -> h264ccextractor -> ccconverter -> cea608tott (no ffmpeg): \"WEBVTT\\r\\n\\r\\n00:00:01.258 --> 00:00:02.625\\r\\nStay kind of moistened's up.\\r\\n\\r\\n00:00:06.225 --> 00:00:08.958\\r\\neast of the Rockies, especially\\r\\npretty high due point levels\\r\\n\\r\\n00:00:08.958 --> 00:00:10.791\\r\\ninto one's day, two's day and\\r\\none's day.\\r\\n\\r\\n00:00:10.791 --> 00:00:12.691\\r\\nthe Thursday, lots and\\r\\nmoisturiously, I'm the\\r\\n\\r\\n00:00:12.691 --> 00:00:13.825\\r\\nThursday's moisturious.\\r\\n\\r\\n00:00:14.491 --> 00:00:17.925\\r\\nmoist, the law levels are moist,\\r\\ngood news for the thunderstorms\\r\\n\\r\\n00:00:17.925 --> 00:00:18.425\\r\\nat all.\\r\\n\\r\\n00:00:19.325 --> 00:00:21.758\\r\\nLet's take a look at those.\\r\\nThese are six hour frames\\r\\n\\r\\n00:00:21.758 --> 00:00:22.758\\r\\nshowing into three\\r\\n\\r\\n\"",
+        "exit_code": 0,
+        "normalized_text_check": true,
+        "status": "PASS",
+        "stderr": ""
+      }
+    }
+  },
+  "sha256": {
+    "civiccast/captions/tap.py": "606d984c04b8826b2e4a98637afad79e1f96366125ba300a9945018c7901f92f",
+    "civiccast/captions/runtime.py": "74fb39f05e7272c10dcb2dc70d7f3f01f62f5a717af95804fa1f3dfe1e804066",
+    "civiccast/egress/gst/engine.py": "0cb543133b4c556c4e53b104d977cf488dfe94d4e90274e6e14a2da3a4089540",
+    "scripts/prove_native_live_caption_transport.py": "7280cabca1a455e13455290ad2fbc63843876940559e9c522fb818da258a2d34"
+  }
+}

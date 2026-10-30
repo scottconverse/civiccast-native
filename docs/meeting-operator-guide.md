@@ -62,9 +62,10 @@ description that matches the real equipment instead of thinking in acronyms:
 If you do not know which one to choose, ask the admin to label sources before
 meeting night.
 
-For a no-camera dry run, choose the sample recording or uploaded test file path
-in **Run Meeting**. That lets you prove the local recording, review, publish,
-and resident-preview path before the room camera is available.
+For a no-camera dry run, create the bundled sample under **First Setup**, then
+choose **Check broadcast readiness**. This uses a private file rehearsal; the
+sample is not a live RTMP camera. Use **Assets** and **Publish** for the separate
+recording, review and resident-preview workflow before the room camera is available.
 
 ## Remote Ingest
 

@@ -534,6 +534,10 @@ class WhistleRuntime:
     device = "cpu"
     compute_type = "cactus-quants"
     num_workers = 3
+    # Live Whistle publishes its first hypothesis; it does not need the five
+    # seconds of repeated audio used by the batch agreement policy. Keep one
+    # second of boundary context without recognizing almost every sample twice.
+    caption_overlap_seconds = 1.0
     caption_backlog_grace_seconds = int(
         (channel_workers * 2 + 1) * _WHISTLE_REQUEST_TIMEOUT_SECONDS
     )

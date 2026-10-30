@@ -140,7 +140,7 @@ class ReportingStore:
 
         Optional ``channel_id`` filter, ``source_kind`` filter (e.g. ``"spot"``
         for the affidavit-billing hot path — E-5), and a half-open
-        ``[from_ts, to_ts)`` window on ``actual_start``. All bound parameters
+        ``[from_ts, to_ts)`` window on interval overlap. All bound parameters
         (index-path scan)."""
         with self._session() as session:
             stmt = (
@@ -153,7 +153,13 @@ class ReportingStore:
             if source_kind is not None:
                 stmt = stmt.where(AsRunLogEntryDb.source_kind == source_kind)
             if from_ts is not None:
-                stmt = stmt.where(AsRunLogEntryDb.actual_start >= from_ts)
+                stmt = stmt.where(
+                    (AsRunLogEntryDb.actual_end > from_ts)
+                    | (
+                        (AsRunLogEntryDb.duration_s == 0)
+                        & (AsRunLogEntryDb.actual_start >= from_ts)
+                    )
+                )
             if to_ts is not None:
                 stmt = stmt.where(AsRunLogEntryDb.actual_start < to_ts)
             return [_entry_to_model(r) for r in session.execute(stmt).scalars().all()]

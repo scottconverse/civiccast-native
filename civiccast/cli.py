@@ -1151,6 +1151,9 @@ def _build_egress_source_plan_provider() -> ScheduleSourcePlanProvider:
     session_factory = _build_cli_session_factory()
     asset_store = PostgresAssetStore(session_factory)
     schedule_store = PostgresScheduleStore(session_factory)
+    from civiccast.egress.store import PostgresEgressStore
+
+    egress_store = PostgresEgressStore(session_factory)
     return ScheduleSourcePlanProvider(
         schedule_items_provider=lambda channel_id: schedule_store.list(
             channel_id=channel_id,
@@ -1158,6 +1161,11 @@ def _build_egress_source_plan_provider() -> ScheduleSourcePlanProvider:
         ),
         asset_resolver=asset_store.get_staff_row,
         loop_schedule=schedule_loop_enabled_from_env(),
+        loop_schedule_provider=lambda channel_id: (
+            config.repeat_schedule
+            if (config := egress_store.get_config(channel_id)) is not None
+            else schedule_loop_enabled_from_env()
+        ),
         max_segments=1 if gstreamer_engine_selected() else 8,
         max_segment_seconds=(
             gstreamer_source_segment_seconds_from_env() if gstreamer_engine_selected() else None

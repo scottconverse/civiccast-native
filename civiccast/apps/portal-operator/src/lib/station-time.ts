@@ -51,16 +51,16 @@ function sameWallClock(a: WallParts, b: WallParts): boolean {
 /** Resolve a datetime-local string in a station zone. Gaps return null;
  * repeated clocks choose the earlier instant, matching the scheduler. */
 export function stationWallClockToDate(value: string, timeZone: string): Date | null {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/)
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
   if (!match) return null
   const requested: WallParts = {
     year: Number(match[1]), month: Number(match[2]), day: Number(match[3]),
-    hour: Number(match[4]), minute: Number(match[5]), second: 0,
+    hour: Number(match[4]), minute: Number(match[5]), second: Number(match[6] ?? 0),
   }
-  const wallAsUtc = Date.UTC(requested.year, requested.month - 1, requested.day, requested.hour, requested.minute)
+  const wallAsUtc = Date.UTC(requested.year, requested.month - 1, requested.day, requested.hour, requested.minute, requested.second)
   const check = new Date(wallAsUtc)
   if (check.getUTCFullYear() !== requested.year || check.getUTCMonth() + 1 !== requested.month ||
-      check.getUTCDate() !== requested.day || requested.hour > 23 || requested.minute > 59) return null
+      check.getUTCDate() !== requested.day || requested.hour > 23 || requested.minute > 59 || requested.second > 59) return null
 
   const offsets = new Set<number>()
   // The offsets surrounding the requested wall clock include both sides of
@@ -88,7 +88,7 @@ export function dateToStationDateTimeLocal(instant: Date, timeZone: string): str
   const p = partsAt(instant, timeZone)
   if (!p) return ''
   const pad = (n: number) => String(n).padStart(2, '0')
-  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}${p.second ? `:${pad(p.second)}` : ''}`
 }
 
 export function formatStationInstant(

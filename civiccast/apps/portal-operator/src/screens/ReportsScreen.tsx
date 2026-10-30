@@ -452,6 +452,10 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
       <p className="mb-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
         Planned start and actual on-air start are separate timestamps. VOD playback preroll does
         not change when a program went on air.
+        {' '}An observed output start does not prove reception at a television. End and duration
+        are finalized at the next observed source change or channel stop; an unfinished row is
+        shown as “Awaiting end”, not a zero-length completed broadcast. Older records are retained
+        as recorded and are not repaired retroactively.
       </p>
       <table className="w-full text-sm" aria-label="As-run report">
         <thead>
@@ -465,7 +469,7 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
             <th className="px-2 py-1 text-left">Source</th>
             <th className="px-2 py-1 text-left">Asset</th>
             <th className="px-2 py-1 text-left">Category</th>
-            <th className="px-2 py-1 text-left">Verified</th>
+            <th className="px-2 py-1 text-left">Output start observed</th>
           </tr>
         </thead>
         <tbody>
@@ -480,8 +484,8 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
               <td className="px-2 py-1 text-xs">
                 {startVariance(row.entry.scheduled_start, row.entry.actual_start)}
               </td>
-              <td className="cc-mono px-2 py-1 text-xs">{row.entry.actual_end}</td>
-              <td className="cc-tabular px-2 py-1 text-right">{formatHms(row.entry.duration_s)}</td>
+              <td className="cc-mono px-2 py-1 text-xs">{row.entry.actual_end === row.entry.actual_start ? 'Awaiting end' : row.entry.actual_end}</td>
+              <td className="cc-tabular px-2 py-1 text-right">{row.entry.actual_end === row.entry.actual_start ? 'Not finalized' : formatHms(row.entry.duration_s)}</td>
               <td className="px-2 py-1 text-xs">{row.entry.source_kind}</td>
               <td className="cc-mono px-2 py-1 text-xs">{row.entry.asset_id ?? ''}</td>
               <td className="px-2 py-1 text-xs">{row.category ?? ''}</td>

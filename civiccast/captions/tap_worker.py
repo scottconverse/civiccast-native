@@ -335,7 +335,7 @@ class CaptionTapWorkerSettings:
     tap_root: Path | None = None
     segment_seconds: float = 5.0
     atomic_segments: bool = False
-    overlap_seconds: float = 5.0
+    overlap_seconds: float | None = None
     poll_seconds: float = 2.0
     # ``None`` means select from the constructed runtime: one channel on CPU,
     # up to three on CUDA.  An environment value remains an exact override.
@@ -371,8 +371,10 @@ class CaptionTapWorkerSettings:
                 "CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS", defaults.segment_seconds
             ),
             atomic_segments=_env_bool("CIVICCAST_CAPTION_TAP_ATOMIC", defaults.atomic_segments),
-            overlap_seconds=_env_float(
-                "CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", defaults.overlap_seconds
+            overlap_seconds=(
+                _env_float("CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", 5.0)
+                if os.environ.get("CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", "").strip()
+                else None
             ),
             poll_seconds=_env_float("CIVICCAST_CAPTION_TAP_POLL_SECONDS", defaults.poll_seconds),
             max_channel_workers=(
@@ -604,7 +606,7 @@ class CaptionTapWorker:
         review_store: CaptionReviewStore,
         segment_seconds: float = 5.0,
         atomic_segments: bool = False,
-        overlap_seconds: float = 5.0,
+        overlap_seconds: float | None = None,
         max_channel_workers: int | None = None,
         max_backlog_segments: int = 2,
         overload_persistence_scans: int = DEFAULT_OVERLOAD_PERSISTENCE_SCANS,
@@ -641,7 +643,9 @@ class CaptionTapWorker:
         else:
             self._working_audio_limit_segments = DEFAULT_WORKING_AUDIO_LIMIT_SEGMENTS
         self._atomic_segments = atomic_segments
-        if overlap_seconds <= 0:
+        if overlap_seconds is None:
+            overlap_seconds = float(getattr(runtime, "caption_overlap_seconds", 5.0))
+        if not math.isfinite(overlap_seconds) or overlap_seconds <= 0:
             raise ValueError("Caption tap overlap_seconds must be greater than zero.")
         self._overlap_seconds = overlap_seconds
         self._max_channel_workers_override = max_channel_workers

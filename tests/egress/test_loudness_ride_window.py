@@ -33,6 +33,23 @@ import pytest
 from civiccast.egress import loudness_ride as lr
 from civiccast.egress.models import CanonicalProfile, EgressSourceSegment
 
+
+def test_short_tail_loudness_warning_keeps_actual_window_provenance():
+    # The offset tiling's last window is only 10.2 seconds, not four minutes.
+    levels = [-16.0] * 3600 + [-13.0] * 102
+    attempt = lr.attempt_from_measurement(
+        _stderr(levels),
+        round_index=0,
+        limit_dbtp=-2,
+        target_lufs=-16,
+        duration_s=370.2,
+    )
+    assert attempt.worst_window_start_s == 360
+    assert attempt.worst_window_end_s == pytest.approx(370.2)
+    assert attempt.worst_window_end_s - attempt.worst_window_start_s == pytest.approx(10.2)
+    assert attempt.worst_window_err_lu > 0.9
+
+
 # ---------------------------------------------------------------------------
 # Canned ebur128 output.  The block line is the shape FFmpeg writes (and the
 # module's own ``_RE_SERIES`` reads); the summary lines are the two the artifact

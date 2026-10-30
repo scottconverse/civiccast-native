@@ -278,6 +278,9 @@ function WatchFolderSection() {
         </button>
       </form>
 
+      {createMutation.isError && <InlineError error={createMutation.error} />}
+      <p className="text-xs">Choose a folder readable by the CivicCast station service. Personal Desktop folders may need a read permission grant; do not grant access to your entire profile.</p>
+
       {browsing && (
         <FolderBrowser
           initialPath={monitorPath}

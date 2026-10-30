@@ -2008,6 +2008,8 @@ class LeveledAttempt:
     wall_s: float
     decoded_peak_dbfs: float | None = None
     encoder: str = ""
+    worst_window_start_s: float | None = None
+    worst_window_end_s: float | None = None
 
     def loudness_ok(self, *, window_tol_lu: float, whole_tol_lu: float) -> bool:
         """Whether both loudness gates hold for this attempt's own artifact."""
@@ -2208,13 +2210,17 @@ def attempt_from_measurement(
     """
     series = parse_ebur128_series(stderr)
     span = series_duration_s(series) if duration_s is None else duration_s
-    worst, _worst_start = worst_window_deviation_lu(series, span, target_lufs=target_lufs)
+    worst, worst_start = worst_window_deviation_lu(series, span, target_lufs=target_lufs)
     return LeveledAttempt(
         round_index=round_index,
         limit_dbtp=limit_dbtp,
         emitted_dbtp=parse_true_peak_dbtp(stderr),
         emitted_lufs=parse_integrated_lufs(stderr),
         worst_window_err_lu=worst,
+        worst_window_start_s=worst_start,
+        worst_window_end_s=(
+            min(worst_start + LOUDNESS_WINDOW_S, span) if worst_start is not None else None
+        ),
         whole_err_lu=whole_program_err_lu(series, target_lufs=target_lufs),
         wall_s=wall_s,
         decoded_peak_dbfs=decoded_peak_dbfs,

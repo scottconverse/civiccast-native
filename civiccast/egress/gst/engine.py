@@ -1119,6 +1119,8 @@ class GstPlayoutEngine:
         self._loop: GLib.MainLoop | None = None
         # S9-5 stall watchdog state (output-buffer progress past the mux).
         self._output_buffers = 0
+        self._output_bytes = 0
+        self._output_bytes_snapshot = 0
         self._stall_last_count = 0
         self._stall_last_advance_t = 0.0
         # Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z):
@@ -1539,6 +1541,45 @@ class GstPlayoutEngine:
                 ):
                     raise RuntimeError(f"failed to link audio sub-chain into {aconcat.get_name()}")
         if leg.label == "program":
+            if leg.subchain_sources:
+                sources = dict(zip(pad_kinds, leg.subchain_sources, strict=True))
+                markers = {name: uuid.uuid4().hex for name in sources}
+                pending_source: str | None = None
+
+                def mark_source(pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+                    nonlocal pending_source
+                    # Serialized and sticky: it follows the actual concat segment
+                    # through selection/queues, including a prerolled replacement.
+                    # notify::active-pad alone can run well ahead of the output.
+                    with contextlib.suppress(Exception):
+                        event = (
+                            info.get_event()
+                            if info.type & Gst.PadProbeType.EVENT_DOWNSTREAM
+                            else None
+                        )
+                        if event is not None and event.type == Gst.EventType.SEGMENT:
+                            active = vconcat.get_property("active-pad")
+                            name = active.get_name() if active is not None else ""
+                            if name in sources:
+                                pending_source = json.dumps(
+                                    {**sources[name], "event_id": markers[name]}
+                                )
+                        elif info.type & Gst.PadProbeType.BUFFER and pending_source is not None:
+                            # The SEGMENT must finish propagation before injecting
+                            # another sticky event (Gst otherwise replays it recursively).
+                            payload, pending_source = pending_source, None
+                            structure = Gst.Structure.new_empty("civiccast-source")
+                            structure.set_value("identity", payload)
+                            pad.push_event(
+                                Gst.Event.new_custom(
+                                    Gst.EventType.CUSTOM_DOWNSTREAM_STICKY, structure
+                                )
+                            )
+                    return Gst.PadProbeReturn.OK
+
+                vconcat.get_static_pad("src").add_probe(
+                    Gst.PadProbeType.EVENT_DOWNSTREAM | Gst.PadProbeType.BUFFER, mark_source
+                )
             self._board_live_concat_kinds[vconcat.get_name()] = pad_kinds
             if hasattr(vconcat, "connect"):
                 vconcat.connect("notify::active-pad", self._on_board_concat_active_notify)
@@ -2664,12 +2705,78 @@ class GstPlayoutEngine:
             # plain read needs no lock — the reader may observe a value one behind, which
             # only ever delays a stall verdict by a tick, never causes a false stall.
             self._output_buffers += 1
+            with contextlib.suppress(Exception):
+                if _info.type & Gst.PadProbeType.BUFFER_LIST:
+                    buffers = _info.get_buffer_list()
+                    if buffers is not None:
+                        self._output_bytes += sum(
+                            buffers.get(index).get_size() for index in range(buffers.length())
+                        )
+                else:
+                    buffer = _info.get_buffer()
+                    if buffer is not None:
+                        self._output_bytes += buffer.get_size()
+            self._flush_source_output()
             return Gst.PadProbeReturn.OK
 
         src.add_probe(Gst.PadProbeType.BUFFER | Gst.PadProbeType.BUFFER_LIST, _count)
         # U30: armed AFTER the counter, so ``probes[0]`` on this pad stays the
         # progress signal the stall watchdog reads (see the test fixtures).
         self._install_eos_observer(src, self._make_mux_src_eos_label())
+
+    def _flush_source_output(self) -> None:
+        """Publish only after the selected video reached encoding and TS advanced."""
+        lock = getattr(self, "_source_output_lock", None)
+        if lock is None:
+            return
+        with lock:
+            confirmed = self._source_output_confirmed
+            self._source_output_confirmed: list[dict[str, Any]] = []
+        for source in confirmed:
+            print(
+                "CIVICCAST_SOURCE_OUTPUT "
+                + json.dumps(
+                    {
+                        **source,
+                        "pid": os.getpid(),
+                        "observed_at": time.time(),
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _install_source_output_observer(self) -> None:
+        # Raw selected frame -> encoded video at mux -> TS output. This is
+        # output-path evidence, not a claim that a receiver displayed the frame.
+        self._source_output_lock = threading.Lock()
+        self._source_output_confirmed = []
+        self._source_output_pending: list[tuple[int, dict[str, Any]]] = []
+        current: dict[str, Any] = {}
+        selected_id: str | None = None
+
+        def selected(pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            nonlocal current, selected_id
+            with contextlib.suppress(Exception):
+                if info.type & Gst.PadProbeType.EVENT_DOWNSTREAM:
+                    event = info.get_event()
+                    structure = event.get_structure() if event is not None else None
+                    if structure is not None and structure.get_name() == "civiccast-source":
+                        current = json.loads(structure.get_string("identity"))
+                elif info.type & Gst.PadProbeType.BUFFER:
+                    identity = current.get("event_id")
+                    if identity and identity != selected_id:
+                        _, running_time, _ = self._measure_first_buffer(pad, info)
+                        if running_time is not None:
+                            with self._source_output_lock:
+                                self._source_output_pending.append((running_time, dict(current)))
+                            selected_id = identity
+            return Gst.PadProbeReturn.OK
+
+        if self.selector is not None:
+            self.selector.get_static_pad("src").add_probe(
+                Gst.PadProbeType.EVENT_DOWNSTREAM | Gst.PadProbeType.BUFFER, selected
+            )
 
     # -- U16 start-side diagnostic: what the OUTPUT side first saw ---------------
     #
@@ -2869,6 +2976,14 @@ class GstPlayoutEngine:
                 pts = buffer.pts
                 if isinstance(pts, int) and 0 <= pts < Gst.CLOCK_TIME_NONE:
                     self._mux_pad_airing_rt[pad_name] = pts
+                    # Reuse the mux's consumed-video frontier, rather than
+                    # treating encoder arrival (which can be dropped) as output.
+                    lock = getattr(self, "_source_output_lock", None)
+                    if lock is not None and self._mux_pad_stream_label(_pad) == "video":
+                        with lock:
+                            pending = self._source_output_pending
+                            while pending and pending[0][0] <= pts:
+                                self._source_output_confirmed.append(pending.pop(0)[1])
 
         return _record_mux_pad_consumed
 
@@ -3557,6 +3672,7 @@ class GstPlayoutEngine:
         self._output_buffers_at_arm = self._output_buffers
         self._first_output_seen = False
         self._last_output_progress_print_t = self._stall_last_advance_t
+        self._output_bytes_snapshot = getattr(self, "_output_bytes", 0)
         # U59 round 4: the rate diagnostic's first interval starts at arm time --
         # the same moment the ladder below takes its baseline -- and its episode
         # latch starts clean (a worker that just armed has no episode in flight).
@@ -3625,6 +3741,7 @@ class GstPlayoutEngine:
         silence plus the watchdog kill."""
         if now - self._last_output_progress_print_t < _OUTPUT_PROGRESS_INTERVAL_S:
             return
+        elapsed = now - self._last_output_progress_print_t
         self._last_output_progress_print_t = now
         delta = self._output_buffers - self._output_buffers_at_arm
         # U30: the total above cannot say WHICH stream is advancing -- it kept
@@ -3632,8 +3749,21 @@ class GstPlayoutEngine:
         # suffix names each counted mux sink pad's delta over THIS interval, and
         # is "" (line byte-identical) whenever nothing was counted.
         mux_in = self._mux_input_delta_suffix(now - self._mux_input_snapshot_t)
+        # Report measured encoded video cadence and TS throughput, not profile
+        # targets. The existing health parser understands these progress fields.
+        # Missing video counters stay unmeasured rather than being invented.
+        output_bytes = getattr(self, "_output_bytes", 0)
+        previous_bytes = getattr(self, "_output_bytes_snapshot", output_bytes)
+        self._output_bytes_snapshot = output_bytes
+        video = re.search(r"\bvideo=\+(\d+)", mux_in)
+        metrics = ""
+        if elapsed > 0:
+            bitrate = max(0, output_bytes - previous_bytes) * 8 / elapsed / 1000
+            metrics = f" bitrate={bitrate:.2f}kbits/s"
+            if video is not None:
+                metrics += f" fps={int(video.group(1)) / elapsed:.2f}"
         print(
-            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING{mux_in}",
+            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING{mux_in}{metrics}",
             file=sys.stderr,
             flush=True,
         )
@@ -5058,6 +5188,7 @@ class GstPlayoutEngine:
         bus.add_signal_watch()
         bus.connect("message", self._on_bus)
         self._install_output_counter()  # S9-5: count TS buffers past the mux
+        self._install_source_output_observer()
         # U16: name what the OUTPUT side first saw, per stream. Armed here rather
         # than per-reload because the start of a worker's timeline is the other
         # end of the same question the reload diagnostic asks.

@@ -1,3 +1,9 @@
+## RC2 operator guidance — October 30, 2026
+
+**Output start observed** replaces the ambiguous Verified label. An unfinished row shows Awaiting end / Not finalized. Internal source boundaries update current labels and as-run rows; preparation-window continuations stay one play. Aggregate airtime is clipped to the selected report window; old ledger rows are retained.
+
+The shipped built-in Help is generated from `docs/manual/src/`; the audit below is historical.
+
 > Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
 
 # Reports (nav id: reports)

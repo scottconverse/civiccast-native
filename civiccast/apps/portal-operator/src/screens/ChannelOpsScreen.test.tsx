@@ -79,6 +79,7 @@ import {
   listEgressChannels,
   listHeadendProfiles,
   queueEgressCommand,
+  updateEgressConfig,
 } from '../api/client'
 import {
   START_APPLY_TIMEOUT_MS,
@@ -1092,5 +1093,31 @@ describe('all-channel confidence', () => {
     await waitFor(() => expect(getByLabelText('Confidence for stale').textContent).toContain('Audio: Stale'))
     expect(getByLabelText('Confidence for stale').textContent).toContain('Captions: Stale')
     await waitFor(() => expect(getByLabelText('Confidence for missing').textContent).toContain('Output: Unavailable'))
+  })
+})
+
+
+describe('R9 operator controls', () => {
+  it('shows pending status without claiming the channel is stopped', () => {
+    const view = render(<EgressControlPanel channelId="public" state={undefined} loading
+      health={[]} pendingCommand={null} canControl={false} error={null} onCommand={() => {}} />)
+    expect(view.getByText('Checking status…')).toBeTruthy()
+    expect(view.queryByText('Stopped')).toBeNull()
+  })
+  it('saves repeat separately from automatic startup through the normal UI', async () => {
+    stubScreenQueries()
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    vi.mocked(getEgressState).mockResolvedValue(null)
+    const current = { channel_id: 'public', enabled: true, auto_start: false, repeat_schedule: false,
+      slate_message: 'Preparing', sinks: [{kind: 'file', label: 'Test', uri: 'test.ts'}] } as EgressConfig
+    vi.mocked(getEgressConfig).mockResolvedValue(current)
+    vi.mocked(updateEgressConfig).mockResolvedValue({...current, repeat_schedule: true})
+    renderScreen()
+    const repeat = await screen.findByRole('checkbox', {name: /Repeat the published sequence/})
+    fireEvent.click(repeat)
+    fireEvent.click(screen.getByRole('button', {name: 'Save automation settings'}))
+    await waitFor(() => expect(updateEgressConfig).toHaveBeenCalledWith('public', expect.objectContaining({
+      repeat_schedule: true, auto_start: false,
+    })))
   })
 })

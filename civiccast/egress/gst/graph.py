@@ -97,12 +97,15 @@ class PlaylistLeg:
     audio_tail: tuple[ElementSpec, ...] = ()
     output_gain_db: float = 0.0
     subchain_kinds: tuple[str, ...] = ()
+    subchain_sources: tuple[dict[str, str | None], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.subchains:
             raise ValueError(f"PlaylistLeg {self.label!r} requires at least one sub-chain")
         if self.subchain_kinds and len(self.subchain_kinds) != len(self.subchains):
             raise ValueError("PlaylistLeg subchain kinds must match the sub-chains")
+        if self.subchain_sources and len(self.subchain_sources) != len(self.subchains):
+            raise ValueError("PlaylistLeg source identities must match the sub-chains")
         for chain in self.subchains:
             if not chain:
                 raise ValueError(f"PlaylistLeg {self.label!r} has an empty sub-chain")
@@ -702,6 +705,7 @@ def graph_to_json(graph: PlayoutGraph) -> str:
                 "audio_tail": [_elem_to_dict(e) for e in source.audio_tail],
                 "output_gain_db": source.output_gain_db,
                 "subchain_kinds": list(source.subchain_kinds),
+                "subchain_sources": list(source.subchain_sources),
             }
         return {
             "type": "source",
@@ -756,6 +760,7 @@ def graph_from_json(text: str) -> PlayoutGraph:
                 audio_tail=tuple(_elem_from_dict(e) for e in obj.get("audio_tail", [])),
                 output_gain_db=float(obj.get("output_gain_db", 0.0)),
                 subchain_kinds=tuple(obj.get("subchain_kinds", [])),
+                subchain_sources=tuple(obj.get("subchain_sources", [])),
             )
         return SourceLeg(
             label=obj["label"],

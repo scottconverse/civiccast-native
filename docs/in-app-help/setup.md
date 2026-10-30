@@ -1,3 +1,9 @@
+## RC2 operator guidance — October 30, 2026
+
+A clean station creates its first administrator and recovery kit. An upgrade or reinstall preserves accounts, including a recovered older service profile. Admin sign-in means setup already exists; use that station’s recovery kit. Reinstalling is not a password reset. Station naming and per-channel branding are separate.
+
+The shipped built-in Help is generated from `docs/manual/src/`; the audit below is historical.
+
 > Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
 
 # First Setup (nav id: setup)

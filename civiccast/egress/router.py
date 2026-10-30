@@ -1383,10 +1383,15 @@ def get_takeover_audit(
 )
 def get_state(
     channel_id: str,
+    request: Request,
     egress_store: EgressStore | None = Depends(get_egress_store),
 ) -> EgressStateRow | None:
     store = _require_store(egress_store, surface="egress state")
-    return operator_state_projection(store.read_state(channel_id))
+    state = operator_state_projection(store.read_state(channel_id))
+    daemon = getattr(request.app.state, "egress_daemon", None)
+    if state is not None and daemon is not None:
+        state = state.model_copy(update=daemon.source_preparation_status(channel_id))
+    return state
 
 
 @staff_router.get(

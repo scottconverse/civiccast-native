@@ -3294,6 +3294,11 @@ def build_channel_automation(
         asset_resolver=asset_store.get_staff_row,
         max_segments=1 if gstreamer_engine_selected() else 8,
         loop_schedule=schedule_loop_enabled_from_env(),
+        loop_schedule_provider=lambda channel_id: (
+            config.repeat_schedule
+            if (config := store.get_config(channel_id)) is not None
+            else schedule_loop_enabled_from_env()
+        ),
         max_segment_seconds=(
             gstreamer_source_segment_seconds_from_env() if gstreamer_engine_selected() else None
         ),
@@ -3405,6 +3410,7 @@ def build_channel_automation(
             ReportingStore(session_factory),
             outbox=as_run_outbox,
             underwriting_store=UnderwritingStore(session_factory),
+            schedule_lookup=schedule_store.get,
         ),
         channel_start_hook=channel_start_hook,
     )

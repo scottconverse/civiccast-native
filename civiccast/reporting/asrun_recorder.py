@@ -53,6 +53,7 @@ import logging
 import os
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -70,6 +71,7 @@ from civiccast.reporting.models import AsRunLogEntry, Slug
 from civiccast.reporting.store import ReportingStore
 
 if TYPE_CHECKING:
+    from civiccast.schedule.models import ScheduleItemResponse
     from civiccast.underwriting.store import UnderwritingStore
 
 _LOG = logging.getLogger(__name__)
@@ -128,14 +130,18 @@ class StoreAsRunRecorder:
         station_id: str | None = None,
         outbox: AsRunOutbox | None = None,
         underwriting_store: UnderwritingStore | None = None,
+        schedule_lookup: Callable[[str], ScheduleItemResponse | None] | None = None,
     ) -> None:
         self._store = store
         self._station_id = station_id or resolve_station_id()
         # channel_id -> (open entry_id, its actual_start) awaiting an actual_end.
         self._open: dict[str, tuple[str, datetime]] = {}
+        self._open_identity: dict[str, tuple[str, str | None, str | None]] = {}
+        self._open_offset: dict[str, float] = {}
         self._lock = threading.Lock()
         self._outbox = outbox or AsRunOutbox(store, db_path=ephemeral_outbox_path())
         self._underwriting = underwriting_store
+        self._schedule_lookup = schedule_lookup
 
     def record_transition(
         self,
@@ -147,9 +153,22 @@ class StoreAsRunRecorder:
         actual_start: datetime,
         proof_event_id: str,
         schedule_item_id: str | None = None,
+        source_offset_seconds: float | None = None,
     ) -> None:
         try:
             with self._lock:
+                identity = (source_kind, asset_id, schedule_item_id)
+                if (
+                    source_kind == "program"
+                    and schedule_item_id is not None
+                    and self._open_identity.get(channel_id) == identity
+                    and source_offset_seconds is not None
+                    and source_offset_seconds > self._open_offset.get(channel_id, float("inf"))
+                ):
+                    # A preparation horizon rollover continues the same scheduled
+                    # occurrence. It is not another play of that program.
+                    self._open_offset[channel_id] = source_offset_seconds
+                    return
                 # Close the previous open row for this channel: its actual_end is
                 # exactly when this new source took over.
                 self._close_locked(channel_id, actual_start)
@@ -162,6 +181,7 @@ class StoreAsRunRecorder:
                     channel_id=channel_id,
                     asset_id=asset_id,
                     schedule_item_id=schedule_item_id,
+                    scheduled_start=self._scheduled_start(schedule_item_id, channel_id, asset_id),
                     actual_start=actual_start,
                     actual_end=actual_start,
                     duration_s=0,
@@ -174,6 +194,9 @@ class StoreAsRunRecorder:
                 # store write. See civiccast.reporting.asrun_outbox.
                 self._outbox.append_and_drain(make_append_op(entry))
                 self._open[channel_id] = (entry_id, actual_start)
+                self._open_identity[channel_id] = identity
+                if source_offset_seconds is not None:
+                    self._open_offset[channel_id] = source_offset_seconds
         except ValidationError as exc:
             # Schema drift — an upstream id violates the Slug pattern. Loud, not
             # silent: surface via a typed exception so the daemon can mark
@@ -228,6 +251,22 @@ class StoreAsRunRecorder:
 
     # --- internals (caller holds the lock) ------------------------------
 
+    def _scheduled_start(
+        self, schedule_item_id: str | None, channel_id: str, asset_id: str | None
+    ) -> datetime | None:
+        if schedule_item_id is None or self._schedule_lookup is None:
+            return None
+        try:
+            item = self._schedule_lookup(schedule_item_id)
+            if item is not None and item.channel_id == channel_id and item.asset_id == asset_id:
+                return item.scheduled_at
+        except Exception:
+            # Missing comparison metadata must never erase actual output evidence.
+            _LOG.warning(
+                "Could not resolve planned start for as-run occurrence %s", schedule_item_id
+            )
+        return None
+
     def _airing_kind(
         self, source_kind: str, schedule_item_id: str | None, channel_id: str, asset_id: str | None
     ) -> str:
@@ -265,6 +304,8 @@ class StoreAsRunRecorder:
         # failure must not leave a stale handle that the next transition
         # would re-close, overwriting an already-recorded actual_end.
         self._open.pop(channel_id, None)
+        self._open_identity.pop(channel_id, None)
+        self._open_offset.pop(channel_id, None)
         # BUG C2 fix: journal-first, then drain (idempotent — see
         # civiccast.reporting.asrun_outbox's exactly-once contract and
         # ReportingStore.close_entry's own "guarded UPDATE" docstring), not
