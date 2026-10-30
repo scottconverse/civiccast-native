@@ -70,6 +70,7 @@ import type {
   ComplianceProbeResult,
   EgressCaptionProofSample,
   EgressConfig,
+  EgressStateRow as GeneratedEgressStateRow,
   GraphicsOverlayStateResponse,
   GraphicsOverlayUpdateRequest,
   GstreamerRepairResponse,
@@ -476,15 +477,7 @@ export interface EgressCommandResponse {
   queued: boolean
 }
 
-export interface EgressStateRow {
-  channel_id: string
-  state: 'STOPPED' | 'STARTING' | 'ON_AIR' | 'TRANSITIONING' | 'FALLBACK_SLATE' | 'DRAINING' | 'STOPPING' | 'ERROR'
-  current_source_label?: string | null
-  current_proof_event_id?: string | null
-  updated_at: string
-  pid?: number | null
-  last_error?: string | null
-}
+export type EgressStateRow = GeneratedEgressStateRow
 
 export interface EgressHealthSample {
   channel_id: string

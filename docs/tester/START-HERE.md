@@ -7,7 +7,7 @@
 
 # Beta 20 tester quickstart
 
-**`v1.0.0-beta.20` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20). Check the [package verification record](../releases/v1.0.0-beta.20-verification.md) for the exact signed installer and scoped results.
+Historical Beta20 testing used the complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.20). Check the [package verification record](../releases/v1.0.0-beta.20-verification.md) for the exact signed installer and scoped results.
 
 ## Install, open, and check
 

@@ -42,8 +42,15 @@ F3 branding was not reproduced. Existing tester orchestration incidents are reco
 as separate. No new model bytes or station operations. RC1 accepted PTS limitation
 remains historical/accepted; no repair loop was reopened.
 
-Next: ordinary signed-off source commit, push and PR, then applicable required CI.
-No installer build/publication dispatched. No owned background helpers/jobs.
+PR https://github.com/scottconverse/civiccast-native/pull/285 is open; first head
+188706fd pushed 86 KiB, no LFS/models. Both required input-transfer run-once helpers
+completed successfully and exited. Hosted CI caught a duplicate handwritten frontend
+state type and a release-posture guard that only parsed beta tags. Client now uses
+the generated state type; actual `npm run build` passes (earlier `tsc --noEmit` did
+not build referenced projects). Posture control now accepts RC release metadata and
+still checks all prior betas. Collection failure caused dependent claim failures;
+no test execution was waived. One ordinary follow-up push follows focused checks.
+No installer build/publication dispatched. No owned local background helpers/jobs.
 
 ## Historical RC1 state (superseded assignment; evidence retained)
 
