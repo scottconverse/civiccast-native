@@ -65,6 +65,7 @@ export function HlsPlayer({
   const hlsRef = useRef<Hls | null>(null)
   const resumeAfterSourceChangeRef = useRef(false)
   const sourceReadyRef = useRef(false)
+  const restoreNativeSeekRef = useRef<() => void>(() => {})
   const programTimelineRef = useRef(programTimeline)
   const syncPlaybackTitleRef = useRef<() => void>(() => {})
   const [state, setState] = useState<PlayerState>('idle')
@@ -75,6 +76,7 @@ export function HlsPlayer({
     const seek = () => {
       if (applied || video.readyState < 1) return
       applied = true
+      restoreNativeSeekRef.current()
       video.currentTime = Number.isFinite(video.duration)
         ? Math.min(Math.max(0, startSeconds), video.duration) : Math.max(0, startSeconds)
     }
@@ -95,6 +97,7 @@ export function HlsPlayer({
         if (!video) return
         const duration = Number.isFinite(video.duration) ? video.duration : null
         const target = duration !== null ? Math.min(Math.max(0, seconds), duration) : Math.max(0, seconds)
+        restoreNativeSeekRef.current()
         video.currentTime = target
         if (video.paused) {
           void video.play().catch(() => {
@@ -367,38 +370,54 @@ export function HlsPlayer({
           hls.subtitleTrack = desired
         }
       }
-      // A short VOD can finish buffering while its initial gap seek is still
-      // waiting for the decoder's first frame. Ending MSE during that seek can
-      // strand WebKit at HAVE_METADATA or end playback before the seek lands.
-      // loadeddata can precede the buffered start; wait until preroll is in it.
-      const mediaOverrides = { endOfStream: false }
-      let bufferedToEnd = false
-      const releaseStartupEos = () => {
-        if (video.readyState < 2 || video.seeking) return
-        const buffered = video.buffered
-        const withinBuffer = Array.from({ length: buffered.length }, (_, index) =>
-          video.currentTime >= buffered.start(index) && video.currentTime <= buffered.end(index),
-        ).some(Boolean)
-        if (!withinBuffer) return
-        cleanupHlsStartup?.()
-        if (bufferedToEnd) hls?.trigger(HlsCtor.Events.BUFFER_EOS, {})
+      // AAC/video start timestamps can leave a small initial gap. hls.js
+      // can seek across it before WebKit's first native preroll, an ordering
+      // observed in stalled startup traces. Let that first frame preroll before
+      // applying the jump. Larger gaps and explicit nonzero starts still seek
+      // immediately, and normal finite-stream EOS remains available to decoders.
+      const nativeTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')
+      if (nativeTime?.get && nativeTime.set &&
+        !Object.hasOwn(video, 'currentTime')) {
+        let deferredSeek: number | undefined
+        let active = true
+        cleanupHlsStartup = () => {
+          if (!active) return
+          active = false
+          delete (video as { currentTime?: number }).currentTime
+          video.removeEventListener('loadeddata', releaseStartupSeek)
+          video.removeEventListener('seeking', cleanupHlsStartup!)
+          if (restoreNativeSeekRef.current === cleanupHlsStartup) {
+            restoreNativeSeekRef.current = () => {}
+          }
+        }
+        const releaseStartupSeek = () => {
+          if (video.readyState < 2) return
+          cleanupHlsStartup?.()
+          if (deferredSeek !== undefined && deferredSeek > video.currentTime) {
+            video.currentTime = deferredSeek
+          }
+        }
+        Object.defineProperty(video, 'currentTime', {
+          configurable: true,
+          get: () => nativeTime.get!.call(video),
+          set: (target: number) => {
+            const buffered = video.buffered
+            if (video.currentTime === 0 && video.readyState < 2 && buffered.length &&
+              buffered.start(0) > 0 && buffered.start(0) <= 0.05 &&
+              target >= buffered.start(0) && target <= 0.1 && target <= buffered.end(0)) {
+              deferredSeek = target
+              return
+            }
+            // A deliberate seek takes precedence over any deferred startup jump.
+            cleanupHlsStartup?.()
+            nativeTime.set!.call(video, target)
+          },
+        })
+        video.addEventListener('loadeddata', releaseStartupSeek)
+        video.addEventListener('seeking', cleanupHlsStartup)
+        restoreNativeSeekRef.current = cleanupHlsStartup
       }
-      const onBufferedToEnd = () => {
-        bufferedToEnd = true
-        releaseStartupEos()
-      }
-      cleanupHlsStartup = () => {
-        mediaOverrides.endOfStream = true
-        video.removeEventListener('loadeddata', releaseStartupEos)
-        video.removeEventListener('seeked', releaseStartupEos)
-        video.removeEventListener('timeupdate', releaseStartupEos)
-        hls?.off(HlsCtor.Events.BUFFERED_TO_END, onBufferedToEnd)
-      }
-      video.addEventListener('loadeddata', releaseStartupEos)
-      video.addEventListener('seeked', releaseStartupEos)
-      video.addEventListener('timeupdate', releaseStartupEos)
-      hls.on(HlsCtor.Events.BUFFERED_TO_END, onBufferedToEnd)
-      hls.attachMedia({ media: video, overrides: mediaOverrides })
+      hls.attachMedia(video)
       hls.on(HlsCtor.Events.MEDIA_ATTACHED, () => {
         hls?.loadSource(manifestUrl)
       })

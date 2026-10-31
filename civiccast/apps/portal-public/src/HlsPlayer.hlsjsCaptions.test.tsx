@@ -18,7 +18,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { HlsPlayer } from './HlsPlayer'
+import { HlsPlayer, type HlsPlayerHandle } from './HlsPlayer'
 import { EmbedPlayer } from './EmbedPlayer'
 
 const Events = {
@@ -26,8 +26,6 @@ const Events = {
   MANIFEST_PARSED: 'hlsManifestParsed',
   SUBTITLE_TRACKS_UPDATED: 'hlsSubtitleTracksUpdated',
   SUBTITLE_TRACK_SWITCH: 'hlsSubtitleTrackSwitch',
-  BUFFERED_TO_END: 'hlsBufferedToEnd',
-  BUFFER_EOS: 'hlsBufferEos',
   ERROR: 'hlsError',
 } as const
 
@@ -64,7 +62,7 @@ class FakeHls {
   private _subtitleTrack = -1
   playingDate: Date | null = null
   subtitleDisplay = true
-  mediaOverrides: { endOfStream: boolean } | undefined
+  media: HTMLMediaElement | undefined
 
   on(event: string, cb: (event: string, data: unknown) => void) {
     const list = this.listeners.get(event) ?? []
@@ -84,8 +82,8 @@ class FakeHls {
     for (const cb of this.listeners.get(event) ?? []) cb(event, data)
   }
 
-  attachMedia(data: { overrides: { endOfStream: boolean } }) {
-    this.mediaOverrides = data.overrides
+  attachMedia(media: HTMLMediaElement) {
+    this.media = media
     this.emit(Events.MEDIA_ATTACHED, {})
   }
   loadSource() {
@@ -143,100 +141,104 @@ afterEach(() => {
 })
 
 describe('HlsPlayer hls.js captions', () => {
-  it('releases a fully buffered VOD only after its initial seek has prerolled', async () => {
+  it('prerolls a tiny startup gap before forwarding its seek to the native decoder', async () => {
+    const seek = vi.spyOn(HTMLMediaElement.prototype, 'currentTime', 'set')
     render(<HlsPlayer manifestUrl="/short-vod/playlist.m3u8" />)
     await waitFor(() => expect(lastInstance).toBeDefined())
-    const hls = lastInstance as FakeHls
-    const eos = vi.fn()
-    hls.on(Events.BUFFER_EOS, eos)
-    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    const video = (lastInstance as FakeHls).media!
     Object.defineProperty(video, 'buffered', {
-      configurable: true, value: { length: 1, start: () => 0, end: () => 2 },
+      configurable: true, value: { length: 1, start: () => 0.021333, end: () => 2 },
     })
     Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
-    Object.defineProperty(video, 'seeking', { configurable: true, value: true })
-
-    hls.trigger(Events.BUFFERED_TO_END, {})
-    fireEvent.seeked(video)
-    expect(hls.mediaOverrides?.endOfStream).toBe(false)
-    expect(eos).not.toHaveBeenCalled()
+    video.currentTime = 0.1
+    video.currentTime = 0.1
+    expect(video.currentTime).toBe(0)
+    expect(seek).not.toHaveBeenCalled()
     Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
     fireEvent.loadedData(video)
-    expect(eos).not.toHaveBeenCalled()
-
-    Object.defineProperty(video, 'seeking', { configurable: true, value: false })
-    fireEvent.seeked(video)
-    expect(hls.mediaOverrides?.endOfStream).toBe(true)
-    expect(eos).toHaveBeenCalledOnce()
-    fireEvent.loadedData(video)
-    expect(eos).toHaveBeenCalledOnce()
+    expect(video.currentTime).toBe(0.1)
+    expect(seek).toHaveBeenCalledOnce()
+    expect(Object.hasOwn(video, 'currentTime')).toBe(false)
   })
 
-  it.each(['seeked', 'timeupdate'])('defers EOS after out-of-buffer loadeddata until %s inside it', async (event) => {
-    render(<HlsPlayer manifestUrl="/short-vod/playlist.m3u8" />)
-    await waitFor(() => expect(lastInstance).toBeDefined())
-    const hls = lastInstance as FakeHls
-    const eos = vi.fn()
-    hls.on(Events.BUFFER_EOS, eos)
-    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
-    Object.defineProperty(video, 'buffered', {
-      configurable: true, value: { length: 1, start: () => 0.021333, end: () => 2.021333 },
-    })
-    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
-
-    hls.trigger(Events.BUFFERED_TO_END, {})
-    fireEvent.loadedData(video)
-    expect(hls.mediaOverrides?.endOfStream).toBe(false)
-    expect(eos).not.toHaveBeenCalled()
-
-    video.currentTime = 0.5
-    Object.defineProperty(video, 'seeking', { configurable: true, value: true })
-    fireEvent.loadedData(video)
-    expect(eos).not.toHaveBeenCalled()
-    Object.defineProperty(video, 'seeking', { configurable: true, value: false })
-    fireEvent(video, new Event(event))
-    expect(hls.mediaOverrides?.endOfStream).toBe(true)
-    expect(eos).toHaveBeenCalledOnce()
-  })
-
-  it('restores normal EOS when preroll finishes before buffering does', async () => {
+  it.each([
+    { start: 0.2, target: 0.3 },
+    { start: 0.021333, target: 0.5 },
+    { start: 0, target: 0.1 },
+  ])('forwards seeks outside the tiny startup gap ($start -> $target)', async ({ start, target }) => {
     render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
     await waitFor(() => expect(lastInstance).toBeDefined())
-    const hls = lastInstance as FakeHls
-    const eos = vi.fn()
-    hls.on(Events.BUFFER_EOS, eos)
-    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    const video = (lastInstance as FakeHls).media!
     Object.defineProperty(video, 'buffered', {
-      configurable: true, value: { length: 1, start: () => 0, end: () => 2 },
+      configurable: true, value: { length: 1, start: () => start, end: () => 2 },
     })
-    Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
-    fireEvent.loadedData(video)
-    expect(hls.mediaOverrides?.endOfStream).toBe(true)
-    expect(eos).not.toHaveBeenCalled()
-    hls.trigger(Events.BUFFERED_TO_END, {})
-    expect(eos).not.toHaveBeenCalled()
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
+    video.currentTime = target
+    expect(video.currentTime).toBe(target)
+    expect(Object.hasOwn(video, 'currentTime')).toBe(false)
   })
 
-  it.each(['unmount', 'fatal error'])('withdraws startup EOS listeners on %s', async (ending) => {
+  it('lets a deliberate seek supersede a pending startup jump', async () => {
+    render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const video = (lastInstance as FakeHls).media!
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0.021333, end: () => 2 },
+    })
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
+    video.currentTime = 0.1
+    video.currentTime = 0.5
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
+    fireEvent.loadedData(video)
+    expect(video.currentTime).toBe(0.5)
+  })
+
+  it.each(['handle', 'startSeconds'])('preserves an explicit tiny seek through %s', async (path) => {
+    const handleRef = { current: null as HlsPlayerHandle | null }
+    const { rerender } = render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" handleRef={handleRef} />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const video = (lastInstance as FakeHls).media!
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0.021333, end: () => 2 },
+    })
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
+    Object.defineProperty(video, 'paused', { configurable: true, value: false })
+    video.currentTime = 0.1
+    expect(video.currentTime).toBe(0)
+    if (path === 'handle') handleRef.current!.seekTo(0.1)
+    else rerender(<HlsPlayer manifestUrl="/vod/playlist.m3u8" handleRef={handleRef} startSeconds={0.1} />)
+    expect(video.currentTime).toBe(0.1)
+    expect(Object.hasOwn(video, 'currentTime')).toBe(false)
+  })
+
+  it('preserves an existing nonconfigurable currentTime accessor', async () => {
+    const { container } = render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
+    const video = container.querySelector('video')!
+    const getter = () => 0.25
+    Object.defineProperty(video, 'currentTime', { configurable: false, get: getter })
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    expect(Object.getOwnPropertyDescriptor(video, 'currentTime')?.get).toBe(getter)
+  })
+
+  it('leaves requested nonzero starts under native seek control', async () => {
+    render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" startSeconds={0.05} />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const video = (lastInstance as FakeHls).media!
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
+    fireEvent.loadedMetadata(video)
+    expect(video.currentTime).toBe(0.05)
+    expect(Object.hasOwn(video, 'currentTime')).toBe(false)
+  })
+
+  it.each(['unmount', 'fatal error'])('restores native seek access on %s', async (ending) => {
     const { unmount } = render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
     await waitFor(() => expect(lastInstance).toBeDefined())
     const hls = lastInstance as FakeHls
-    const eos = vi.fn()
-    hls.on(Events.BUFFER_EOS, eos)
-    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
-    Object.defineProperty(video, 'buffered', {
-      configurable: true, value: { length: 1, start: () => 0, end: () => 2 },
-    })
-    hls.trigger(Events.BUFFERED_TO_END, {})
+    const video = hls.media!
+    expect(Object.hasOwn(video, 'currentTime')).toBe(true)
     if (ending === 'unmount') unmount()
     else hls.trigger(Events.ERROR, { fatal: true, type: ErrorTypes.NETWORK_ERROR })
-    expect(hls.mediaOverrides?.endOfStream).toBe(true)
-    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
-    fireEvent.loadedData(video)
-    fireEvent.seeked(video)
-    fireEvent.timeUpdate(video)
-    hls.trigger(Events.BUFFERED_TO_END, {})
-    expect(eos).not.toHaveBeenCalled()
+    expect(Object.hasOwn(video, 'currentTime')).toBe(false)
   })
 
   it('labels buffered embedded playback separately from the newest live-edge title', async () => {
