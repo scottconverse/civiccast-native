@@ -5859,7 +5859,19 @@ class GstPlayoutEngine:
                         Gst.PadProbeType.BUFFER, self._on_reload_first_buffer, pending["txn_id"]
                     )
                     pending["readiness_probes"].append((pad, probe_id))
-            for element in new_elements:
+            # A source may start its task inside sync_state_with_parent(). Its
+            # downstream pads must already be active, or the first push can get
+            # FLUSHING and stop that task without a state-change failure. Output
+            # owners go first: PlaylistLeg constructs its concat aggregators
+            # BEFORE the feeder chains, whereas plain chains are source-first.
+            output_elements = {pad.get_parent_element() for pad in pending["new_src_pads"]}
+            activation_elements = [
+                element for element in new_elements if element in output_elements
+            ]
+            activation_elements.extend(
+                element for element in reversed(new_elements) if element not in output_elements
+            )
+            for element in activation_elements:
                 # State refusal is returned as False, not necessarily raised.
                 # Stop activation here so the existing build-error unwind owns
                 # the incoming leg before any later producer can start.

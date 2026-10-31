@@ -276,6 +276,9 @@ class _FakeOldPad:
     def get_name(self) -> str:
         return self.name
 
+    def get_parent_element(self) -> Any:
+        return getattr(self, "parent_element", None)
+
     def add_probe(self, mask: Any, callback: Any, *_args: Any) -> str:
         self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
         probe_id = f"{self.name}-probe-{mask}"
@@ -4721,7 +4724,7 @@ def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
             recorder.calls.append(f"sync:{self.name}")
             return self.name != "refused"
 
-    incoming = [_IncomingElement(name, recorder) for name in ("started", "refused", "later")]
+    incoming = [_IncomingElement(name, recorder) for name in ("later", "refused", "started")]
     monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
     monkeypatch.setattr(engine, "_link_leg_to_selectors", lambda *_args: (video, audio))
     retired: list[list[Any]] = []
@@ -4752,6 +4755,76 @@ def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
     assert not any(call.startswith("set_state:outgoing:") for call in recorder.calls)
     assert any(call.startswith("remove_probe:incoming-video:") for call in recorder.calls)
     assert any(call.startswith("remove_probe:incoming-audio:") for call in recorder.calls)
+
+
+@pytest.mark.parametrize("playlist", [False, True], ids=["source-leg", "playlist-concats"])
+def test_reload_activates_downstream_before_immediate_producers(
+    engine_module, monkeypatch: pytest.MonkeyPatch, playlist: bool
+) -> None:
+    """A producer can start inside sync, before the next element is activated.
+
+    Model the resulting FLUSHING as a stopped producer, despite successful state
+    sync. Playlist concats are constructed before their feeder chains, so merely
+    reversing the complete construction list would still fail that shape.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    engine._plan_eos_held = False
+    engine.reload_timeout_s = 10
+    monkeypatch.setattr(engine_module.Gst.PadProbeType, "BLOCK", 16, raising=False)
+    monkeypatch.setattr(
+        engine_module.GLib, "timeout_add_seconds", lambda *_args: 123, raising=False
+    )
+    engine.selector_sink_pads = [_FakeOldPad("old-video", recorder, None)]
+    engine.audio_sink_pads = [_FakeOldPad("old-audio", recorder, None)]
+    engine._source_leg_elements = [[]]
+
+    class _IncomingElement(_FakeOldElement):
+        def __init__(self, name: str, downstream: Any = None, *, producer: bool = False):
+            super().__init__(name, recorder)
+            self.downstream = downstream
+            self.producer = producer
+            self.active = False
+            self.first_buffer_delivered = False
+
+        def sync_state_with_parent(self) -> bool:
+            self.active = True
+            recorder.calls.append(f"sync:{self.name}")
+            if self.producer:
+                downstream = self.downstream
+                while downstream is not None:
+                    if not downstream.active:
+                        recorder.calls.append(f"flushing:{self.name}")
+                        return True  # State success does not restart this task.
+                    downstream = downstream.downstream
+                self.first_buffer_delivered = True
+            return True
+
+    video_concat = _IncomingElement("video-concat") if playlist else None
+    audio_concat = _IncomingElement("audio-concat") if playlist else None
+    video_tail = _IncomingElement("video-caps", video_concat)
+    audio_tail = _IncomingElement("audio-caps", audio_concat)
+    audio_convert = _IncomingElement("audio-convert", audio_tail)
+    video_source = _IncomingElement("video-source", video_tail, producer=True)
+    audio_source = _IncomingElement("audio-source", audio_convert, producer=True)
+    incoming = [video_source, video_tail, audio_source, audio_convert, audio_tail]
+    if playlist:
+        incoming = [video_concat, audio_concat, *incoming]
+    video = _FakeOldPad("incoming-video", recorder, None)
+    audio = _FakeOldPad("incoming-audio", recorder, None)
+    video.parent_element = video_concat if playlist else video_tail
+    audio.parent_element = audio_concat if playlist else audio_tail
+    monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
+    monkeypatch.setattr(engine, "_link_leg_to_selectors", lambda *_args: (video, audio))
+
+    engine.reload_program(_StubLeg(), switch_at_end_of_current=True)
+
+    assert video_source.first_buffer_delivered
+    assert audio_source.first_buffer_delivered
+    assert not any(call.startswith("flushing:") for call in recorder.calls)
+    assert all(element.active for element in incoming)
+    assert len(engine._pending_reload["hold_probes"]) == 2
 
 
 def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
