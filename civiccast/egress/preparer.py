@@ -1722,6 +1722,7 @@ class SourcePreparer:
                 kind=segment.kind,
                 source_ref=segment.source_ref,
                 schedule_occurrence_id=segment.schedule_occurrence_id,
+                schedule_occurrence_start=segment.schedule_occurrence_start,
                 source_offset_seconds=(
                     segment.source_offset_seconds
                     if segment.source_offset_seconds is not None
@@ -2055,6 +2056,7 @@ class SourcePreparer:
                     kind=segment.kind,
                     source_ref=segment.source_ref,
                     schedule_occurrence_id=segment.schedule_occurrence_id,
+                    schedule_occurrence_start=segment.schedule_occurrence_start,
                     source_offset_seconds=(
                         segment.source_offset_seconds
                         if segment.source_offset_seconds is not None
@@ -2393,11 +2395,22 @@ class SourcePreparer:
             key = (segment.path, segment.inpoint_seconds, segment.outpoint_seconds)
             cached = seen.get(key)
             if cached is not None:
-                prepared_segment = cached[0]
-                if prepared_segment.schedule_occurrence_id != segment.schedule_occurrence_id:
-                    prepared_segment = prepared_segment.model_copy(
-                        update={"schedule_occurrence_id": segment.schedule_occurrence_id}
-                    )
+                # Media can be reused, occurrence identity cannot: repeats of
+                # the same window still represent different actual airings.
+                prepared_segment = cached[0].model_copy(
+                    update={
+                        "label": segment.label,
+                        "kind": segment.kind,
+                        "source_ref": segment.source_ref,
+                        "schedule_occurrence_id": segment.schedule_occurrence_id,
+                        "schedule_occurrence_start": segment.schedule_occurrence_start,
+                        "source_offset_seconds": (
+                            segment.source_offset_seconds
+                            if segment.source_offset_seconds is not None
+                            else segment.inpoint_seconds
+                        ),
+                    }
+                )
                 prepared_segments.append(prepared_segment)
                 records.append(cached[1])
                 continue
@@ -3271,6 +3284,7 @@ class SourcePreparer:
                 kind=segment.kind,
                 source_ref=segment.source_ref,
                 schedule_occurrence_id=segment.schedule_occurrence_id,
+                schedule_occurrence_start=segment.schedule_occurrence_start,
                 source_offset_seconds=(
                     segment.source_offset_seconds
                     if segment.source_offset_seconds is not None
@@ -3403,7 +3417,7 @@ def build_loudnorm_probe_args(
     """First-pass args: measure the SAME window the encode will process.
 
     ``threads`` mirrors ``build_conform_source_args``: ``None`` leaves ffmpeg's
-    default untouched; a value caps the decode.  Synchronous conforms pass
+    default untouched; a value caps decoding and filter worker pools. Synchronous conforms pass
     ``_foreground_thread_cap()`` so a three-channel simultaneous start cannot
     each launch an unthrottled analysis pass; warm-behind conforms pass ``1``
     exactly like their encode.  ``-threads`` is an INPUT/decoder option, so it
@@ -3412,7 +3426,16 @@ def build_loudnorm_probe_args(
 
     args = ["-hide_banner", "-loglevel", "info"]
     if threads is not None:
-        args.extend(["-threads", str(threads)])
+        args.extend(
+            [
+                "-filter_threads",
+                str(threads),
+                "-filter_complex_threads",
+                str(threads),
+                "-threads",
+                str(threads),
+            ]
+        )
     if segment is not None and segment.inpoint_seconds is not None:
         args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
     args.extend(["-i", str(source_path)])
@@ -3449,7 +3472,7 @@ def build_conform_source_args(
     plan.
 
     ``threads`` (item 66, revised after Opus review): when given, caps the
-    encode at that many threads (``-threads <N>``); ``None`` leaves ffmpeg's
+    decoder, filter pools and encode at that many threads; ``None`` leaves ffmpeg's
     own default untouched. Warm-behind conforms (``_schedule_warm`` /
     ``_conform_full_asset_into_cache``'s default) pass ``threads=1`` so a
     background warm can never starve the on-air encoder. Synchronous
@@ -3462,6 +3485,19 @@ def build_conform_source_args(
     """
 
     args = ["-hide_banner", "-loglevel", "warning"]
+    if threads is not None:
+        # Filter pool limits are global. Decoder limits must precede the input;
+        # the separate output-side -threads below only limits codec encoding.
+        args.extend(
+            [
+                "-filter_threads",
+                str(threads),
+                "-filter_complex_threads",
+                str(threads),
+                "-threads",
+                str(threads),
+            ]
+        )
     if segment is not None and segment.inpoint_seconds is not None:
         args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
     args.extend(["-i", str(source_path)])

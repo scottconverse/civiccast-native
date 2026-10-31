@@ -417,8 +417,9 @@ def test_run_ride_writes_no_tee_unless_it_is_asked(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("threads", [None, 1, 3])
 def test_run_reencode_reports_the_wall_time_and_raises_on_a_bad_pcm(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threads: int | None
 ) -> None:
     """A re-encode is a process like any other: it reports, and it fails loudly."""
     monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
@@ -442,11 +443,17 @@ def test_run_reencode_reports_the_wall_time_and_raises_on_a_bad_pcm(
         trim_db=0.5,
         params=lr.RideParams(target_lufs=-16.0, limit_dbtp=-2.8),
         profile=CanonicalProfile(video_codec="h264_mf"),
+        threads=threads,
     )
     assert rendered.wall_s >= 0.0
     assert calls, "run_reencode must run the builder's own argv"
     assert str(pcm) in calls[0]
     assert str(out) in calls[0]
+    for option in ("-threads", "-filter_threads", "-filter_complex_threads"):
+        if threads is None:
+            assert option not in calls[0]
+        else:
+            assert calls[0][calls[0].index(option) + 1] == str(threads)
 
 
 def test_run_reencode_raises_the_module_error_on_a_non_zero_exit(

@@ -6,17 +6,16 @@ system. Staff use one operator console; residents watch through a separate
 portal. Optional cloud services may charge their own usage fees, while CivicCast
 has no per-minute software fee.
 
-## RC2 development
+## RC3 development
 
-`v1.0.0-rc.2` is an **unpublished candidate**, not available as a public release, addressing the R9 Beta20 operator findings: credential redaction, caption workload, as-run boundaries, scheduling/repeat controls and matching manual/help. Human language review remains pending; no human-validated translation claim is made.
+`v1.0.0-rc.3` is an **unpublished candidate** incorporating the 31 R7/R9 operator findings. Source changes cover clean-install and upgrade permissions, credential redaction, backup/restore destinations, delivered captions, scheduling, truthful health/reporting, and matching manual/help. Required CI and isolated installed acceptance remain pending; source checks alone do not establish a working installed candidate. Human language review remains pending and nonblocking.
 
 ## Current published package
 
-[`v1.0.0-rc.1`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.1)
-is the current published native Windows pre-release. The [RC1 package record](docs/releases/v1.0.0-rc.1-verification.md)
-identifies its signed source, checks and incomplete installed acceptance. Unchanged model packs
-come from the existing Beta20 release. Source is developing **unpublished candidate v1.0.0-rc.2**
-with R9 operator corrections; these changes are not in the RC1 download.
+[`v1.0.0-rc.2`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.2)
+is the current published native Windows pre-release. The [RC2 package record](docs/releases/v1.0.0-rc.2-verification.md)
+identifies its signed source and verification limits. Unchanged model packs come from the existing Beta20 release.
+The 31-fix RC3 source changes are not in the published RC2 download.
 
 ## Previous published package (Beta 19)
 

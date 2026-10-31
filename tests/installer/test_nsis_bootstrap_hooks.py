@@ -1660,3 +1660,16 @@ def test_version_preflight_preserves_extraction_destination_and_caller_state(
     assert (tmp_path / "payload/sentinel.txt").read_text(encoding="utf-8") == payload.read_text(
         encoding="utf-8"
     )
+
+
+def test_snapshot_phase_replaces_stopping_bootstrap_before_blocking_copy() -> None:
+    source = _hooks_source()
+    snapshot = source.split("!macro CIVICCAST_TRANSACTION_SNAPSHOT\n", 1)[1].split("!macroend", 1)[
+        0
+    ]
+    assert snapshot.index("preinstall: saving recovery snapshot") < snapshot.index(
+        "CIVICCAST_TRANSACTION_CALL Snapshot"
+    )
+    assert snapshot.index("preinstall: recovery snapshot saved") > snapshot.index(
+        "CIVICCAST_TRANSACTION_CALL Snapshot"
+    )

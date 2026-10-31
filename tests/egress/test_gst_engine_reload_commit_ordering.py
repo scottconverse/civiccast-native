@@ -754,6 +754,48 @@ def test_f1_unheld_video_cannot_commit_before_audio_prerolls(engine_module, defe
     assert commits == ["commit"]
 
 
+@pytest.mark.parametrize("old_eos", [False, True])
+def test_scheduled_start_waits_for_time_and_current_preroll(engine_module, monkeypatch, old_eos):
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    pending.update(switch_at_unix=105.0, old_leg_eos=old_eos)
+    engine._pending_reload = pending
+    clock, timers, commits = {"now": 100.0}, [], []
+    monkeypatch.setattr(engine_module.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(
+        engine_module.GLib,
+        "timeout_add",
+        lambda *args: timers.append(args) or len(timers),
+        raising=False,
+    )
+    engine._commit_reload = lambda: commits.append("commit")
+    video, audio = pending["new_src_pads"]
+    engine._on_new_leg_hold(video, None, pending["txn_id"])
+    assert not pending["new_leg_ready"] and not timers
+    engine._on_new_leg_hold(audio, None, pending["txn_id"])
+    assert pending["new_leg_ready"] and timers[0][0] >= 5000
+    assert not commits
+    engine._on_scheduled_start(pending["txn_id"] - 1)
+    assert not commits
+    clock["now"] = 105.0
+    engine._on_scheduled_start(pending["txn_id"])
+    assert commits == ["commit"]
+
+
+def test_outgoing_eos_cannot_commit_scheduled_program_early(engine_module, monkeypatch):
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    pending.update(switch_at_unix=105.0, new_leg_ready=True, holds_awaited=0)
+    engine._pending_reload = pending
+    monkeypatch.setattr(engine_module.time, "time", lambda: 100.0)
+    engine._begin_reload_commit = lambda _: pytest.fail("scheduled source selected early")
+    assert engine._commit_reload() is False
+    assert engine._force_deferred_boundary(pending["txn_id"], reason="stall") is False
+    assert not pending.get("boundary_forced", False)
+
+
 def test_f1_duplicate_hold_cannot_substitute_for_unprerolled_audio(engine_module) -> None:
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)

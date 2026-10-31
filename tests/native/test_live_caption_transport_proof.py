@@ -45,6 +45,27 @@ def test_proof_graph_uses_the_live_appsrc_and_caption_inserter(tmp_path: Path) -
         "h264parse",
     ]
     assert graph.sinks[0][-1].props["location"] == str(output.resolve())
+    assert graph.audio_tap is not None
+    assert graph.audio_tap.tap_dir == str(tmp_path / "tap")
+    assert graph.sources[0].audio
+    assert graph.audio_encoder
+
+
+def test_saved_cues_wait_for_the_real_selected_program_fence(tmp_path: Path) -> None:
+    for channel in proof.REQUIRED_CHANNELS:
+        _write_sidecar(tmp_path, channel, "Council discussion")
+    cues = proof._required_sidecar_cues(tmp_path)["government"]
+    assert proof._owned_cues(tmp_path, "government", cues) == []
+    tap = tmp_path / "government" / "tap"
+    tap.mkdir()
+    (tap / "program-boundary.json").write_text(
+        json.dumps({"token": "current-program", "first_segment": 0})
+    )
+    owned = proof._owned_cues(tmp_path, "government", cues)
+    assert owned[0].cue_id == "government-current-program-0"
+    assert owned[0].text == cues[0].text
+    assert owned[0].start_seconds == cues[0].start_seconds
+    assert cues[0].cue_id != owned[0].cue_id
 
 
 def test_required_sidecars_are_exactly_the_three_station_channels(tmp_path: Path) -> None:

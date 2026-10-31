@@ -12,6 +12,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -318,8 +319,12 @@ def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> N
     )
 
     source_plan = _source_plan(tmp_path)
+    occurrence = datetime(2026, 10, 30, tzinfo=UTC)
     source_segment = source_plan.segments[0].model_copy(
-        update={"schedule_occurrence_id": "schedule-item-1"}
+        update={
+            "schedule_occurrence_id": "schedule-item-1",
+            "schedule_occurrence_start": occurrence,
+        }
     )
     report = preparer.prepare(
         source_plan.model_copy(update={"segments": [source_segment]}), _config()
@@ -337,9 +342,45 @@ def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> N
     assert prepared.inpoint_seconds is None
     assert prepared.outpoint_seconds is None
     assert prepared.schedule_occurrence_id == "schedule-item-1"
+    assert prepared.schedule_occurrence_start == occurrence
     assert report.records[0].normalized is False
     assert "-af" not in captured["args"]
     assert captured["loudness"]["target_lufs"] == -24.0
+
+
+def test_repeated_occurrences_keep_identity_through_prepare_reuse_and_graph(tmp_path: Path) -> None:
+    from civiccast.egress.gst.bridge import graph_from_config
+
+    calls = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    source = _source_plan(tmp_path).segments[0]
+    start = datetime(2026, 10, 30, tzinfo=UTC)
+    segments = [
+        source.model_copy(
+            update={
+                "schedule_occurrence_id": "same-row",
+                "schedule_occurrence_start": start + timedelta(seconds=38 * i),
+                "source_ref": "same-asset",
+                "source_offset_seconds": offset,
+            }
+        )
+        for i, offset in enumerate((3.583484, 3.614415, 6.251983))
+    ]
+    prepared = preparer.prepare(EgressSourcePlan(channel_id="gov", segments=segments), _config())
+    assert len(calls) == 1, "identical media should still reuse the preparation"
+    graph = graph_from_config(_config(), prepared.source_plan)
+    metadata = graph.sources[0].subchain_sources
+    assert [x["schedule_occurrence_start"] for x in metadata] == [
+        s.schedule_occurrence_start.isoformat() for s in segments
+    ]
+    assert [x["source_offset_seconds"] for x in metadata] == [
+        str(s.source_offset_seconds) for s in segments
+    ]
 
 
 def test_source_preparer_passes_live_segments_through_without_local_file_check(
@@ -1703,26 +1744,44 @@ def test_cache_hit_stream_copies_when_engine_cannot_trim(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_build_conform_source_args_threads_param(tmp_path: Path) -> None:
+@pytest.mark.parametrize("threads", [1, 3])
+@pytest.mark.parametrize("copy_video", [False, True])
+def test_build_conform_source_args_threads_param(
+    tmp_path: Path, threads: int, copy_video: bool
+) -> None:
     """``build_conform_source_args``'s ``threads`` argument (replacing the
-    old boolean ``background`` flag) emits ``-threads <N>`` only when given,
-    and omits the flag entirely (ffmpeg's own default) when ``None``."""
+    old boolean ``background`` flag) caps decoder, filters, and encoder only
+    when given, including when video is copied and audio is encoded."""
     source = tmp_path / "source.mp4"
     output = tmp_path / "prepared.ts"
     profile = _config().canonical_profile
 
     default_args = build_conform_source_args(
-        source_path=source, output_path=output, segment=None, profile=profile
+        source_path=source,
+        output_path=output,
+        segment=None,
+        profile=profile,
+        copy_video=copy_video,
     )
-    assert "-threads" not in default_args
+    for option in ("-threads", "-filter_threads", "-filter_complex_threads"):
+        assert option not in default_args
 
     capped_args = build_conform_source_args(
-        source_path=source, output_path=output, segment=None, profile=profile, threads=3
+        source_path=source,
+        output_path=output,
+        segment=None,
+        profile=profile,
+        threads=threads,
+        copy_video=copy_video,
     )
-    assert capped_args[capped_args.index("-threads") : capped_args.index("-threads") + 2] == [
-        "-threads",
-        "3",
-    ]
+    input_index = capped_args.index("-i")
+    codec_limits = [i for i, value in enumerate(capped_args) if value == "-threads"]
+    assert len(codec_limits) == 2
+    assert codec_limits[0] < input_index < codec_limits[1]
+    assert all(capped_args[index + 1] == str(threads) for index in codec_limits)
+    for option in ("-filter_threads", "-filter_complex_threads"):
+        assert capped_args.count(option) == 1
+        assert capped_args[capped_args.index(option) + 1] == str(threads)
 
 
 def test_foreground_thread_cap_is_pinned_to_cpu_count(
@@ -3296,6 +3355,9 @@ def test_probe_args_carry_foreground_thread_cap(tmp_path: Path) -> None:
     )
     assert args[args.index("-threads") + 1] == str(cap)
     assert args.index("-threads") < args.index("-i")
+    for option in ("-filter_threads", "-filter_complex_threads"):
+        assert args.count(option) == 1
+        assert args[args.index(option) + 1] == str(cap)
 
 
 def test_probe_threads_default_is_none(tmp_path: Path) -> None:
@@ -3304,7 +3366,8 @@ def test_probe_threads_default_is_none(tmp_path: Path) -> None:
         segment=None,
         loudness_target_lufs=-16.0,
     )
-    assert "-threads" not in args
+    for option in ("-threads", "-filter_threads", "-filter_complex_threads"):
+        assert option not in args
 
 
 def test_synchronous_probe_passes_foreground_cap(tmp_path: Path) -> None:

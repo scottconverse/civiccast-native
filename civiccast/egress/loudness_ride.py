@@ -731,7 +731,16 @@ def build_source_series_args(
     """
     args = ["-hide_banner", "-loglevel", "info"]
     if threads is not None:
-        args.extend(["-threads", str(threads)])
+        args.extend(
+            [
+                "-filter_threads",
+                str(threads),
+                "-filter_complex_threads",
+                str(threads),
+                "-threads",
+                str(threads),
+            ]
+        )
     if segment is not None and segment.inpoint_seconds is not None:
         args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
     args.extend(["-i", str(source_path)])
@@ -756,7 +765,16 @@ def build_decoder_args(
     """
     args = ["-hide_banner", "-loglevel", "error"]
     if threads is not None:
-        args.extend(["-threads", str(threads)])
+        args.extend(
+            [
+                "-filter_threads",
+                str(threads),
+                "-filter_complex_threads",
+                str(threads),
+                "-threads",
+                str(threads),
+            ]
+        )
     if segment is not None and segment.inpoint_seconds is not None:
         args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
     args.extend(["-i", str(source_path)])
@@ -836,7 +854,23 @@ def _encode_sink_tail(
     ]
 
 
-def build_measure_sink_args(trim_db: float | None, *, params: RideParams) -> list[str]:
+def _preparation_thread_args(threads: int | None) -> list[str]:
+    """Global filter limits and the following input's decoder limit."""
+    if threads is None:
+        return []
+    return [
+        "-filter_threads",
+        str(threads),
+        "-filter_complex_threads",
+        str(threads),
+        "-threads",
+        str(threads),
+    ]
+
+
+def build_measure_sink_args(
+    trim_db: float | None, *, params: RideParams, threads: int | None = None
+) -> list[str]:
     """Sink that measures the ridden PCM: trim, limiter, ebur128, discard.
 
     ``trim_db=None`` is the ride-only pass: no trim and no limiter, which is how
@@ -850,7 +884,9 @@ def build_measure_sink_args(trim_db: float | None, *, params: RideParams) -> lis
         "-hide_banner",
         "-loglevel",
         "info",
+        *_preparation_thread_args(threads),
         *_pcm_input_args(params=params),
+        *(["-threads", str(threads)] if threads is not None else []),
         "-af",
         ",".join(parts),
         "-f",
@@ -865,6 +901,7 @@ def build_encode_sink_args(
     *,
     params: RideParams,
     profile: CanonicalProfile,
+    threads: int | None = None,
 ) -> list[str]:
     """Sink that writes the real emitted audio: the profile's codec, in MPEG-TS.
 
@@ -880,7 +917,9 @@ def build_encode_sink_args(
         "-loglevel",
         "warning",
         "-y",
+        *_preparation_thread_args(threads),
         *_pcm_input_args(params=params),
+        *(["-threads", str(threads)] if threads is not None else []),
         *_encode_sink_tail(output_path, trim_db, params=params, profile=profile),
     ]
 
@@ -893,6 +932,7 @@ def build_reencode_args(
     params: RideParams,
     profile: CanonicalProfile,
     variant: EncoderVariant | None = None,
+    threads: int | None = None,
 ) -> list[str]:
     """The guard's re-encode round: the emitted-audio sink, fed from a PCM file.
 
@@ -910,12 +950,14 @@ def build_reencode_args(
         "-loglevel",
         "warning",
         "-y",
+        *_preparation_thread_args(threads),
         *_pcm_input_args(params=params, from_file=pcm_path),
+        *(["-threads", str(threads)] if threads is not None else []),
         *_encode_sink_tail(output_path, trim_db, params=params, profile=profile, variant=variant),
     ]
 
 
-def build_artifact_measure_args(*, artifact_path: Path) -> list[str]:
+def build_artifact_measure_args(*, artifact_path: Path, threads: int | None = None) -> list[str]:
     """Measure the emitted ARTIFACT, whole: ebur128 series, peak, integrated.
 
     The guard's input is what airs, so this pass reads the file the encode sink
@@ -928,8 +970,10 @@ def build_artifact_measure_args(*, artifact_path: Path) -> list[str]:
         "-hide_banner",
         "-loglevel",
         "info",
+        *_preparation_thread_args(threads),
         "-i",
         str(artifact_path),
+        *(["-threads", str(threads)] if threads is not None else []),
         "-vn",
         "-af",
         "ebur128=peak=true",
@@ -939,7 +983,9 @@ def build_artifact_measure_args(*, artifact_path: Path) -> list[str]:
     ]
 
 
-def build_peak_scan_args(*, artifact_path: Path, params: RideParams) -> list[str]:
+def build_peak_scan_args(
+    *, artifact_path: Path, params: RideParams, threads: int | None = None
+) -> list[str]:
     """Decode the artifact to raw float32 so the hottest sample can be found.
 
     The hard gate is a *sample*-peak bound on a decode, not a promise: the
@@ -950,8 +996,10 @@ def build_peak_scan_args(*, artifact_path: Path, params: RideParams) -> list[str
         "-hide_banner",
         "-loglevel",
         "error",
+        *_preparation_thread_args(threads),
         "-i",
         str(artifact_path),
+        *(["-threads", str(threads)] if threads is not None else []),
         "-vn",
         "-f",
         "f32le",
@@ -1011,6 +1059,19 @@ def build_video_from_source_args(
     purpose.
     """
     args = ["-hide_banner", "-loglevel", "warning"]
+    if threads is not None:
+        # Global filter limits and source decoder limits complement the
+        # output-side codec limit below. The second input is stream-copied.
+        args.extend(
+            [
+                "-filter_threads",
+                str(threads),
+                "-filter_complex_threads",
+                str(threads),
+                "-threads",
+                str(threads),
+            ]
+        )
     if segment is not None and segment.inpoint_seconds is not None:
         args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
     args.extend(["-i", str(source_path)])
@@ -1392,6 +1453,7 @@ def run_reencode(
     profile: CanonicalProfile,
     timeout_s: float | None = None,
     variant: EncoderVariant | None = None,
+    threads: int | None = None,
 ) -> RideRender:
     """Re-encode retained ride PCM once: limiter, codec, mux -- no ride, no curve.
 
@@ -1420,6 +1482,7 @@ def run_reencode(
             params=params,
             profile=profile,
             variant=variant,
+            threads=threads,
         ),
     ]
     t_start = time.perf_counter()
@@ -1515,6 +1578,7 @@ def scan_peak_dbfs(
     params: RideParams,
     timeout_s: float | None = None,
     cancel_event: threading.Event | None = None,
+    threads: int | None = None,
 ) -> float | None:
     """The hottest sample a decode of the artifact finds, in dBFS.
 
@@ -1536,7 +1600,10 @@ def scan_peak_dbfs(
     timed_out = False
     carry = b""
     proc = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
-        [ffmpeg, *build_peak_scan_args(artifact_path=artifact_path, params=params)],
+        [
+            ffmpeg,
+            *build_peak_scan_args(artifact_path=artifact_path, params=params, threads=threads),
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
@@ -1605,6 +1672,7 @@ class ReencodeRunner(Protocol):
         profile: CanonicalProfile,
         timeout_s: float | None = None,
         variant: EncoderVariant | None = None,
+        threads: int | None = None,
     ) -> RideRender: ...
 
 
@@ -2240,6 +2308,7 @@ def measure_artifact(
     timeout_s: float | None = None,
     cancel_event: threading.Event | None = None,
     encoder: str = "",
+    threads: int | None = None,
 ) -> LeveledAttempt:
     """Measure one emitted artifact: its loudness series, and its decoded peak.
 
@@ -2257,7 +2326,7 @@ def measure_artifact(
     """
     try:
         text = run_capture(
-            build_artifact_measure_args(artifact_path=artifact_path),
+            build_artifact_measure_args(artifact_path=artifact_path, threads=threads),
             timeout_s=timeout_s,
             cancel_event=cancel_event,
         )
@@ -2271,6 +2340,7 @@ def measure_artifact(
             params=params,
             timeout_s=timeout_s,
             cancel_event=cancel_event,
+            **({"threads": threads} if threads is not None else {}),
         )
     except LoudnessRideCancelledError:
         raise
@@ -2411,7 +2481,7 @@ def level_window(
                 params=pass_params,
                 threads=threads,
             ),
-            sink_args=build_measure_sink_args(trim_db, params=pass_params),
+            sink_args=build_measure_sink_args(trim_db, params=pass_params, threads=threads),
             curve=curve,
             params=pass_params,
             cancel_event=cancel_event,
@@ -2451,6 +2521,7 @@ def level_window(
                 curve.trim_db,
                 params=params,
                 profile=profile,
+                threads=threads,
             ),
             curve=curve.curve,
             params=params,
@@ -2471,6 +2542,7 @@ def level_window(
                 timeout_s=timeout_s,
                 cancel_event=cancel_event,
                 encoder=encoder_settings_label(profile),
+                threads=threads,
             )
         ]
 
@@ -2529,6 +2601,7 @@ def level_window(
                     profile=profile,
                     timeout_s=timeout_s,
                     variant=variant,
+                    **({"threads": threads} if threads is not None else {}),
                 )
             except LoudnessRideCancelledError:
                 del round_paths[index]
@@ -2551,6 +2624,7 @@ def level_window(
                     timeout_s=timeout_s,
                     cancel_event=cancel_event,
                     encoder=encoder_settings_label(profile, variant),
+                    threads=threads,
                 )
             )
 

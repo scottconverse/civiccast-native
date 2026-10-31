@@ -177,6 +177,7 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
+      second: '2-digit',
     })
     : ''
 
@@ -489,6 +490,7 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
                   timeZone,
                   hour: 'numeric',
                   minute: '2-digit',
+                  second: '2-digit',
                   month: 'short',
                   day: 'numeric',
                 })}

@@ -1261,7 +1261,7 @@ NWS
 **O**
 
 Ollama
-:   The local AI engine program (version 0.30.6 in the current runtime lock), started by the service on `127.0.0.1:11434`.
+:   The local AI engine program (version 0.40.13 in the RC2 runtime lock), started by the service on `127.0.0.1:11434`.
 
 On-Air Mode
 :   A Control Room session type that really fires cues. It expires after 30 minutes. The other type, Test Mode, fires nothing.
@@ -1542,7 +1542,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 | Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-rc.2 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
+| CivicCast program and web portals | 1.0.0-rc.2 published release; source may contain later fixes | Apache-2.0 | The station itself; use each installed package's matching component records. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
@@ -1573,6 +1573,8 @@ record. Installing them does not commission public HTTPS, WHIP or TURN access.
 
 > **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of an installed package are in its `LICENSE-BOM.md` files and matching verification record; use those for that package's component inventory.
 
+The signed model creation records retain Ollama 0.30.6 as pinned in `native-windows-ollama-models.lock.json`. That provenance describes the existing model pack bytes, not the installed AI engine. RC2 installs Ollama 0.40.13 from the separate runtime dependency lock. Verification still requires each model receipt to match its exact reviewed model lock.
+
 ## Where the license texts are
 
 Each runtime pack carries a `LICENSE-BOM.md` (a per-file table of license, generated from the build) and a `licenses` folder with the license text for every license it uses. CivicCast also keeps the texts in its source tree, in `civiccast/native/license_texts`, one file per license identifier:
@@ -1593,7 +1595,7 @@ Each runtime pack carries a `LICENSE-BOM.md` (a per-file table of license, gener
 
 The installer is signed with an Authenticode signature (publisher Scott Converse, through Azure Trusted Signing). To check a download yourself, run `Get-AuthenticodeSignature .\setup.exe` and expect Status Valid; compare the SHA-256 against the release's `SHA256SUMS.txt`.
 
-<!-- SOURCES: LEGAL-NOTICES.md (full); LICENSE, LICENSE-DOCS (headers); CODE_SIGNING_POLICY.md:1-20; civiccast/native/runtime_licenses.py:1-60,172-197,514-540,560-640,871-905 (GPL exclusion list, dual-license elections, server-pack zero-GPL guard, UNRESOLVED_BASENAMES = empty at :497); civiccast/native/license_texts/ (17 files listed); civiccast/native/license_texts/__init__.py:1-30 (VC++ pointer); requirements-native-runtime.in:1-27 (ADR-0021, GPL wheels absent); requirements-native-app.txt:28-33 (LGPL-only PyAV wheel); native-windows-runtime-dependencies.lock.json (ffmpeg LGPL-3.0-or-later n8.1.2, node 24.15.0 MIT, ollama 0.30.6 MIT, postgres 17.10-2, tsduck 3.44); native-windows-ollama-models.lock.json; civiccast/native/app_payload.py:107-150 (Whisper MIT); civiccast/apps/portal-operator/package.json and portal-public/package.json (dependency names); civiccast/native/runtime_licenses.py:1089-1103 (NVIDIA EULA identifiers); civiccast/apps/installer/src-tauri/src/native_install_verify.rs:286 (LICENSE-BOM.md expected with each payload); civiccast/control_room/tsr_service/README.md:16 and docs/adr/0019 -->
+<!-- SOURCES: LEGAL-NOTICES.md (full); LICENSE, LICENSE-DOCS (headers); CODE_SIGNING_POLICY.md:1-20; civiccast/native/runtime_licenses.py:1-60,172-197,514-540,560-640,871-905 (GPL exclusion list, dual-license elections, server-pack zero-GPL guard, UNRESOLVED_BASENAMES = empty at :497); civiccast/native/license_texts/ (17 files listed); civiccast/native/license_texts/__init__.py:1-30 (VC++ pointer); requirements-native-runtime.in:1-27 (ADR-0021, GPL wheels absent); requirements-native-app.txt:28-33 (LGPL-only PyAV wheel); native-windows-runtime-dependencies.lock.json (ffmpeg LGPL-3.0-or-later n8.1.2, node 24.15.0 MIT, ollama 0.40.13 MIT, postgres 17.10-2, tsduck 3.44); native-windows-ollama-models.lock.json; civiccast/native/app_payload.py:107-150 (Whisper MIT); civiccast/apps/portal-operator/package.json and portal-public/package.json (dependency names); civiccast/native/runtime_licenses.py:1089-1103 (NVIDIA EULA identifiers); civiccast/apps/installer/src-tauri/src/native_install_verify.rs:286 (LICENSE-BOM.md expected with each payload); civiccast/control_room/tsr_service/README.md:16 and docs/adr/0019 -->
 
 # Appendix K: Release history {#app-history}
 

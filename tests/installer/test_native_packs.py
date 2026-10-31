@@ -27,7 +27,7 @@ def _key() -> Ed25519PrivateKey:
     return Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
 
 
-def test_reviewed_model_pack_contract_uses_the_inference_proven_runtime() -> None:
+def test_reviewed_model_pack_contract_preserves_model_creation_provenance() -> None:
     lock = native_packs._load_reviewed_ollama_model_lock()
 
     assert lock["ollama_runtime_version"] == "0.30.6"
@@ -662,4 +662,24 @@ def test_model_pack_rejects_signed_bytes_outside_the_reviewed_lock(
                 "model_name": "gemma4-e4b",
                 "ollama_runtime_version": "0.30.6",
             },
+        )
+
+
+@pytest.mark.parametrize("runtime_version", ["0.40.13", "0.0.0", "", None])
+def test_model_metadata_must_match_exact_reviewed_creation_runtime(runtime_version):
+    lock = native_packs._load_reviewed_ollama_model_lock()
+    name, model = next(iter(lock["models"].items()))
+    with pytest.raises(
+        NativePackVerificationError, match="metadata differs from the reviewed model lock"
+    ):
+        native_packs._validate_ollama_model_contract(
+            {
+                "component": model["component"],
+                "metadata": {
+                    "model_name": name,
+                    "manifest_sha256": model["manifest_sha256"],
+                    "ollama_runtime_version": runtime_version,
+                },
+                "files": [],
+            }
         )

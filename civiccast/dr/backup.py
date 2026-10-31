@@ -779,6 +779,7 @@ def run_full_backup(
     command_database_url: str | None = None,
     pg_dump_command: list[str] | None = None,
     pg_dumpall_command: list[str] | None = None,
+    require_quiescent: bool = True,
 ) -> BackupManifest:
     """Back up the database + media manifest + config, and write ``manifest.json``.
 
@@ -795,6 +796,11 @@ def run_full_backup(
     differ whenever the command runs inside a container that sees the
     server as ``localhost`` while this process reaches it through a
     host-mapped port.
+
+    ``require_quiescent`` defaults to checking that a maintenance backup had
+    no concurrent database changes. Live station archives set it to False:
+    their manifest and dump still share the same exported PostgreSQL snapshot,
+    while ordinary writes after that snapshot may continue.
     """
 
     from sqlalchemy import create_engine
@@ -879,16 +885,19 @@ def run_full_backup(
         # Defense-in-depth, redocumented (see _assert_backup_quiescent): no
         # longer guards the manifest/dump binding itself (that is now
         # structural), only the operator's quiescent-window assumption.
-        post_check_engine = create_engine(
-            normalize_database_url(database_url), **connect_options(database_url)
-        )
-        try:
-            post_snapshot = run_bounded(
-                lambda: snapshot_tables(post_check_engine), _BACKUP_CONNECT_CEILING_SECONDS
+        # Online station archives describe the exported snapshot, not the later
+        # live health counters. Maintenance callers retain the quiescence check.
+        if require_quiescent:
+            post_check_engine = create_engine(
+                normalize_database_url(database_url), **connect_options(database_url)
             )
-        finally:
-            post_check_engine.dispose()
-        _assert_backup_quiescent(tables, post_snapshot)
+            try:
+                post_snapshot = run_bounded(
+                    lambda: snapshot_tables(post_check_engine), _BACKUP_CONNECT_CEILING_SECONDS
+                )
+            finally:
+                post_check_engine.dispose()
+            _assert_backup_quiescent(tables, post_snapshot)
 
         globals_artifact_name = run_postgres_globals_backup(
             database_url=dump_url, dest_dir=dest_dir, pg_dumpall_command=pg_dumpall_command

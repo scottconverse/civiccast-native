@@ -804,7 +804,8 @@ def _load_reviewed_ollama_model_lock() -> dict[str, Any]:
         or set(parsed) != {"schema_version", "registry", "ollama_runtime_version", "models"}
         or parsed.get("schema_version") != 1
         or parsed.get("registry") != "registry.ollama.ai"
-        or parsed.get("ollama_runtime_version") != "0.30.6"
+        or not isinstance(parsed.get("ollama_runtime_version"), str)
+        or not parsed["ollama_runtime_version"]
         or not isinstance(parsed.get("models"), dict)
     ):
         raise NativePackVerificationError("reviewed model lock identity is invalid")

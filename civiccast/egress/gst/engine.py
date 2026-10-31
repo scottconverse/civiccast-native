@@ -1731,6 +1731,53 @@ class GstPlayoutEngine:
         self._caption_request_pad = caption_pad
 
     def _begin_caption_program(self, cutoff_ns: int | None = None) -> None:
+        # Reload already fences before releasing incoming first-buffer holds.
+        # The observed first frame adopts this fence instead of resetting twice.
+        self._caption_adopt_next_source = True
+        if cutoff_ns is None:
+            cutoff_ns = self._pipeline_running_time_ms() * Gst.MSECOND
+        token, first_segment = self._fence_caption_program(cutoff_ns)
+        self._finish_caption_program(token, cutoff_ns, first_segment)
+
+    def _select_caption_source(self, source: dict[str, Any], cutoff_ns: int) -> None:
+        """Fence actual selected occurrences, including internal concat changes.
+
+        Called from a streaming probe: only memory/locks and idle scheduling.
+        WAV metadata I/O and caption graph replacement belong to the main loop.
+        """
+        occurrence = source.get("schedule_occurrence_start")
+        identity = (
+            source.get("kind"),
+            source.get("asset_id"),
+            source.get("schedule_item_id"),
+            occurrence or source.get("event_id"),
+        )
+        if getattr(self, "_caption_adopt_next_source", False):
+            self._caption_adopt_next_source = False
+            self._caption_source_identity = identity
+            return
+        if identity == getattr(self, "_caption_source_identity", None):
+            return
+        self._caption_source_identity = identity
+        token, first_segment = self._fence_caption_program(cutoff_ns)
+        GLib.idle_add(self._finish_caption_program, token, cutoff_ns, first_segment)
+
+    def _fence_caption_program(self, cutoff_ns: int) -> tuple[str, int | None]:
+        token = uuid.uuid4().hex
+        self._caption_fence_pending = True
+        writer = getattr(self, "audio_tap_writer", None)
+        first_segment = writer.fence_program(token) if writer is not None else None
+        # Publish a coherent pair only AFTER the writer's fence. A callback
+        # holding the old pair is refused by the writer; one seeing the new pair
+        # cannot accidentally combine the incoming token with an outgoing cutoff.
+        self._caption_audio_state = (token, cutoff_ns)
+        self._caption_program_token = token
+        self._caption_audio_cutoff_ns = cutoff_ns
+        return token, first_segment
+
+    def _finish_caption_program(
+        self, token: str, cutoff_ns: int, first_segment: int | None
+    ) -> bool:
         """Replace only the sparse caption source at the actual selector switch.
 
         The live combiner has no additional scheduling FIFO. The
@@ -1738,18 +1785,15 @@ class GstPlayoutEngine:
         source also discards appsrc/queue/converter state; late commands must
         carry the new token and cannot refill it with the outgoing program.
         """
+        if token != getattr(self, "_caption_program_token", None):
+            return False
         writer = getattr(self, "audio_tap_writer", None)
-        if getattr(self, "caption_appsrc", None) is None and writer is None:
-            return
-        token = uuid.uuid4().hex
-        self._caption_program_token = token
-        if cutoff_ns is None:
-            cutoff_ns = self._pipeline_running_time_ms() * Gst.MSECOND
-        self._caption_audio_cutoff_ns = cutoff_ns
-        if writer is not None:
-            writer.begin_program(token)
+        if writer is not None and first_segment is not None:
+            writer.publish_program_boundary(token, first_segment)
         if getattr(self, "caption_appsrc", None) is None:
-            return
+            if token == self._caption_program_token:
+                self._caption_fence_pending = False
+            return False
         old_elements = self._caption_source_elements
         combiner = self._caption_combiner
         pad = self._caption_request_pad
@@ -1791,7 +1835,10 @@ class GstPlayoutEngine:
         ]
         self._caption_retire_legs.append({"thread": thread, "elements": old_elements})
         thread.start()
+        if token == self._caption_program_token:
+            self._caption_fence_pending = False
         print(f"CTRL caption program changed: {token}", flush=True)
+        return False
 
     def push_caption_cue(
         self,
@@ -1807,7 +1854,9 @@ class GstPlayoutEngine:
         via the ``caption`` control command to feed continuous captions from the channel
         caption pipeline; the buffer carries PTS+duration so cccombiner schedules the
         cue against the video. Live behavior is POSIX/LPM-validated."""
-        if (program_token or "") != getattr(self, "_caption_program_token", ""):
+        if getattr(self, "_caption_fence_pending", False) or (
+            (program_token or "") != getattr(self, "_caption_program_token", "")
+        ):
             return False
         appsrc = self.caption_appsrc
         if appsrc is None:
@@ -2136,14 +2185,18 @@ class GstPlayoutEngine:
             if not mapped:
                 return Gst.FlowReturn.ERROR
             try:
-                token = getattr(self, "_caption_program_token", None)
-                cutoff_ns = getattr(self, "_caption_audio_cutoff_ns", None)
-                if cutoff_ns is not None:
-                    segment = sample.get_segment()
-                    running_ns = segment.to_running_time(Gst.Format.TIME, buffer.pts)
-                    if running_ns == Gst.CLOCK_TIME_NONE or running_ns < cutoff_ns:
-                        return Gst.FlowReturn.OK
-                writer.write_pcm_s16le(map_info.data, program_token=token)
+                token, cutoff_ns = getattr(self, "_caption_audio_state", (None, None))
+                segment = sample.get_segment()
+                running_ns = segment.to_running_time(Gst.Format.TIME, buffer.pts)
+                if running_ns == Gst.CLOCK_TIME_NONE:
+                    return Gst.FlowReturn.OK
+                if cutoff_ns is not None and running_ns < cutoff_ns:
+                    return Gst.FlowReturn.OK
+                writer.write_pcm_s16le(
+                    map_info.data,
+                    program_token=token,
+                    running_time_seconds=running_ns / Gst.SECOND,
+                )
             except Exception as exc:
                 self._error = f"caption audio tap failed: {exc}"
                 print(f"ERROR: {self._error}", flush=True)
@@ -2162,6 +2215,7 @@ class GstPlayoutEngine:
             token = uuid.uuid4().hex
             self._caption_program_token = token
             writer.begin_program(token)
+            self._caption_audio_state = (token, None)
             print(f"CTRL caption program changed: {token}", flush=True)
 
     @staticmethod
@@ -2764,12 +2818,25 @@ class GstPlayoutEngine:
                     if structure is not None and structure.get_name() == "civiccast-source":
                         current = json.loads(structure.get_string("identity"))
                 elif info.type & Gst.PadProbeType.BUFFER:
-                    identity = current.get("event_id")
+                    active = self.selector.get_property("active-pad")
+                    index = self.selector_sink_pads.index(active)
+                    source = current
+                    if index != 0 or not current:
+                        label = self.graph.sources[index].label
+                        source = {
+                            "kind": "slate" if label == "slate" else label,
+                            "asset_id": None,
+                            "schedule_item_id": None,
+                            "label": label,
+                            "event_id": f"role-{active.get_name()}",
+                        }
+                    identity = source.get("event_id")
                     if identity and identity != selected_id:
                         _, running_time, _ = self._measure_first_buffer(pad, info)
                         if running_time is not None:
+                            self._select_caption_source(source, running_time)
                             with self._source_output_lock:
-                                self._source_output_pending.append((running_time, dict(current)))
+                                self._source_output_pending.append((running_time, dict(source)))
                             selected_id = identity
             return Gst.PadProbeReturn.OK
 
@@ -5304,7 +5371,9 @@ class GstPlayoutEngine:
                 channel_dir = reload_path.parent
                 reload_id = reload_id_from_sidecar_path(command[1])
                 with reload_path.open(encoding="utf-8") as handle:
-                    new_graph = graph_from_json(handle.read())
+                    graph_json = handle.read()
+                    new_graph = graph_from_json(graph_json)
+                    switch_at_unix = json.loads(graph_json).get("switch_at_unix")
                 with contextlib.suppress(OSError):
                     reload_path.unlink()  # one-shot graph file: consume it after read
 
@@ -5332,6 +5401,7 @@ class GstPlayoutEngine:
                     new_graph.sources[0],
                     switch_at_end_of_current=reload_switch_is_deferred(command[1]),
                     on_settled=_on_settled,
+                    **({"switch_at_unix": switch_at_unix} if switch_at_unix is not None else {}),
                 )
                 # BLOCKER fix: a content-reload must also re-apply the graphics-overlay
                 # leg (station bug / lower-third) from the SAME reloaded graph — reload
@@ -5384,6 +5454,7 @@ class GstPlayoutEngine:
         *,
         switch_at_end_of_current: bool = False,
         on_settled: Callable[[bool, str | None], None] | None = None,
+        switch_at_unix: float | None = None,
     ) -> None:
         """Replace the program leg (source index 0) with ``new_leg`` seamlessly.
 
@@ -5497,6 +5568,16 @@ class GstPlayoutEngine:
         that dispatch path defer its ack until the reload genuinely lands one way or
         the other. A caller that does not pass it (the POSIX FIFO dispatch path,
         ``_dispatch_control``, which was always fire-and-forget) is unaffected."""
+        if switch_at_unix is not None:
+            import math
+
+            if (
+                isinstance(switch_at_unix, bool)
+                or not isinstance(switch_at_unix, (int, float))
+                or not math.isfinite(switch_at_unix)
+                or not switch_at_end_of_current
+            ):
+                raise ValueError("A scheduled start requires a finite UTC time and a held reload.")
         if self.selector is None or not self.selector_sink_pads:
             raise RuntimeError("engine not built; cannot reload")
         if getattr(self, "_stopping", False):
@@ -5607,6 +5688,7 @@ class GstPlayoutEngine:
             # Every switch waits for this transaction's first buffer. Only the
             # outgoing-EOS condition starts satisfied for an immediate switch.
             "switch_at_end_of_current": switch_at_end_of_current,
+            "switch_at_unix": switch_at_unix,
             "new_leg_ready": False,
             # U41: a boundary-aligned switch normally waits for the outgoing leg's
             # own EOS. After ``_hold_slate_for_plan_eos`` there is no such EOS to
@@ -5808,6 +5890,12 @@ class GstPlayoutEngine:
         )
         # U34: the context a later per-stream stall line reports.
         self._reload_context = (txn_id, "prepared")
+        if pending.get("switch_at_unix") is not None:
+            delay_ms = max(1, int((pending["switch_at_unix"] - time.time()) * 1000 + 1))
+            pending["defer_timeout_id"] = GLib.timeout_add(
+                delay_ms, self._on_scheduled_start, txn_id
+            )
+            return False
         if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
             pending["defer_timeout_id"] = GLib.timeout_add_seconds(
                 max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout, txn_id
@@ -6723,6 +6811,10 @@ class GstPlayoutEngine:
             or pending.get("holds_awaited", 0) != 0
             or pending.get("old_leg_eos", False)
             or pending.get("boundary_forced", False)
+            or (
+                pending.get("switch_at_unix") is not None
+                and time.time() < pending["switch_at_unix"]
+            )
         ):
             return False
         pending["boundary_forced"] = True
@@ -6742,6 +6834,23 @@ class GstPlayoutEngine:
             return True
         self._commit_reload()
         return True
+
+    def _on_scheduled_start(self, txn_id: int) -> bool:
+        """Release a fully prerolled scheduled program while the slate still flows."""
+        pending = self._pending_reload
+        if pending is None or pending["txn_id"] != txn_id:
+            return False
+        pending["defer_timeout_id"] = None
+        remaining = pending["switch_at_unix"] - time.time()
+        if remaining > 0:
+            pending["defer_timeout_id"] = GLib.timeout_add(
+                max(1, int(remaining * 1000 + 1)), self._on_scheduled_start, txn_id
+            )
+        elif pending.get("old_leg_eos", False):
+            self._commit_reload()
+        else:
+            self._force_deferred_boundary(txn_id, reason="scheduled program start")
+        return False
 
     def _on_defer_switch_timeout(self, txn_id: int) -> bool:
         """Safety watchdog (B3 fix): the outgoing leg's EOS never arrived within
@@ -6880,6 +6989,8 @@ class GstPlayoutEngine:
         # F-1: no caller (including an expired timer) may retire the old leg
         # without readiness for every required stream of THIS transaction.
         if not pending["new_leg_ready"] or pending["holds_awaited"] != 0:
+            return False
+        if pending.get("switch_at_unix") is not None and time.time() < pending["switch_at_unix"]:
             return False
         if (
             pending["switch_at_end_of_current"]

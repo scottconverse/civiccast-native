@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 
@@ -10,7 +10,11 @@ import { processLabel } from './status-language'
 
 // No global afterEach in vitest config → register testing-library cleanup
 // explicitly so body-scoped queries don't match leftover renders.
-afterEach(cleanup)
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+})
+afterEach(() => { cleanup(); vi.useRealTimers() })
 
 const greenStatus: RuntimeSafeToAirStatus = {
   generated_at: '2026-06-15T12:00:00Z',
@@ -25,6 +29,18 @@ const greenStatus: RuntimeSafeToAirStatus = {
 }
 
 describe('RuntimeSafeToAirBanner', () => {
+  it.each([
+    ['2026-06-15T11:57:59Z', false],
+    ['invalid', false],
+    ['2026-06-15T12:01:00Z', false],
+    ['2026-06-15T12:00:00Z', true],
+  ])('marks cached live health unavailable for %s / refresh error %s', (generated_at, unavailable) => {
+    const { container } = render(<RuntimeSafeToAirBanner status={{ ...greenStatus, generated_at }} unavailable={unavailable} />)
+    expect(container.textContent).toContain('Live status unavailable')
+    expect(container.textContent).toContain('last observed')
+    expect(container.textContent).not.toContain('All automatic channels are on air.')
+    expect(container.textContent).not.toContain('On air and healthy')
+  })
   it.each([
     ['whistle-recovering', 'Whisper fallback selected; checking Whistle recovery'],
     ['whistle-recovery-cooldown', 'Whisper fallback selected; Whistle retry in 30s'],

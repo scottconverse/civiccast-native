@@ -72,6 +72,7 @@ def run_recovery(tmp_path: Path, body: str) -> None:
         capture_output=True,
         text=True,
         timeout=60,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -344,4 +345,28 @@ Assert ($script:events.Count -eq 0) 'unsupported identity changed service or reg
             "SAVED_ACCOUNT_ENTRY",
             "" if account is None else ", @{Name='ObjectName'; Value='" + account + "'}",
         ),
+    )
+
+
+def test_snapshot_progress_identifies_size_copy_and_completion(tmp_path: Path) -> None:
+    run_recovery(
+        tmp_path,
+        r"""
+$script:realCopy = ${function:Copy-RecoveryEntry}
+function Copy-RecoveryEntry($entry, $source, $target) {
+    $current = Get-Content -LiteralPath "$data\install-progress.log" -Raw
+    Assert ($current -match 'size measured: \d+ bytes; required reserve: 268435456 bytes; available: \d+ bytes') 'size was not reported before copy'
+    Assert ($current -match 'copying entry') 'copy phase was not reported before copy'
+    Assert ($current -notmatch 'recovery snapshot: complete:') 'completion reported before copy'
+    & $script:realCopy $entry $source $target
+}
+Snapshot-Transaction $state
+$log = Get-Content -LiteralPath "$data\install-progress.log" -Raw
+Assert ($log -match 'recovery snapshot: quiescing') 'quiesce phase missing'
+Assert ($log -match 'recovery snapshot: measuring recovery size') 'size phase missing'
+Assert ($log -match 'recovery snapshot: copied entry 4 of 4') 'entry completion missing'
+Assert ($log -match 'recovery snapshot: complete: \d+ bytes; recovery point recorded') 'durable completion missing'
+Assert ((Read-Transaction).SnapshotComplete) 'progress changed recovery completion'
+Assert (-not $script:SnapshotProgressActive) 'copy heartbeat left active'
+""",
     )

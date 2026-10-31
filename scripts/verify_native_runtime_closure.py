@@ -1477,6 +1477,15 @@ def _child_caption_decode_back(
             return
         caps_name = caps.get_structure(0).get_name()
         if not _pad_caps_name_is_video(caps_name):
+            # Audio can arrive before the video pad exists. Leaving that first
+            # pad unlinked makes tsdemux stop before it can expose the video.
+            # Consume ignored streams while keeping caption extraction video-only.
+            discard = gst.ElementFactory.make("fakesink", None)
+            discard.set_property("sync", False)
+            discard.set_property("async", False)
+            pipeline.add(discard)
+            discard.sync_state_with_parent()
+            pad.link(discard.get_static_pad("sink"))
             return
         sink_pad = queue.get_static_pad("sink")
         if not sink_pad.is_linked():

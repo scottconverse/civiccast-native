@@ -68,6 +68,85 @@ def _external_database_reports_current(monkeypatch) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "RC2-DUMMY-NOT-A-URL",
+        "ftp://station.example",
+        "https://user:secret@station.example",
+        "https:station.example",
+        "https://station.ex\nample",
+        "https://station.example\t/path",
+    ],
+)
+def test_setup_and_profile_reject_invalid_resident_portal_url(url) -> None:
+    from pydantic import ValidationError
+
+    from civiccast.installer.station_state import StationProfileUpdateRequest
+
+    with pytest.raises(ValidationError):
+        FirstAdminSetupRequest.model_validate({**_SETUP_PAYLOAD, "public_base_url": url})
+    with pytest.raises(ValidationError):
+        StationProfileUpdateRequest(public_base_url=url)
+    assert StationProfileUpdateRequest(public_base_url="").public_base_url is None
+    assert (
+        StationProfileUpdateRequest(public_base_url="http://127.0.0.1:8000").public_base_url
+        == "http://127.0.0.1:8000"
+    )
+
+
+@pytest.mark.parametrize("port", ["not-a-number", "0", "65536", "1.5", "\uff11\uff12\uff13"])
+def test_provider_setup_rejects_invalid_smtp_port_before_saving(
+    monkeypatch, tmp_path, port
+) -> None:
+    path = tmp_path / "provider-credentials.json"
+    monkeypatch.setenv("CIVICCAST_PROVIDER_CREDENTIALS_FILE", str(path))
+    client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
+    response = client.post(
+        "/api/staff/installer/provider-credentials",
+        json={
+            "provider_id": "subscriber-notifications",
+            "values": {"smtp_port": port, "smtp_password": "dummy-secret-never-echo"},
+        },
+    )
+    assert response.status_code == 422
+    assert "SMTP port" in response.json()["detail"]
+    assert "dummy-secret-never-echo" not in response.text
+    assert not path.exists()
+
+
+def test_incomplete_mail_is_explicit_draft_and_retains_write_only_secret(
+    monkeypatch, tmp_path
+) -> None:
+    path = tmp_path / "provider-credentials.json"
+    monkeypatch.setenv("CIVICCAST_PROVIDER_CREDENTIALS_FILE", str(path))
+    client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
+    first = client.post(
+        "/api/staff/installer/provider-credentials",
+        json={
+            "provider_id": "subscriber-notifications",
+            "values": {"smtp_port": "587", "smtp_password": "dummy-retained-secret"},
+        },
+    )
+    assert first.status_code == 200
+    assert "draft" in first.json()["message"]
+    second = client.post(
+        "/api/staff/installer/provider-credentials",
+        json={
+            "provider_id": "subscriber-notifications",
+            "values": {"smtp_port": "2525"},
+        },
+    )
+    assert second.status_code == 200
+    assert "dummy-retained-secret" not in second.text
+    assert (
+        json.loads(path.read_text())["providers"]["subscriber-notifications"]["fields"][
+            "smtp_password"
+        ]
+        == "dummy-retained-secret"
+    )
+
+
 def test_installer_first_run_plan_api() -> None:
     client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
 

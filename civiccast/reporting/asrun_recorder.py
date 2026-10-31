@@ -136,7 +136,7 @@ class StoreAsRunRecorder:
         self._station_id = station_id or resolve_station_id()
         # channel_id -> (open entry_id, its actual_start) awaiting an actual_end.
         self._open: dict[str, tuple[str, datetime]] = {}
-        self._open_identity: dict[str, tuple[str, str | None, str | None]] = {}
+        self._open_identity: dict[str, tuple[str, str | None, str | None, datetime | None]] = {}
         self._open_offset: dict[str, float] = {}
         self._lock = threading.Lock()
         self._outbox = outbox or AsRunOutbox(store, db_path=ephemeral_outbox_path())
@@ -154,10 +154,11 @@ class StoreAsRunRecorder:
         proof_event_id: str,
         schedule_item_id: str | None = None,
         source_offset_seconds: float | None = None,
+        schedule_occurrence_start: datetime | None = None,
     ) -> None:
         try:
             with self._lock:
-                identity = (source_kind, asset_id, schedule_item_id)
+                identity = (source_kind, asset_id, schedule_item_id, schedule_occurrence_start)
                 if (
                     source_kind == "program"
                     and schedule_item_id is not None
@@ -165,8 +166,9 @@ class StoreAsRunRecorder:
                     and source_offset_seconds is not None
                     and source_offset_seconds > self._open_offset.get(channel_id, float("inf"))
                 ):
-                    # A preparation horizon rollover continues the same scheduled
-                    # occurrence. It is not another play of that program.
+                    # A horizon rollover continues the SAME effective occurrence.
+                    # Repeats retain the schedule row ID, but their effective start
+                    # changes even when both plays start at increasing late offsets.
                     self._open_offset[channel_id] = source_offset_seconds
                     return
                 # Close the previous open row for this channel: its actual_end is
@@ -181,7 +183,11 @@ class StoreAsRunRecorder:
                     channel_id=channel_id,
                     asset_id=asset_id,
                     schedule_item_id=schedule_item_id,
-                    scheduled_start=self._scheduled_start(schedule_item_id, channel_id, asset_id),
+                    scheduled_start=(
+                        schedule_occurrence_start
+                        if schedule_occurrence_start is not None
+                        else self._scheduled_start(schedule_item_id, channel_id, asset_id)
+                    ),
                     actual_start=actual_start,
                     actual_end=actual_start,
                     duration_s=0,

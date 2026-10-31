@@ -48,7 +48,7 @@ import io
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,26 +61,42 @@ from civiccast.reporting.models import AsRunLogEntry, AsRunLogEntryDb, Slug
 from civiccast.reporting.store import ReportingStore
 
 
-def _window_airtime(session: Session, from_ts: datetime, to_ts: datetime) -> ColumnElement[Any]:
-    """Clip closed airtime to the requested interval on SQLite and PostgreSQL."""
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _open_airing() -> ColumnElement[bool]:
+    row = AsRunLogEntryDb
+    return (row.duration_s == 0) & (row.actual_end == row.actual_start)
+
+
+def _window_airtime(
+    session: Session, from_ts: datetime, to_ts: datetime, now: datetime
+) -> ColumnElement[Any]:
+    """Clip closed and provisional open airtime without changing ledger evidence."""
     row = AsRunLogEntryDb
     start = case((row.actual_start < from_ts, from_ts), else_=row.actual_start)
-    end = case((row.actual_end > to_ts, to_ts), else_=row.actual_end)
+    effective_end = case((_open_airing(), min(now, to_ts)), else_=row.actual_end)
+    end = case((effective_end > to_ts, to_ts), else_=effective_end)
     if session.get_bind().dialect.name == "sqlite":
         seconds = func.round((func.julianday(end) - func.julianday(start)) * 86400)
     else:
         seconds = func.floor(func.extract("epoch", end - start))
     return case(
-        ((row.actual_start >= from_ts) & (row.actual_end <= to_ts), row.duration_s),
         (end <= start, 0),
+        (
+            ~_open_airing() & (row.actual_start >= from_ts) & (row.actual_end <= to_ts),
+            row.duration_s,
+        ),
         else_=seconds,
     )
 
 
-def _overlaps_window(from_ts: datetime, to_ts: datetime) -> ColumnElement[bool]:
+def _overlaps_window(from_ts: datetime, to_ts: datetime, now: datetime) -> ColumnElement[bool]:
     row = AsRunLogEntryDb
     return (row.actual_start < to_ts) & (
-        (row.actual_end > from_ts) | ((row.duration_s == 0) & (row.actual_start >= from_ts))
+        (~_open_airing() & (row.actual_end > from_ts))
+        | (_open_airing() & (row.actual_start < now) & (now > from_ts))
     )
 
 
@@ -104,6 +120,7 @@ class ShowsReportRow(BaseModel):
 
     asset_id: Slug
     play_count: int
+    in_progress_count: int = 0
     total_airtime_s: int
     first_aired: datetime
     last_aired: datetime
@@ -130,6 +147,7 @@ class HoursByCategoryRow(BaseModel):
     total_hours: float
     total_seconds: int
     entry_count: int
+    in_progress_count: int = 0
 
 
 class HoursByCategoryReport(BaseModel):
@@ -277,18 +295,20 @@ class ReportingService:
         including ``spot`` (S24 underwriting). Sum/group is done in SQL —
         index-friendly on the ``(station_id, actual_start)`` index path.
         """
+        now = _now()
         with self._session() as session:
-            airtime = _window_airtime(session, from_ts, to_ts)
+            airtime = _window_airtime(session, from_ts, to_ts, now)
             stmt = (
                 select(
                     AsRunLogEntryDb.asset_id.label("asset_id"),
                     func.count().label("play_count"),
+                    func.sum(case((_open_airing(), 1), else_=0)).label("in_progress_count"),
                     func.sum(airtime).label("total_airtime_s"),
                     func.min(AsRunLogEntryDb.actual_start).label("first_aired"),
                     func.max(AsRunLogEntryDb.actual_start).label("last_aired"),
                 )
                 .where(AsRunLogEntryDb.station_id == station_id)
-                .where(_overlaps_window(from_ts, to_ts))
+                .where(_overlaps_window(from_ts, to_ts, now))
                 .where(AsRunLogEntryDb.asset_id.is_not(None))
                 .group_by(AsRunLogEntryDb.asset_id)
                 # Sort by total airtime desc, ties broken by asset_id asc — so
@@ -304,6 +324,7 @@ class ReportingService:
                 ShowsReportRow(
                     asset_id=r.asset_id,
                     play_count=int(r.play_count),
+                    in_progress_count=int(r.in_progress_count or 0),
                     total_airtime_s=int(r.total_airtime_s or 0),
                     first_aired=_as_utc(r.first_aired),
                     last_aired=_as_utc(r.last_aired),
@@ -353,6 +374,7 @@ class ReportingService:
         via a generated lowercase column on ``custom_field_values.value``
         (out of scope for S23).
         """
+        now = _now()
         with self._session() as session:
             field_id = self._resolve_field_id(session, station_id, field_key)
             if field_id is None:
@@ -372,13 +394,14 @@ class ReportingService:
             # below are bound (sentinel + field_id + window + station/channel).
             uncategorized = UNCATEGORIZED_LABEL
             category_col = func.coalesce(CustomFieldValueDb.value, uncategorized)
-            airtime = _window_airtime(session, from_ts, to_ts)
+            airtime = _window_airtime(session, from_ts, to_ts, now)
 
             stmt = (
                 select(
                     category_col.label("category"),
                     func.sum(airtime).label("total_seconds"),
                     func.count().label("entry_count"),
+                    func.sum(case((_open_airing(), 1), else_=0)).label("in_progress_count"),
                 )
                 .select_from(AsRunLogEntryDb)
                 .outerjoin(
@@ -387,7 +410,7 @@ class ReportingService:
                     & (CustomFieldValueDb.field_id == field_id),
                 )
                 .where(AsRunLogEntryDb.station_id == station_id)
-                .where(_overlaps_window(from_ts, to_ts))
+                .where(_overlaps_window(from_ts, to_ts, now))
                 .group_by(category_col)
                 # Uncategorized last: CASE puts the sentinel into bucket 1,
                 # everything else into bucket 0. Then within each bucket, order
@@ -410,6 +433,7 @@ class ReportingService:
                         total_hours=round(total_seconds / 3600.0, 3),
                         total_seconds=total_seconds,
                         entry_count=int(r.entry_count),
+                        in_progress_count=int(r.in_progress_count or 0),
                     )
                 )
 
@@ -443,10 +467,15 @@ class ReportingService:
         an error; every ``category`` is ``None``, matching the
         ``hours_by_category`` empty-rows policy.
         """
+        now = _now()
         entries = self._store.list_as_run(
-            station_id, channel_id=channel_id, from_ts=from_ts, to_ts=to_ts
+            station_id, channel_id=channel_id, from_ts=from_ts, to_ts=to_ts, now=now
         )
 
+        entries = [
+            entry.model_copy(update={"duration_s": _clipped_duration(entry, from_ts, to_ts, now)})
+            for entry in entries
+        ]
         category_by_asset: dict[str, str] = {}
         if field_key is not None and entries:
             with self._session() as session:
@@ -548,6 +577,17 @@ class ReportingService:
             .where(CustomFieldDefDb.key == field_key)
         )
         return session.execute(stmt).scalar_one_or_none()
+
+
+def _clipped_duration(entry: AsRunLogEntry, start: datetime, end: datetime, now: datetime) -> int:
+    open_airing = entry.duration_s == 0 and entry.actual_end == entry.actual_start
+    clipped_start = max(start, entry.actual_start)
+    clipped_end = min(end, now if open_airing else entry.actual_end)
+    if clipped_end <= clipped_start:
+        return 0
+    if not open_airing and entry.actual_start >= start and entry.actual_end <= end:
+        return entry.duration_s
+    return int((clipped_end - clipped_start).total_seconds())
 
 
 def _as_utc(value: datetime) -> datetime:

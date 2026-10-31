@@ -172,7 +172,15 @@ For a repeating rotation of two recordings:
 3. In **Channels**, select the channel. Under **Channel startup and repeat**, enable **Repeat the published sequence**, then **Save automation settings**. No service restart or API call is needed. This is separate from **Keep this channel on air**, which controls automatic startup.
 4. Check **Published playout plan**. Entries marked **In repeat sequence** form the last contiguous published sequence; a gap greater than one second starts a new group. Older groups do not repeat. Watch the first transition and return to the first recording. Disable repeat for a finite schedule.
 
+The last group's first start and final end define its repeat period. Gaps of up to one second inside that group stay gaps; a larger gap selects a new group rather than stretching the repeat period across old schedule history. Filler handles gaps without moving the next program earlier. If the channel starts late, it joins the program scheduled for that instant at the elapsed playback position; it does not restart the rotation or play every missed program. If that program's playable media has ended, filler remains until the next due item.
+
+The resident channel guide projects that same repeat group over the requested viewing window, including a repeated program already in progress. These are planned occurrences; they do not create new stored schedule rows and do not prove actual output. With repeat off, the guide uses the original published schedule times. Recurring Program Guide slots below are a separate way to create dated schedule items.
+
+When an automatic channel is showing filler before a scheduled program, CivicCast prepares the next recording in advance and holds its audio and video until the scheduled start. If preparation fails or finishes too late, filler remains; the channel does not play the recording early to hide the problem. Check the channel's actionable error and actual output before assuming the scheduled transition succeeded.
+
 For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
+
+Schedule list ranges and operator guide review cards show seconds, so a 38-second item has visibly different start and end times and a 38s duration. The duration controls still use separate minutes and additional seconds.
 
 In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from an output observation (not a TV receiver). The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 

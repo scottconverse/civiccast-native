@@ -11,10 +11,14 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from civiccast.egress.router import get_egress_store
-from civiccast.live.router import get_current_live_session, get_live_session_store
+from civiccast.live.router import (
+    PublicProgramTransition,
+    get_current_live_session,
+    get_live_session_store,
+)
 from civiccast.live.surge_service import get_surge_switch_service
 from civiccast.paywall.router import _station_id, get_paywall_service
 from civiccast.paywall.service import PaywallService
@@ -81,6 +85,7 @@ class ChannelEmbedResponse(BaseModel):
     manifest_url: str | None
     portal_url: str
     embed_html: str
+    program_timeline: list[PublicProgramTransition] = Field(default_factory=list)
 
 
 def _require_embed_access(paywall: PaywallService | None, kind: str, identity: str) -> None:
@@ -122,6 +127,7 @@ def get_channel_embed(
         channel_id=channel_id,
         title=title,
         manifest_url=live.manifest_url,
+        program_timeline=live.program_timeline,
         portal_url=portal_url,
         embed_html=build_embed_html(portal_url=portal_url, title=title),
     )

@@ -1208,7 +1208,7 @@ def save_provider_credentials(
     submitted = {key: value.strip() for key, value in request.values.items()}
     unknown = sorted(set(submitted) - set(allowed))
     if unknown:
-        raise ValueError(f"Unsupported field for this provider: {', '.join(unknown)}.")
+        raise ValueError("Unsupported field for this provider. Use the fields shown in setup.")
     missing = sorted(field_id for field_id in required if not submitted.get(field_id))
     if missing:
         raise ValueError(f"Enter all required provider fields: {', '.join(missing)}.")
@@ -1218,6 +1218,11 @@ def save_provider_credentials(
         if len(value) > 4000 or any(ord(ch) < 32 for ch in value):
             raise ValueError(f"{allowed[key].label} contains unsupported characters.")
 
+    if request.provider_id == "subscriber-notifications":
+        port = submitted.get("smtp_port", "")
+        if port and (not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535):
+            raise ValueError("SMTP port must be a whole number from 1 to 65535.")
+
     saved_at = datetime.now(UTC)
     handle = _provider_credential_handle(request.provider_id)
 
@@ -1226,20 +1231,41 @@ def save_provider_credentials(
         if not isinstance(providers, dict):
             providers = {}
             payload["providers"] = providers
+        fields_to_save = dict(submitted)
+        if request.provider_id == "subscriber-notifications":
+            previous = providers.get(request.provider_id, {})
+            previous_fields = previous.get("fields", {}) if isinstance(previous, dict) else {}
+            if isinstance(previous_fields, dict):
+                # Cleared write-only controls omit their previous secret. Keep
+                # it unless an explicit replacement (or blank) was submitted.
+                for key, field in allowed.items():
+                    if field.secret and key not in submitted and key in previous_fields:
+                        fields_to_save[key] = previous_fields[key]
         providers[request.provider_id] = {
             "saved_at": saved_at.isoformat(),
-            "fields": submitted,
+            "fields": fields_to_save,
         }
 
     _mutate_provider_credentials(mutate)
+    incomplete_mail = request.provider_id == "subscriber-notifications" and (
+        not submitted.get("smtp_host") or not submitted.get("smtp_from")
+    )
     return ProviderCredentialSetupResponse(
         status="stored",
         provider_id=request.provider_id,
         credential_handle=handle,
-        configured_fields=sorted(submitted),
+        configured_fields=sorted(key for key, value in submitted.items() if value),
         redacted_fields=sorted(field_id for field_id, field in allowed.items() if field.secret),
-        message="Provider details were saved locally. Secret values will not be shown again.",
-        next_step="Run provider readiness again, then run live proof before claiming this provider is ready.",
+        message=(
+            "Incomplete mail settings saved as a draft. Secret values will not be shown again."
+            if incomplete_mail
+            else "Provider details were saved locally. Secret values will not be shown again."
+        ),
+        next_step=(
+            "Enter an SMTP host and sender email before testing subscriber notifications."
+            if incomplete_mail
+            else "Run provider readiness again, then run live proof before claiming this provider is ready."
+        ),
     )
 
 

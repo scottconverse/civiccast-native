@@ -76,6 +76,7 @@ class AsRunRecorder(Protocol):
         proof_event_id: str,
         schedule_item_id: str | None = None,
         source_offset_seconds: float | None = None,
+        schedule_occurrence_start: datetime | None = None,
     ) -> None:
         """Record that ``channel_id`` ACTUALLY went on air with this source at
         ``actual_start`` (the proof-event ``observed_at``). Closes the channel's

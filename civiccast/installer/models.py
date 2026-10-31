@@ -7,13 +7,39 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic_core import PydanticCustomError
 
 from civiccast.alerting.models import (
     RuntimeSafeToAirStatus,
     SystemResourceSample,
     SystemSelfTest,
 )
+
+
+def normalize_resident_portal_url(value: object) -> object:
+    """Validate supplied links without requesting them or echoing their input."""
+    if not isinstance(value, str):
+        return value
+    raw = value
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        if not value.lower().startswith(("http://", "https://")) or any(
+            ord(character) < 32 or ord(character) == 127 for character in raw
+        ):
+            raise ValueError("incomplete URL or control character")
+        url = TypeAdapter(AnyHttpUrl).validate_python(value)
+        if url.username is not None or url.password is not None:
+            raise ValueError("credentials in URL")
+    except ValueError:
+        raise PydanticCustomError(
+            "resident_portal_url",
+            "Enter a complete http:// or https:// resident portal URL without credentials.",
+        ) from None
+    return value
+
 
 DeploymentProfile = Literal["public-meetings", "streaming-only", "peg-cable"]
 InstallerStepStatus = Literal["ready", "needs_input", "blocked", "complete"]
@@ -365,6 +391,10 @@ class FirstAdminSetupRequest(BaseModel):
     sample_content_enabled: bool = True
     initial_schedule_enabled: bool = True
     operation_mode: StationOperationMode = "test"
+
+    _validate_portal = field_validator("public_base_url", mode="before")(
+        normalize_resident_portal_url
+    )
 
 
 class RecoveryKit(BaseModel):

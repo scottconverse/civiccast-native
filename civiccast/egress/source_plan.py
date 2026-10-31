@@ -903,6 +903,43 @@ def _contiguous_schedule_run(
     return ordered[start:]
 
 
+def schedule_items_in_window(
+    *,
+    channel_id: str,
+    schedule_items: Sequence[ScheduleItemResponse],
+    starts_at: datetime,
+    ends_at: datetime,
+    loop_schedule: bool = False,
+) -> list[ScheduleItemResponse]:
+    """Project airable rows into a bounded guide window without storing repeats.
+
+    Repeat selection and its initial cycle come from the same playout policy.
+    Include an occurrence already in progress, but never one ending at the
+    window's start. Original row identities and all source records stay intact.
+    """
+    start, end = _as_utc(starts_at), _as_utc(ends_at)
+    if end < start or end - start > timedelta(days=14):
+        raise ValueError("schedule window must span between zero and fourteen days")
+    items = _playable_items(channel_id, schedule_items, loop_schedule=loop_schedule, now=start)
+    if not items:
+        return []
+    period = max(
+        _as_utc(item.scheduled_at) + timedelta(seconds=item.duration_seconds or 0) for item in items
+    ) - _as_utc(items[0].scheduled_at)
+    projected: list[ScheduleItemResponse] = []
+    offset = timedelta(0)
+    while _as_utc(items[0].scheduled_at) + offset <= end:
+        for item in items:
+            occurrence_start = _as_utc(item.scheduled_at) + offset
+            occurrence_end = occurrence_start + timedelta(seconds=item.duration_seconds or 0)
+            if occurrence_start <= end and occurrence_end > start:
+                projected.append(item.model_copy(update={"scheduled_at": occurrence_start}))
+        if not loop_schedule or period <= timedelta(0):
+            break
+        offset += period
+    return projected
+
+
 def _repeat_schedule_cycle(
     items: Sequence[ScheduleItemResponse],
     current_time: datetime,
@@ -1152,6 +1189,7 @@ def _segment_from_item(
         kind="program",
         source_ref=item.asset_id,
         schedule_occurrence_id=str(item.id),
+        schedule_occurrence_start=_as_utc(item.scheduled_at),
         source_offset_seconds=inpoint,
         inpoint_seconds=inpoint,
         outpoint_seconds=outpoint,

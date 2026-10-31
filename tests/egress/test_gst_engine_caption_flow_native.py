@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
@@ -20,6 +22,72 @@ pytestmark = pytest.mark.skipif(
     not (native._wsl_gi_available() and native._cc_embed_elements_available()),
     reason="caption flow proof requires the real bundled GStreamer caption runtime",
 )
+
+
+def test_scheduled_program_prerolls_on_live_slate_without_early_selection(tmp_path):
+    """The real A/V first buffers remain held until the scheduled start."""
+    from gi.repository import GLib
+
+    from civiccast.egress.gst.engine import GstPlayoutEngine
+    from civiccast.egress.gst.graph import graph_from_json
+
+    output = tmp_path / "scheduled-start.ts"
+    initial = native._filesink_graph(native._av_demo_graph(), output)
+    initial = graph_from_json(native.graphmod.graph_to_json(initial))
+    incoming = graph_from_json(
+        native.graphmod.graph_to_json(native._segment_timed_reload_graph())
+    ).sources[0]
+    engine = GstPlayoutEngine(initial)
+    observations, settlements, failures = [], [], []
+    timing = {}
+
+    def settled(committed, reason):
+        settlements.append((committed, reason, time.time()))
+        GLib.timeout_add(300, lambda: engine._loop.quit() or False)
+
+    def arm():
+        timing["due"] = time.time() + 2
+        engine.reload_program(
+            incoming,
+            switch_at_end_of_current=True,
+            switch_at_unix=timing["due"],
+            on_settled=settled,
+        )
+        return False
+
+    def observe():
+        pending = engine._pending_reload
+        if pending is not None and pending["new_leg_ready"] and time.time() < timing["due"]:
+            observations.append(len(pending["hold_probes"]))
+            if pending.get("commit_in_progress"):
+                failures.append("program selected before due")
+        return not settlements
+
+    def deadline():
+        failures.append("scheduled start did not settle")
+        engine._loop.quit()
+        return False
+
+    timers = [
+        GLib.timeout_add(200, arm),
+        GLib.timeout_add(50, observe),
+        GLib.timeout_add_seconds(10, deadline),
+    ]
+    try:
+        result = engine.run_forever()
+    finally:
+        for timer in timers:
+            with native.contextlib.suppress(Exception):
+                GLib.source_remove(timer)
+        engine.stop()
+    assert not failures, (failures, result)
+    assert observations and set(observations) == {2}, (
+        "both real A/V buffers must preroll before the slot"
+    )
+    assert len(settlements) == 1 and settlements[0][0], settlements
+    assert timing["due"] <= settlements[0][2] < timing["due"] + 3
+    assert result["error"] is None and result["teardown_clean"]
+    assert output.stat().st_size > 0
 
 
 def _packet_span_diagnostic(path: Path) -> dict:
@@ -94,6 +162,97 @@ def test_live_caption_queue_probe_releases_real_event_reservations(tmp_path: Pat
         assert engine._caption_gap_heartbeat_id is None
     finally:
         engine.stop()
+
+
+def test_internal_playlist_change_clears_old_captions_in_emitted_output(tmp_path: Path) -> None:
+    """No reload command: actual concat boundaries must change caption owners."""
+    from gi.repository import GLib, Gst
+
+    from civiccast.egress.gst.engine import GstPlayoutEngine
+    from civiccast.egress.gst.graph import graph_from_json
+
+    clips = [tmp_path / f"program-{i}.ts" for i in range(3)]
+    for clip in clips:
+        native._write_short_av_ts_clip(clip, seconds=2.5, video_caps=native._PRODUCTION_CAPS)
+    output = tmp_path / "internal-caption-boundaries.ts"
+    graph = native._production_pressure_playlist_graph(
+        clips, out_ts=output, audio_tap_dir=tmp_path / "tap"
+    )
+    program = replace(
+        graph.sources[0],
+        subchain_sources=tuple(
+            {
+                "kind": "program" if i < 2 else "cg",
+                "asset_id": f"asset-{i}",
+                "label": f"Program {i}",
+                "schedule_item_id": "repeat-row",
+                "schedule_occurrence_start": f"2026-10-30T00:00:0{i}+00:00",
+            }
+            for i in range(3)
+        ),
+    )
+    # The shared subprocess helpers load graph.py in standalone mode; use the
+    # same JSON boundary as a real worker before constructing a package engine.
+    graph = graph_from_json(
+        native.graphmod.graph_to_json(replace(graph, sources=(program, *graph.sources[1:])))
+    )
+    engine = GstPlayoutEngine(graph)
+    original = engine._finish_caption_program
+    boundaries = []
+
+    def finish(token, cutoff, first_segment):
+        result = original(token, cutoff, first_segment)
+        if token != engine._caption_program_token:
+            return result
+        if boundaries:
+            assert not engine.push_caption_cue(
+                text="STALE SPEECH",
+                pts_seconds=0,
+                duration_seconds=10,
+                program_token=boundaries[-1][0],
+            )
+        boundaries.append((token, cutoff))
+        if len(boundaries) <= 2:
+            assert engine.push_caption_cue(
+                text=("FIRST PROGRAM", "SECOND PROGRAM")[len(boundaries) - 1],
+                pts_seconds=cutoff / Gst.SECOND,
+                duration_seconds=10,
+                program_token=token,
+            )
+        return result
+
+    engine._finish_caption_program = finish
+    expired = []
+
+    def timeout():
+        expired.append(True)
+        engine._loop.quit()
+        return False
+
+    timer = GLib.timeout_add_seconds(20, timeout)
+    try:
+        result = engine.run_forever()
+    finally:
+        if not expired:
+            GLib.source_remove(timer)
+        engine.stop()
+    assert not expired, "internal caption boundary stalled finite playback"
+    assert result["error"] is None, result
+    assert result["teardown_clean"] is True, result
+    assert len(boundaries) == 3
+    decoded = native._decode_back_caption_text(output)
+    native._assert_caption_decoded(decoded, "FIRST PROGRAM", context=str(result))
+    native._assert_caption_decoded(decoded, "SECOND PROGRAM", context=str(result))
+    assert "STALE SPEECH" not in decoded
+    for text, (_, next_cutoff) in zip(
+        ("FIRST PROGRAM", "SECOND PROGRAM"), boundaries[1:], strict=True
+    ):
+        blocks = [b for b in decoded.split("\n\n") if text in b]
+        for block in blocks:
+            match = re.search(r"--> (\d+):(\d+):(\d+),(\d+)", block)
+            assert match is not None, block
+            h, m, s, ms = map(int, match.groups())
+            assert h * 3600 + m * 60 + s + ms / 1000 <= next_cutoff / Gst.SECOND + 1 / 30, block
 
 
 def test_three_captioned_workers_finish_complex_playlist_without_reload(tmp_path: Path) -> None:

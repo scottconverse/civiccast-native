@@ -4,6 +4,8 @@ This chapter walks through Windows setup, first run, first setup in the operator
 
 ## Before you start
 
+The published RC2 package is `v1.0.0-rc.2`. Use the install page’s explicit `-Tag v1.0.0-rc.2 -Version 1.0.0-rc.2` command, its setup and its manual together; a later source checkout does not change the frozen release assets.
+
 - For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies the release assets, reuses matching published model packs where specified, assembles the complete kit, then runs setup with `/S`.
 - You checked the installer's hash and signature ([Chapter 9](#ch-planning), "Download and verify what you need").
 - You have a Windows administrator account. Allow about 55 GB on the install drive for a prepared offline kit, or about 100 GB when the download preparation and installation share one drive, plus space for media and recordings.
@@ -92,9 +94,9 @@ fails. Do not substitute hidden API calls for a missing operator workflow.
 The kit is large because it includes offline runtimes and models. Plan approximately
 25 GiB of payload; multipart model preparation can temporarily hold parts, the
 assembled archive and extracted models (roughly 66 GiB before the installed copy and
-station media). The install-drive requirements remain separate. The source RC2 helper
+station media). These are separate amounts: transfer is network bytes still needed; assembly and extraction are temporary destination-drive working space; installed runtimes/models need additional space on the install drive. The helper prints these model-bundle amounts separately. They exclude runtime downloads, upgrade recovery copies and station media. The install-drive requirements remain separate. The source RC2 helper
 checks free space before model assembly, resumes `.partial` bytes when the server
-supports ranges, and reuses already verified complete files. Rerun the same helper
+supports ranges, and reuses complete files after hash verification. A complete matching extracted station folder is verified and reused without downloading or extracting the model archive again. Rerun the same helper
 with the same destination after a network interruption. Do not mix versions or delete
 station data to make a retry work. A server that does not support ranges may require
 that file to restart. These improvements apply to the helper shipped with RC2, not
@@ -122,6 +124,8 @@ flowchart TB
 ```
 
 *Figure 10.1. The order of the Windows setup steps and the first-run window.*
+
+Before replacing application files, setup saves a recovery snapshot. The progress log distinguishes stopping writers, measuring the recovery size, checking free space, copying each recovery entry and recording completion. While the file-copy process is running, a long copy writes a still-running message every 15 seconds; it reports elapsed copy time, not a measured byte percentage. Recordings and immutable pack cache are excluded from that recovery copy.
 
 Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. On a failure after mutation, setup stops the service while attempting restoration of the saved application and station state. Successful restoration also restores the prior service configuration; incomplete restoration preserves the recovery journal and reports exit 136. Correct the reported cause before retrying setup. An incomplete kit cannot supply missing signed station packs; obtain the complete matching bundle first.
 
@@ -193,7 +197,7 @@ The self-test runs the real programs once. The caption test is forced onto the p
 | 1 | The bundled Python imports CivicCast, the caption libraries (faster-whisper 1.2.1, ctranslate2 4.8.1) | It prints `native-core-ok` | 30 s |
 | 2 | PostgreSQL tools `postgres` and `pg_ctl` run | Output names each | 30 s each |
 | 3 | `ffmpeg` runs | Output contains "ffmpeg" | 30 s |
-| 4 | The AI engine runs | Output contains "0.30.6" | 30 s |
+| 4 | The AI engine runs | Output matches the installed runtime lock (0.40.13 in RC2) | 30 s |
 | 5 | TSDuck `tsp`, only if present | Absent is allowed and logged | 30 s |
 | 6 | Caption test: a short recording, using Large if installed, else Medium, on the processor | The text contains "fellow americans" and "country" | 300 s |
 | 7 | AI test: a private Ollama starts on a free local port; asks `gemma4:12b` to reply `CIVICCAST_OK`, `gemma4:e4b` to reply `CIVICCAST_FALLBACK_OK`, and `translategemma:4b` to translate "The council meeting is open." into Spanish | Exact replies | Ready within 300 s; each request up to 300 s |
@@ -413,6 +417,23 @@ Get-Content -LiteralPath 'C:\ProgramData\CivicCast\install-progress.log' -Tail 5
 Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station.
 
 ## Upgrade
+
+### What an upgrade preserves
+
+Removing the application is not the same as removing station data. A fresh
+installation can adopt retained data on the computer; use a genuinely clean
+computer when you intend a new station identity. An in-place upgrade preserves
+the existing station identity, administrator accounts and configuration while
+applying database migrations. Station branding and each channel's branding are
+separate settings; changing a channel name does not rename the station.
+
+Setup migrates an old LocalSystem profile and CivicCast credentials before
+switching to the restricted service account. It prepares model-data permissions
+before the upgraded service's first normal start. A failed migration or permission
+step must be corrected through setup/recovery, not by deleting station state or
+granting all users access. After setup, check the station name in Station Profile
+and each channel's saved name/logo in Channels. Preserve the backup and setup logs
+if they differ from the saved values; do not reset the station to diagnose it.
 
 To upgrade, run the newer `setup.exe` over the existing installation. Use the release helper to assemble the runtime `packs\` and signed `station\` folders. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
 

@@ -836,6 +836,11 @@ def graph_from_config(
                 "asset_id": segment.source_ref if segment.kind == "program" else None,
                 "label": segment.label,
                 "schedule_item_id": segment.schedule_occurrence_id,
+                "schedule_occurrence_start": (
+                    segment.schedule_occurrence_start.isoformat()
+                    if segment.schedule_occurrence_start is not None
+                    else None
+                ),
                 "source_offset_seconds": str(segment.source_offset_seconds or 0),
             }
             for segment in program_segments

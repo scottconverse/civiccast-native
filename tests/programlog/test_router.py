@@ -7,7 +7,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -15,6 +18,7 @@ from sqlalchemy.orm import Session
 import civiccast.schedule.models  # noqa: F401 -- ATTACH ':memory:' AS civiccast on SQLite connect
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
+from civiccast.egress.router import get_egress_store
 from civiccast.programlog.materializer import ProgramLogMaterializer, ProgramLogSettings
 from civiccast.programlog.router import (
     get_program_log_asset_titler,
@@ -22,6 +26,7 @@ from civiccast.programlog.router import (
     get_program_log_store,
 )
 from civiccast.programlog.store import PostgresProgramLogStore
+from civiccast.schedule.models import ScheduleItemResponse
 from civiccast.schedule.router import get_schedule_store
 
 
@@ -85,6 +90,8 @@ def _client() -> Iterator[tuple[TestClient, _FakeScheduleStore]]:
             conn.exec_driver_sql("ATTACH DATABASE ':memory:' AS civiccast")
         Base.metadata.create_all(conn)
         conn.commit()
+    token_environment = pytest.MonkeyPatch()
+    token_environment.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
     try:
 
         @contextmanager
@@ -108,11 +115,13 @@ def _client() -> Iterator[tuple[TestClient, _FakeScheduleStore]]:
         app.dependency_overrides[get_program_log_materializer] = lambda: materializer
         app.dependency_overrides[get_program_log_asset_titler] = lambda: _asset_resolver
         app.dependency_overrides[get_schedule_store] = lambda: schedule
+        app.dependency_overrides[get_egress_store] = lambda: None
         yield (
             TestClient(app, headers={"Authorization": "Bearer operator-token-a"}),
             schedule,
         )
     finally:
+        token_environment.undo()
         reset_engine()
         engine.dispose()
 
@@ -235,7 +244,8 @@ def test_public_guide_serves_sanitized_airable_entries_only() -> None:
     """CA-5: residents see WHAT AIRS — never skips, ids, or internal detail."""
 
     with _client() as (client, schedule):
-        client.post("/api/staff/programlog/slots", json=_create_payload())
+        created = client.post("/api/staff/programlog/slots", json=_create_payload())
+        assert created.status_code == 200, created.text
         client.post(
             "/api/staff/programlog/slots",
             json=_create_payload(asset_id="missing-asset", recurrence="once"),
@@ -259,12 +269,75 @@ def test_public_guide_serves_sanitized_airable_entries_only() -> None:
         assert not any("missing-asset" in str(entry) for entry in entries)
 
 
+@pytest.mark.parametrize("repeat", [False, True])
+def test_public_guide_projects_expired_repeat_cycle_only_when_enabled(monkeypatch, repeat):
+    from civiccast.programlog import router
+
+    anchor = datetime(2026, 6, 1, tzinfo=UTC)
+    current = anchor + timedelta(seconds=135)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current
+
+    monkeypatch.setattr(router, "datetime", Clock)
+    items = [
+        ScheduleItemResponse(
+            id=uuid4(),
+            channel_id="public",
+            asset_id=title,
+            asset_title=title,
+            mode="premiere",
+            state="published",
+            scheduled_at=anchor + timedelta(seconds=offset),
+            duration_seconds=30,
+            created_at=anchor,
+            notes=None,
+        )
+        for title, offset in [("Old group", -86400), ("First", 0), ("Second", 31)]
+    ]
+    original_times = [item.scheduled_at for item in items]
+    with _client_with_schedule(items) as client:
+        client.app.dependency_overrides[get_egress_store] = lambda: SimpleNamespace(
+            get_config=lambda _channel: SimpleNamespace(repeat_schedule=repeat)
+        )
+        response = client.get("/api/public/programlog/channels/public/guide?hours=1")
+        assert response.status_code == 200, response.text
+        entries = response.json()
+        if repeat:
+            assert entries[0]["title"] == "First"
+            assert datetime.fromisoformat(entries[0]["starts_at"]) == anchor + timedelta(
+                seconds=122
+            )
+            assert datetime.fromisoformat(entries[1]["starts_at"]) == anchor + timedelta(
+                seconds=153
+            )
+            assert all(entry["title"] != "Old group" for entry in entries)
+            assert all(
+                datetime.fromisoformat(entry["starts_at"]) <= current + timedelta(hours=1)
+                for entry in entries
+            )
+            assert all(
+                set(entry) == {"channel_id", "title", "starts_at", "duration_seconds"}
+                for entry in entries
+            )
+        else:
+            assert entries == []
+        assert (
+            client.get("/api/public/programlog/channels/public/guide?hours=337").status_code == 422
+        )
+        assert client.get("/api/public/programlog/channels/public/guide?hours=0").status_code == 422
+    assert [item.scheduled_at for item in items] == original_times
+
+
 def test_public_guide_uses_title_override_when_present() -> None:
     with _client() as (client, schedule):
-        client.post(
+        created = client.post(
             "/api/staff/programlog/slots",
             json=_create_payload(recurrence="once", title_override="Council Replay"),
         )
+        assert created.status_code == 200, created.text
 
         schedule.published_ids.add("sched-1")
         entries = client.get("/api/public/programlog/channels/public/guide").json()

@@ -4,21 +4,38 @@ This chapter helps you when a screen shows a red or yellow warning, an alert app
 
 ## Before you start
 
+### Graphics-driver maintenance
+
+Schedule GPU/graphics-driver installation and device restarts for an off-air
+maintenance window. They can interrupt every channel using that adapter at once.
+Keep a station backup and the prior driver/recovery information before maintenance;
+use the computer or adapter manufacturer's supported driver. Do not update or
+reset the graphics device as a troubleshooting experiment during a broadcast.
+
+If channels fail together during a driver change, preserve the CivicCast worker
+logs and Windows event timestamps. The R9 investigation associated simultaneous
+worker faults with a device restart, but it did not establish an instruction-level
+driver defect. After planned maintenance, check all three actual outputs and
+captions. CPU software fallback is available when configured; it uses CPU capacity
+and is not a guarantee of uninterrupted playback through a device reset.
+
 The four screens live in the left sidebar under **System Health**: **Readiness**, **Alerts**, **Emergency Alerts** and **Federation**. Most of them open for any role. Individual buttons are limited by role, and a button you cannot use shows a grey note that names the role needed.
 
 > **Note:** The first administrator account carries all five roles. Staff members use their own accounts with assigned roles, so they may see fewer controls. A Setup admin manages accounts and roles in **Staff accounts**.
 
-> **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
+The sidebar's **Readiness** page is headed **Station health and readiness**. It separates live output from setup and recovery checks.
 
 ## Check whether the station is ready (Readiness)
 
-Readiness answers one question: "Can we broadcast right now?"
+Read live health and setup readiness separately. A backup, restore or setup warning needs attention, but does not by itself mean a running channel has stopped. Use the live banner and resident preview to assess the current broadcast; use the setup and recovery checks to prepare for operation and recovery.
 
 1. In the sidebar, open **System Health**, then click **Readiness**.
 2. Wait while the page says "Checking station readiness...".
 3. Read the banner at the top, **On air right now**. It shows each channel, a coloured label and a message. The banner refreshes by itself every 5 seconds.
-4. Read the card below it. Its heading is the station's overall verdict, followed by a message and "Last checked" with the date and time.
+4. Read **Setup and recovery readiness** below the live banner. It refreshes every 30 seconds and shows **Last checked**. This is the setup verdict, not a second measurement of live output.
 5. Scroll down to **Required before broadcast** and **Optional and advanced**. Each row is one check, with a coloured label, a short message and a "Next step".
+
+The outgoing-feed panel refreshes every five seconds. Readings older than two minutes, with invalid times, or from a failed refresh cannot confirm current health. They are marked **Stale**, **Unavailable** or **Not confirmed**, with the sampling time. Historical measurements may remain visible to help diagnosis; they are not a healthy-current-output claim.
 
 ### What the colours and words mean
 

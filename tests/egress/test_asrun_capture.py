@@ -717,6 +717,7 @@ def test_native_output_events_update_labels_once_and_ignore_partial_lines(tmp_pa
             "event_id": f"event-{i}",
             "observed_at": 1793318400 + i,
             "schedule_item_id": f"occurrence-{i}",
+            "schedule_occurrence_start": "2026-10-30T00:00:00+00:00",
         }
         for i in range(2)
     ]
@@ -730,6 +731,15 @@ def test_native_output_events_update_labels_once_and_ignore_partial_lines(tmp_pa
     daemon._poll_source_output("gov", process)
     daemon._poll_source_output("gov", process)
     assert [row.asset_id for row in recorder.transitions] == ["asset-0", "asset-1"]
+    assert recorder.transitions[0].schedule_occurrence_start == datetime(2026, 10, 30, tzinfo=UTC)
+    from civiccast.live.router import _public_program_timeline, _recent_public_program_events
+
+    timeline = _public_program_timeline(_recent_public_program_events(store, "gov"))
+    assert [entry.title for entry in timeline] == ["Program 0", "Program 1"]
+    assert (
+        timeline[1].started_at == datetime.fromtimestamp(events[1]["observed_at"], UTC).isoformat()
+    )
+    assert len(store.recent_proof_events("gov", 10)) == 2
     daemon._write_state(
         "gov", "ON_AIR", current_source_label="Old plan first item", pid=process.pid
     )

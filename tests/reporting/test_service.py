@@ -612,3 +612,74 @@ def test_reports_include_crossing_program_and_clip_airtime_to_window(env) -> Non
     ledger = store.list_as_run("sta_main", from_ts=_ts(9), to_ts=_ts(10))
     assert ledger[0].actual_start == _ts(8)  # original evidence remains intact
     assert ledger[0].duration_s == 10800
+
+
+@pytest.mark.parametrize("window_end, expected_open", [(_ts(10), 3600), (_ts(11), 5400)])
+def test_open_airings_clip_to_window_and_now_without_mutating_ledger(
+    env, monkeypatch, window_end, expected_open
+):
+    service, store, fields = env
+    monkeypatch.setattr("civiccast.reporting.service._now", lambda: _ts(10, 30))
+    fields.upsert_def(_def("field-open", "category"))
+    # Re-appending a recorded occurrence is idempotent; a repeat has its own id.
+    for _ in range(2):
+        store.append_as_run(
+            _entry("open", asset_id="asset", actual_start=_ts(8), actual_end=_ts(8), duration_s=0)
+        )
+    store.append_as_run(
+        _entry(
+            "repeat",
+            asset_id="asset",
+            actual_start=_ts(9, 15),
+            actual_end=_ts(9, 30),
+            duration_s=900,
+        )
+    )
+    store.append_as_run(
+        _entry("before", asset_id="before", actual_start=_ts(7), actual_end=_ts(9), duration_s=7200)
+    )
+    store.append_as_run(
+        _entry(
+            "after", asset_id="after", actual_start=window_end, actual_end=_ts(12), duration_s=3600
+        )
+    )
+    store.append_as_run(
+        _entry(
+            "future-open",
+            asset_id="future",
+            actual_start=_ts(10, 45),
+            actual_end=_ts(10, 45),
+            duration_s=0,
+        )
+    )
+    params = {"station_id": "sta_main", "from_ts": _ts(9), "to_ts": window_end}
+    shows = service.shows_report(**params)
+    assert len(shows.rows) == 1
+    assert shows.rows[0].play_count == 2
+    assert shows.rows[0].in_progress_count == 1
+    assert shows.rows[0].total_airtime_s == expected_open + 900
+    categories = service.hours_by_category(field_key="category", **params)
+    assert categories.rows[0].total_seconds == expected_open + 900
+    assert categories.rows[0].in_progress_count == 1
+    report = service.as_run_report(**params)
+    assert {r.entry.entry_id: r.entry.duration_s for r in report.rows} == {
+        "open": expected_open,
+        "repeat": 900,
+    }
+    exported = list(csv.DictReader(io.StringIO(export_as_run_csv(report.rows))))
+    assert {r["entry_id"]: int(r["duration_s"]) for r in exported} == {
+        "open": expected_open,
+        "repeat": 900,
+    }
+    assert store.get_entry("open").duration_s == 0
+    assert report.rows[0].entry.actual_start == _ts(8)
+    assert report.rows[0].entry.actual_end == _ts(8)
+
+
+def test_as_run_exports_clip_closed_airing_to_window(env):
+    service, store, _ = env
+    store.append_as_run(_entry("cross", actual_start=_ts(8), actual_end=_ts(11), duration_s=10800))
+    report = service.as_run_report(station_id="sta_main", from_ts=_ts(9), to_ts=_ts(10))
+    assert report.rows[0].entry.duration_s == 3600
+    assert ET.fromstring(export_as_run_xml(report.rows)).findtext("row/duration_s") == "3600"
+    assert store.get_entry("cross").duration_s == 10800

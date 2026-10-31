@@ -307,7 +307,11 @@ def test_the_peak_scan_args_decode_to_raw_float32() -> None:
     assert args[-1] == "-"
 
 
-def test_the_program_mux_bounds_the_window_after_both_inputs() -> None:
+@pytest.mark.parametrize("threads", [None, 1, 3])
+@pytest.mark.parametrize("copy_video", [False, True])
+def test_the_program_mux_bounds_the_window_after_both_inputs(
+    threads: int | None, copy_video: bool
+) -> None:
     """``-t`` is an OUTPUT option, so it has to follow the LAST ``-i``.
 
     FFmpeg binds a ``-t`` sitting between two ``-i`` operands to the input that
@@ -332,12 +336,80 @@ def test_the_program_mux_bounds_the_window_after_both_inputs() -> None:
         output_path=Path("C:/out/program.ts"),
         segment=segment,
         profile=CanonicalProfile(),
+        threads=threads,
+        copy_video=copy_video,
     )
     inputs = [i for i, arg in enumerate(args) if arg == "-i"]
     assert len(inputs) == 2, "the program mux reads the source and the ride's audio"
     assert args.index("-ss") < inputs[0], "the seek belongs to the source input"
     assert args.index("-t") > inputs[-1], "the window bound must be an output option"
     assert args[args.index("-t") + 1] == "4"
+    options = ("-threads", "-filter_threads", "-filter_complex_threads")
+    if threads is None:
+        assert all(option not in args for option in options)
+    else:
+        codec_limits = [i for i, arg in enumerate(args) if arg == "-threads"]
+        assert len(codec_limits) == 2
+        assert codec_limits[0] < inputs[0] < inputs[-1] < codec_limits[1]
+        assert all(args[index + 1] == str(threads) for index in codec_limits)
+        for option in options[1:]:
+            assert args.count(option) == 1
+            assert args[args.index(option) + 1] == str(threads)
+
+
+@pytest.mark.parametrize("builder", [lr.build_source_series_args, lr.build_decoder_args])
+@pytest.mark.parametrize("threads", [None, 1, 3])
+def test_source_audio_passes_cap_decoder_and_filter_threads(builder, threads: int | None) -> None:
+    args = builder(
+        source_path=Path("C:/in/asset.mp4"),
+        segment=None,
+        params=lr.RideParams(target_lufs=-16.0),
+        threads=threads,
+    )
+    for option in ("-threads", "-filter_threads", "-filter_complex_threads"):
+        if threads is None:
+            assert option not in args
+        else:
+            assert args.count(option) == 1
+            assert args[args.index(option) + 1] == str(threads)
+            assert args.index(option) < args.index("-i")
+
+
+@pytest.mark.parametrize("kind", ["measure", "encode", "reencode", "artifact", "peak"])
+@pytest.mark.parametrize("threads", [None, 1, 3])
+def test_remaining_ride_passes_cap_input_filters_and_output(kind, threads: int | None) -> None:
+    params = lr.RideParams(target_lufs=-16.0)
+    path = Path("C:/out/audio.ts")
+    if kind == "measure":
+        args = lr.build_measure_sink_args(0.5, params=params, threads=threads)
+    elif kind == "encode":
+        args = lr.build_encode_sink_args(
+            path, 0.5, params=params, profile=CanonicalProfile(), threads=threads
+        )
+    elif kind == "reencode":
+        args = lr.build_reencode_args(
+            Path("C:/in/ride.pcm"),
+            path,
+            trim_db=0.5,
+            params=params,
+            profile=CanonicalProfile(),
+            threads=threads,
+        )
+    elif kind == "artifact":
+        args = lr.build_artifact_measure_args(artifact_path=path, threads=threads)
+    else:
+        args = lr.build_peak_scan_args(artifact_path=path, params=params, threads=threads)
+    options = ("-threads", "-filter_threads", "-filter_complex_threads")
+    if threads is None:
+        assert all(option not in args for option in options)
+    else:
+        codec_limits = [i for i, arg in enumerate(args) if arg == "-threads"]
+        assert len(codec_limits) == 2
+        assert codec_limits[0] < args.index("-i") < codec_limits[1]
+        assert all(args[index + 1] == str(threads) for index in codec_limits)
+        for option in options[1:]:
+            assert args.count(option) == 1
+            assert args[args.index(option) + 1] == str(threads)
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +456,8 @@ class _Recorder:
         self.round_calls: list[SimpleNamespace] = []
         self.measured: list[Path] = []
         self.scanned: list[Path] = []
+        self.capture_args: list[list[str]] = []
+        self.scan_threads: list[int | None] = []
 
     # -- the renderers ----------------------------------------------------
     def ride(
@@ -423,7 +497,16 @@ class _Recorder:
         return lr.RideRender(frames=0, audio_seconds=0.0, wall_s=1.5, stderr="")
 
     def reencode(
-        self, *, pcm_path, output_path, trim_db, params, profile, timeout_s=None, variant=None
+        self,
+        *,
+        pcm_path,
+        output_path,
+        trim_db,
+        params,
+        profile,
+        timeout_s=None,
+        variant=None,
+        threads=None,
     ):
         self.round_calls.append(
             SimpleNamespace(
@@ -433,6 +516,7 @@ class _Recorder:
                 params=params,
                 timeout_s=timeout_s,
                 variant=variant,
+                threads=threads,
             )
         )
         if self.round_error is not None:
@@ -443,6 +527,7 @@ class _Recorder:
 
     # -- the probes -------------------------------------------------------
     def capture(self, args, *, timeout_s=None, cancel_event=None):
+        self.capture_args.append(list(args))
         path = Path(args[args.index("-i") + 1])
         self.measured.append(path)
         if self.capture_error is not None:
@@ -461,7 +546,8 @@ class _Recorder:
             return self.round_stderr
         return self.source_stderr
 
-    def scan(self, artifact_path, *, params, timeout_s=None, cancel_event=None):
+    def scan(self, artifact_path, *, params, timeout_s=None, cancel_event=None, threads=None):
+        self.scan_threads.append(threads)
         path = Path(artifact_path)
         self.scanned.append(path)
         if self.round_path is not None and path == self.round_path:
@@ -487,8 +573,9 @@ def _run(tmp_path: Path, monkeypatch, rec: _Recorder, **kwargs):
     )
 
 
+@pytest.mark.parametrize("threads", [None, 1, 3])
 def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, threads: int | None
 ) -> None:
     """Answer 12's keep-best, end to end: the nominal is hot, the round is lawful.
 
@@ -509,7 +596,7 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
         round_stderr=_stderr(_FLAT, peak_dbtp=-1.60, integrated_lufs=-16.0),
         round_peak=-0.20,
     )
-    result = _run(tmp_path, monkeypatch, rec)
+    result = _run(tmp_path, monkeypatch, rec, threads=threads)
 
     selection = result.selection
     assert [a.round_index for a in selection.attempts] == [0, 1]
@@ -525,6 +612,17 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
     assert rec.round_calls[0].pcm_path is not None
     assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-2.3)
     assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db + 0.8)
+    assert rec.round_calls[0].threads == threads
+    assert rec.scan_threads and all(value == threads for value in rec.scan_threads)
+    all_args = rec.capture_args + [
+        args for call in rec.ride_calls for args in (call.decoder_args, call.sink_args)
+    ]
+    for args in all_args:
+        for option in ("-threads", "-filter_threads", "-filter_complex_threads"):
+            if threads is None:
+                assert option not in args
+            else:
+                assert args[args.index(option) + 1] == str(threads)
 
 
 def test_level_window_spends_no_round_when_the_nominal_emitted_at_target(

@@ -44,7 +44,7 @@ First Setup is at `/setup` in the local operator console (`http://127.0.0.1:8000
 2. Under **Durable storage**, click **Prepare storage**. This creates or activates the local database for meeting records, captions, summaries and subscriptions. If the service was started with a `DATABASE_URL` the button does nothing and just reports status.
 3. Fill in **Station name** (up to 120 characters), **Admin display name** (up to 120), **Admin username** (up to 80), **Admin password** (at least 12 characters; a counter shows "(n/12)") and **Confirm admin password**.
 4. In **Where will you keep the recovery kit?** type a note such as "printed, in the clerk's safe". This is a free-text reminder. It is not a folder and nothing is written there.
-5. Optionally fill in **Resident portal URL**. A blank box is saved as nothing.
+5. Optionally fill in **Resident portal URL**. Use a complete `http://` or `https://` address without a username or password. A blank box clears the saved address; invalid addresses are refused.
 6. Click **Create first admin**. The **Recovery kit ready** panel appears with eight one-time recovery codes. The rest of the console is locked until you confirm the kit.
 7. Click **Print kit** or **Save kit**, tick **I have saved or printed this kit...** and click **Continue to the console**.
 
@@ -153,7 +153,7 @@ A channel has an **egress configuration**, stored in the database. "Egress" mean
 
 A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
 
-The Channels screen (**Run Meeting** group) edits some of this: **Channel startup and repeat** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
+The Channels screen (**Run Meeting** group) edits some of this: **Channel startup and repeat** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). These panels apply only to the channel currently selected above them. Check its channel ID in the automation panel before saving; switching channel selects a different saved configuration, not a station-wide setting. It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
 
 > **Warning:** Changes to a channel's outputs do not reach a channel that is on air. A running pipeline reads its sinks, encode profile and loudness target only when it is built. A preset or a saved configuration lands at the next Stop and Start. **Apply headend preset** on a channel that is standing by on its slate restarts it at once, and every output (the cable feed included) drops for a few seconds while the pipeline rebuilds. On a channel that is airing a program nothing is interrupted, and the screen says "Preset saved. Restart the channel to put it on air."
 
@@ -233,6 +233,13 @@ Hardware **decoding** is off by default and the CPU decoders are preferred. `CIV
 If the GStreamer files on the computer are corrupt and cannot be repaired in place when the service starts, the service falls back to the older FFmpeg concat engine so the channel keeps airing, raises an operator alert and marks the channel degraded. You do not choose this; it is automatic.
 
 ### Loudness and the leveling ride {#configuration-loudness}
+
+The **Prepared media** loudness value in Channels comes from the last recorded
+source/preparation measurement. It is not a rolling or continuous reading of the
+currently emitted channel, and an input measurement can remain visible after a
+normalization step. Output targets describe the configured processing, not a
+measured compliance result. Use an actual output measurement when commissioning
+the feed; do not read this value as proof that the current program meets its target.
 
 Each channel has one **loudness target** (default -16 LUFS) and **tolerance** (default 2 LU). Each sink can name its own **regime**:
 
@@ -366,6 +373,8 @@ The Provider setup block on the Setup page lists twelve cards: Local resident po
 The same providers can be configured with environment variables instead (for example `CIVICCAST_R2_ACCOUNT_ID`, `CIVICCAST_R2_ACCESS_KEY_ID`, `CIVICCAST_R2_SECRET_ACCESS_KEY`, `CIVICCAST_R2_BUCKET`, `CIVICCAST_R2_PUBLIC_BASE_URL`, `CIVICCAST_CDN_PROVIDER`, and the `CIVICCAST_BUNNY_*`, `CIVICCAST_FASTLY_*`, `CIVICCAST_AKAMAI_*`, `CIVICCAST_IA_*`, `CIVICCAST_YOUTUBE_*` and `CIVICCAST_SMTP_*` families listed in [Appendix: settings](#app-settings)). The CDN, archive and mail details are in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
 
 For Internet Archive, local archive, YouTube and SMTP mail, saved Setup details feed the existing real adapter directly. You do not need to copy those credentials into service environment variables or restart the station for this connection. Saved fields take precedence over environment fallback. An explicit `CIVICCAST_PROVIDER_*` selector still overrides automatic selection; ask IT to check it if a saved connection remains simulated. Subscriber notices with only a webhook secret retain their existing webhook behavior; SMTP selection requires SMTP details. Configuration alone does not prove delivery.
+
+For **Subscriber notifications**, an SMTP port must be a whole number from 1 to 65535. Missing SMTP host or sender details are saved as a **draft**, not a working mail connection. Correct rejected values in place: the form retains your entries after a failed save. A successful save keeps ordinary fields visible and clears password fields; an omitted saved password is preserved. Complete the settings and check actual delivery before relying on notices.
 
 ### Connect YouTube, from account sign-in to live access {#configuration-youtube}
 

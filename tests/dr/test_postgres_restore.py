@@ -18,11 +18,17 @@ reachable. CI (Linux + Docker) always exercises the Postgres path; locally it
 runs wherever an engine is up and skips otherwise -- see
 ``.agent-runs/native-windows/ws2-postgres-restore/evidence/README.md`` for
 what was and was not executed on which machine.
+
+The live-write snapshot case also supports CIVICCAST_TEST_POSTGRES_BIN pointing
+to native Windows tools; it creates/stops its own loopback-only temporary cluster.
 """
 
 from __future__ import annotations
 
 import os
+import socket
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -79,8 +85,61 @@ def _skip_if_no_postgres() -> None:
 
 
 @pytest.fixture
-def postgres_container() -> Iterator[tuple[str, str]]:
+def postgres_container(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, str]]:
     """Yields (host-side connection url, container id)."""
+    # Explicit native override proves the same snapshot boundary on Windows,
+    # using an owned temporary cluster rather than the installed station DB.
+    native_bin = os.environ.get("CIVICCAST_TEST_POSTGRES_BIN")
+    if native_bin:
+        binaries = Path(native_bin).resolve(strict=True)
+        cluster = tmp_path_factory.mktemp("native-postgres")
+        data = cluster / "data"
+        with socket.socket() as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+
+        def run(binary: str, *arguments: str) -> None:
+            subprocess.run(
+                [str(binaries / f"{binary}.exe"), *arguments],
+                check=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+
+        run("initdb", "-D", str(data), "-U", "test", "--auth=trust", "--locale=C", "-E", "UTF8")
+        try:
+            run(
+                "pg_ctl",
+                "-D",
+                str(data),
+                "-l",
+                str(cluster / "postgres.log"),
+                "-o",
+                f"-h 127.0.0.1 -p {port}",
+                "-w",
+                "start",
+            )
+            run(
+                "psql",
+                "-h",
+                "127.0.0.1",
+                "-p",
+                str(port),
+                "-U",
+                "test",
+                "-d",
+                "postgres",
+                "-c",
+                "CREATE DATABASE test",
+            )
+            yield f"postgresql+psycopg://test@127.0.0.1:{port}/test", f"native:{binaries}"
+        finally:
+            if (data / "postmaster.pid").exists():
+                run("pg_ctl", "-D", str(data), "-m", "fast", "-w", "stop")
+        return
     _skip_if_no_postgres()
     assert PostgresContainer is not None
     container = PostgresContainer("postgres:17", driver="psycopg")
@@ -89,6 +148,30 @@ def postgres_container() -> Iterator[tuple[str, str]]:
         yield container.get_connection_url(), container.get_wrapped_container().id
     finally:
         container.stop()
+
+
+def test_native_postgres_fixture_stops_its_partial_start(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binaries = tmp_path / "postgres-bin"
+    binaries.mkdir()
+    monkeypatch.setenv("CIVICCAST_TEST_POSTGRES_BIN", str(binaries))
+    calls: list[list[str]] = []
+
+    def partial_start(argv, **kwargs):
+        calls.append(argv)
+        if argv[-1] == "start":
+            data = Path(argv[argv.index("-D") + 1])
+            data.mkdir()
+            (data / "postmaster.pid").write_text("disposable startup marker")
+            raise subprocess.TimeoutExpired(argv, 60)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", partial_start)
+    with pytest.raises(subprocess.TimeoutExpired):
+        next(postgres_container.__wrapped__(tmp_path_factory))
+    assert calls[-1][-4:] == ["-m", "fast", "-w", "stop"]
+    assert calls[-1][1:3] == calls[-2][1:3]
 
 
 @pytest.fixture
@@ -116,6 +199,8 @@ def _exec_prefix(container_id: str, binary: str) -> list[str]:
     client, never the process spawned inside the container.
     """
 
+    if container_id.startswith("native:"):
+        return [str(Path(container_id.removeprefix("native:")) / f"{binary}.exe")]
     return [
         container_cli() or "docker",
         "exec",
@@ -125,6 +210,42 @@ def _exec_prefix(container_id: str, binary: str) -> list[str]:
         container_id,
         binary,
     ]
+
+
+def test_native_postgres_reporting_window_keeps_open_airings_provisional(
+    postgres_container: tuple[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise changed report SQL on the existing isolated PostgreSQL fixture."""
+    from contextlib import contextmanager
+
+    from sqlalchemy.orm import Session
+
+    from civiccast.metadata.store import CustomFieldStore
+    from civiccast.reporting.service import ReportingService
+    from civiccast.reporting.store import ReportingStore
+    from tests.reporting.test_service import (
+        _ts,
+        test_open_airings_clip_to_window_and_now_without_mutating_ledger,
+    )
+
+    url, _ = postgres_container
+    _run_migrations(url)
+    engine = create_engine(url, future=True)
+
+    @contextmanager
+    def factory():
+        with Session(bind=engine) as session:
+            yield session
+
+    try:
+        env = ReportingService(factory), ReportingStore(factory), CustomFieldStore(factory)
+        # Reuse the existing complete assertions: aggregates, CSV view,
+        # repeat counts, future refusal and unchanged zero-duration open ledger.
+        test_open_airings_clip_to_window_and_now_without_mutating_ledger(
+            env, monkeypatch, _ts(11), 5400
+        )
+    finally:
+        engine.dispose()
 
 
 def _seed_two_tables(engine) -> None:
@@ -1706,8 +1827,91 @@ def test_cold_standby_detects_grant_option_difference(
         engine.dispose()
 
 
-def test_full_backup_snapshot_binding_survives_aba_write_during_dump(
+@pytest.mark.skipif(
+    not os.environ.get("CIVICCAST_TEST_POSTGRES_BIN"),
+    reason="native station archive proof needs explicit disposable PostgreSQL tools",
+)
+def test_station_archive_roundtrip_uses_replacement_database(
     postgres_container: tuple[str, str], tmp_path: Path
+) -> None:
+    """Exercise the encrypted station archive, not only the underlying dump."""
+    from civiccast.dr.station_backup import StationBackupService
+
+    source_url, native_tools = postgres_container
+    _run_migrations(source_url)
+    source = create_engine(source_url, future=True)
+    bind_engine(source)
+    replacement = None
+    try:
+        _seed_two_tables(source)
+        source_before = snapshot_tables(source)
+        replacement_cli = create_fresh_postgres_database(
+            database_url=source_url.replace("postgresql+psycopg://", "postgresql://"),
+            database_name="station_archive_replacement",
+            psql_command=_exec_prefix(native_tools, "psql"),
+        )
+        replacement_url = source_url.rsplit("/", 1)[0] + "/station_archive_replacement"
+        _run_migrations(replacement_url)
+        replacement = create_engine(replacement_url, future=True)
+        _seed_two_tables(replacement)
+        with replacement.begin() as connection:
+            connection.execute(text("UPDATE civiccast.assets SET title='replacement sentinel'"))
+        replacement_before = snapshot_tables(replacement)
+
+        config = tmp_path / "source-config" / "app-platform-config.json"
+        config.parent.mkdir()
+        config.write_text('{"station_name":"Archived station"}', encoding="utf-8")
+        replacement_config = tmp_path / "replacement-config" / config.name
+        imported = {}
+        service = StationBackupService(
+            database_url=source_url,
+            destination=tmp_path / "archives",
+            config_paths=[config],
+            credential_exporter=lambda: {"test-only-secret": b"disposable-secret"},
+            credential_importer=imported.update,
+            credential_destination="disposable replacement vault",
+            pg_dump_command=_exec_prefix(native_tools, "pg_dump"),
+            pg_dumpall_command=_exec_prefix(native_tools, "pg_dumpall"),
+            pg_restore_command=_exec_prefix(native_tools, "pg_restore"),
+        )
+        artifact = service.create_backup("disposable archive passphrase")
+        assert b"disposable-secret" not in artifact.path.read_bytes()
+        assert service.verify_backup(artifact.path, "disposable archive passphrase").valid
+        restore_args = {
+            "target_database_url": replacement_cli,
+            "target_paths": {str(config): replacement_config},
+            "writers_stopped": True,
+        }
+        with pytest.raises(RuntimeError, match="acknowledgement"):
+            service.restore_backup(artifact.path, "disposable archive passphrase", **restore_args)
+        assert not imported and not replacement_config.exists()
+        assert all(
+            row.matched for row in _table_results(replacement_before, snapshot_tables(replacement))
+        )
+
+        result = service.restore_backup(
+            artifact.path,
+            "disposable archive passphrase",
+            restore_local_station_settings=True,
+            **restore_args,
+        )
+        assert result.database_restored and result.database_engine == "postgres"
+        assert all(
+            row.matched for row in _table_results(source_before, snapshot_tables(replacement))
+        )
+        assert all(row.matched for row in _table_results(source_before, snapshot_tables(source)))
+        assert replacement_config.read_text(encoding="utf-8") == config.read_text(encoding="utf-8")
+        assert imported == {"test-only-secret": b"disposable-secret"}
+    finally:
+        reset_engine()
+        source.dispose()
+        if replacement is not None:
+            replacement.dispose()
+
+
+@pytest.mark.parametrize("live_write", [False, True])
+def test_full_backup_snapshot_binding_survives_aba_write_during_dump(
+    postgres_container: tuple[str, str], tmp_path: Path, live_write: bool
 ) -> None:
     """Fix 3 (CC-WS2-003) ABA negative control: an INSERT-then-DELETE landing
     on the source database WHILE ``pg_dump`` is running (but AFTER the
@@ -1743,6 +1947,21 @@ def test_full_backup_snapshot_binding_survives_aba_write_during_dump(
             'sleep 3; exec pg_dump "$@"',
             "--",
         ]
+        if container_id.startswith("native:"):
+            sleepy_pg_dump = [
+                sys.executable,
+                "-c",
+                "import subprocess,sys,time; time.sleep(3); "
+                "raise SystemExit(subprocess.call(sys.argv[1:], "
+                "stdout=sys.stdout.buffer, stderr=sys.stderr.buffer, "
+                "creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)))",
+                *_exec_prefix(container_id, "pg_dump"),
+            ]
+        command_url = (
+            postgres_url.replace("postgresql+psycopg://", "postgresql://")
+            if container_id.startswith("native:")
+            else "postgresql://test:test@localhost:5432/test"
+        )
 
         backup_dir = tmp_path / "backup"
         result_holder: dict[str, object] = {}
@@ -1751,9 +1970,10 @@ def test_full_backup_snapshot_binding_survives_aba_write_during_dump(
             result_holder["manifest"] = run_full_backup(
                 database_url=postgres_url,
                 dest_dir=backup_dir,
-                command_database_url="postgresql://test:test@localhost:5432/test",
+                command_database_url=command_url,
                 pg_dump_command=sleepy_pg_dump,
                 pg_dumpall_command=_exec_prefix(container_id, "pg_dumpall"),
+                require_quiescent=not live_write,
             )
 
         thread = threading.Thread(target=_run_backup)
@@ -1769,10 +1989,11 @@ def test_full_backup_snapshot_binding_survives_aba_write_during_dump(
                         "'https://cdn.example/aba/master.m3u8')"
                     )
                 )
-            with aba_engine.begin() as conn:
-                conn.execute(
-                    text("DELETE FROM civiccast.assets WHERE asset_id = 'aba-ghost-asset'")
-                )
+            if not live_write:
+                with aba_engine.begin() as conn:
+                    conn.execute(
+                        text("DELETE FROM civiccast.assets WHERE asset_id = 'aba-ghost-asset'")
+                    )
         finally:
             aba_engine.dispose()
         thread.join(timeout=60)
@@ -1786,7 +2007,7 @@ def test_full_backup_snapshot_binding_survives_aba_write_during_dump(
         assert assets_snapshot.row_count == 1
 
         restore_cli_url = create_fresh_postgres_database(
-            database_url="postgresql://test:test@localhost:5432/test",
+            database_url=command_url,
             database_name="civiccast_backup_aba_restore",
             psql_command=_exec_prefix(container_id, "psql"),
         )

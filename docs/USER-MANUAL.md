@@ -1,6 +1,6 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-rc.2 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-rc.3 (native Windows line)
 author: The CivicCast Authors
 date: 2026-10-30
 urlcolor: blue
@@ -470,7 +470,7 @@ Do this once, on the station computer, when CivicCast is installed and nobody ha
    - **Admin password**: at least 12 characters. A counter shows how many you have typed.
    - **Confirm admin password**: type it again.
    - **Where will you keep the recovery kit?**: a note for your records, such as "printed, stored in the clerk safe". It is not a file path, and nothing is saved there.
-   - **Resident portal URL**: optional for rehearsal. Set it before public launch.
+   - **Resident portal URL**: optional for rehearsal. Use a complete `http://` or `https://` address without credentials. Set it before public launch.
 4. Click **Create first admin**. The button stays grey until the required boxes are valid.
 5. Read the green **Recovery kit ready** panel. It shows your admin username, your admin password and eight emergency recovery codes. It says: "This screen and the saved/printed copy are the only place your admin password and these codes are ever shown together."
 6. Click **Print kit** to open your print dialog, or **Save kit** to download a text file named `civiccast-recovery-kit-<kit id>.txt` to your Downloads folder.
@@ -708,7 +708,15 @@ For a repeating rotation of two recordings:
 3. In **Channels**, select the channel. Under **Channel startup and repeat**, enable **Repeat the published sequence**, then **Save automation settings**. No service restart or API call is needed. This is separate from **Keep this channel on air**, which controls automatic startup.
 4. Check **Published playout plan**. Entries marked **In repeat sequence** form the last contiguous published sequence; a gap greater than one second starts a new group. Older groups do not repeat. Watch the first transition and return to the first recording. Disable repeat for a finite schedule.
 
+The last group's first start and final end define its repeat period. Gaps of up to one second inside that group stay gaps; a larger gap selects a new group rather than stretching the repeat period across old schedule history. Filler handles gaps without moving the next program earlier. If the channel starts late, it joins the program scheduled for that instant at the elapsed playback position; it does not restart the rotation or play every missed program. If that program's playable media has ended, filler remains until the next due item.
+
+The resident channel guide projects that same repeat group over the requested viewing window, including a repeated program already in progress. These are planned occurrences; they do not create new stored schedule rows and do not prove actual output. With repeat off, the guide uses the original published schedule times. Recurring Program Guide slots below are a separate way to create dated schedule items.
+
+When an automatic channel is showing filler before a scheduled program, CivicCast prepares the next recording in advance and holds its audio and video until the scheduled start. If preparation fails or finishes too late, filler remains; the channel does not play the recording early to hide the problem. Check the channel's actionable error and actual output before assuming the scheduled transition succeeded.
+
 For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
+
+Schedule list ranges and operator guide review cards show seconds, so a 38-second item has visibly different start and end times and a 38s duration. The duration controls still use separate minutes and additional seconds.
 
 In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from an output observation (not a TV receiver). The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 
@@ -1364,6 +1372,8 @@ What "Keep this channel on air" really does, from the code we read:
 > **Known issue (beta.11):** if a channel has no outgoing-feed configuration, this box says "This channel has no outgoing-feed configuration yet. Create one from the channel egress runbook (or the setup flow) first; then automation settings appear here." A non-technical person cannot do that. The real fix is for a Setup admin to apply a headend preset (see the Cable headend box on the same screen, or ask IT).
 
 ### Live captions during the meeting
+
+Speech recognition, delivery of embedded captions in the emitted stream, and captions visible in a resident's player are separate observations. A recent passing decode-back proof confirms the tested embedded-stream boundary; missing proof means delivery is **Not verified**, not necessarily that recognition failed. Old or invalid proof times and failed refreshes cannot keep a green **Captions on** claim. Check the resident preview for words belonging to the current program as well as the proof details.
 
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
@@ -2536,7 +2546,9 @@ The **Source** column uses these words:
 - `slate`: the safety card the station shows in place of video, for example when a feed fails.
 - `spot`: a sponsor message. In beta.11 this word never appears. See Underwriting below.
 
-**Output start observed** identifies an engine observation, not a physical receiver check. An open row shows **Awaiting end** and **Not finalized** until the next source or stop closes it. Continuations of one scheduled program across preparation windows stay one play; a new rotation counts as another play. Shows and category totals clip airtime to the requested report window. Historical Beta20 rows are retained unchanged and are not retroactively repaired.
+**Output start observed** identifies an engine observation, not a physical receiver check. An open row shows **Awaiting end** with provisional elapsed airtime labelled **in progress** until the next source or stop closes it. Continuations of one scheduled program across preparation windows stay one play; a new rotation counts as another play. Shows and category totals clip airtime to the requested report window. Historical Beta20 rows are retained unchanged and are not retroactively repaired.
+
+Report durations and aggregate airtime count only the part of each airing within the selected date range. An ongoing airing contributes provisional elapsed airtime through the report request time, labelled **in progress**. Its end remains **Awaiting end**. CSV and XML use the same window durations while retaining the original recorded start/end timestamps; the stored ledger is unchanged. Repeat occurrences count separately when distinct output starts were recorded.
 
 #### Download a report file
 
@@ -2747,21 +2759,38 @@ This chapter helps you when a screen shows a red or yellow warning, an alert app
 
 ### Before you start
 
+#### Graphics-driver maintenance
+
+Schedule GPU/graphics-driver installation and device restarts for an off-air
+maintenance window. They can interrupt every channel using that adapter at once.
+Keep a station backup and the prior driver/recovery information before maintenance;
+use the computer or adapter manufacturer's supported driver. Do not update or
+reset the graphics device as a troubleshooting experiment during a broadcast.
+
+If channels fail together during a driver change, preserve the CivicCast worker
+logs and Windows event timestamps. The R9 investigation associated simultaneous
+worker faults with a device restart, but it did not establish an instruction-level
+driver defect. After planned maintenance, check all three actual outputs and
+captions. CPU software fallback is available when configured; it uses CPU capacity
+and is not a guarantee of uninterrupted playback through a device reset.
+
 The four screens live in the left sidebar under **System Health**: **Readiness**, **Alerts**, **Emergency Alerts** and **Federation**. Most of them open for any role. Individual buttons are limited by role, and a button you cannot use shows a grey note that names the role needed.
 
 > **Note:** The first administrator account carries all five roles. Staff members use their own accounts with assigned roles, so they may see fewer controls. A Setup admin manages accounts and roles in **Staff accounts**.
 
-> **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
+The sidebar's **Readiness** page is headed **Station health and readiness**. It separates live output from setup and recovery checks.
 
 ### Check whether the station is ready (Readiness)
 
-Readiness answers one question: "Can we broadcast right now?"
+Read live health and setup readiness separately. A backup, restore or setup warning needs attention, but does not by itself mean a running channel has stopped. Use the live banner and resident preview to assess the current broadcast; use the setup and recovery checks to prepare for operation and recovery.
 
 1. In the sidebar, open **System Health**, then click **Readiness**.
 2. Wait while the page says "Checking station readiness...".
 3. Read the banner at the top, **On air right now**. It shows each channel, a coloured label and a message. The banner refreshes by itself every 5 seconds.
-4. Read the card below it. Its heading is the station's overall verdict, followed by a message and "Last checked" with the date and time.
+4. Read **Setup and recovery readiness** below the live banner. It refreshes every 30 seconds and shows **Last checked**. This is the setup verdict, not a second measurement of live output.
 5. Scroll down to **Required before broadcast** and **Optional and advanced**. Each row is one check, with a coloured label, a short message and a "Next step".
+
+The outgoing-feed panel refreshes every five seconds. Readings older than two minutes, with invalid times, or from a failed refresh cannot confirm current health. They are marked **Stale**, **Unavailable** or **Not confirmed**, with the sampling time. Historical measurements may remain visible to help diagnosis; they are not a healthy-current-output claim.
 
 #### What the colours and words mean
 
@@ -3385,6 +3414,8 @@ This chapter walks through Windows setup, first run, first setup in the operator
 
 ### Before you start
 
+The published RC2 package is `v1.0.0-rc.2`. Use the install page’s explicit `-Tag v1.0.0-rc.2 -Version 1.0.0-rc.2` command, its setup and its manual together; a later source checkout does not change the frozen release assets.
+
 - For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies the release assets, reuses matching published model packs where specified, assembles the complete kit, then runs setup with `/S`.
 - You checked the installer's hash and signature ([Chapter 9](#ch-planning), "Download and verify what you need").
 - You have a Windows administrator account. Allow about 55 GB on the install drive for a prepared offline kit, or about 100 GB when the download preparation and installation share one drive, plus space for media and recordings.
@@ -3473,9 +3504,9 @@ fails. Do not substitute hidden API calls for a missing operator workflow.
 The kit is large because it includes offline runtimes and models. Plan approximately
 25 GiB of payload; multipart model preparation can temporarily hold parts, the
 assembled archive and extracted models (roughly 66 GiB before the installed copy and
-station media). The install-drive requirements remain separate. The source RC2 helper
+station media). These are separate amounts: transfer is network bytes still needed; assembly and extraction are temporary destination-drive working space; installed runtimes/models need additional space on the install drive. The helper prints these model-bundle amounts separately. They exclude runtime downloads, upgrade recovery copies and station media. The install-drive requirements remain separate. The source RC2 helper
 checks free space before model assembly, resumes `.partial` bytes when the server
-supports ranges, and reuses already verified complete files. Rerun the same helper
+supports ranges, and reuses complete files after hash verification. A complete matching extracted station folder is verified and reused without downloading or extracting the model archive again. Rerun the same helper
 with the same destination after a network interruption. Do not mix versions or delete
 station data to make a retry work. A server that does not support ranges may require
 that file to restart. These improvements apply to the helper shipped with RC2, not
@@ -3484,6 +3515,8 @@ retroactively to the published RC1 helper.
 ### How the install runs
 
 ![Figure 10.1. The order of the Windows setup steps and the first-run window.](manual/diagrams/7ea8e49d7826.png){width=100%}
+
+Before replacing application files, setup saves a recovery snapshot. The progress log distinguishes stopping writers, measuring the recovery size, checking free space, copying each recovery entry and recording completion. While the file-copy process is running, a long copy writes a still-running message every 15 seconds; it reports elapsed copy time, not a measured byte percentage. Recordings and immutable pack cache are excluded from that recovery copy.
 
 Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. On a failure after mutation, setup stops the service while attempting restoration of the saved application and station state. Successful restoration also restores the prior service configuration; incomplete restoration preserves the recovery journal and reports exit 136. Correct the reported cause before retrying setup. An incomplete kit cannot supply missing signed station packs; obtain the complete matching bundle first.
 
@@ -3555,7 +3588,7 @@ The self-test runs the real programs once. The caption test is forced onto the p
 | 1 | The bundled Python imports CivicCast, the caption libraries (faster-whisper 1.2.1, ctranslate2 4.8.1) | It prints `native-core-ok` | 30 s |
 | 2 | PostgreSQL tools `postgres` and `pg_ctl` run | Output names each | 30 s each |
 | 3 | `ffmpeg` runs | Output contains "ffmpeg" | 30 s |
-| 4 | The AI engine runs | Output contains "0.30.6" | 30 s |
+| 4 | The AI engine runs | Output matches the installed runtime lock (0.40.13 in RC2) | 30 s |
 | 5 | TSDuck `tsp`, only if present | Absent is allowed and logged | 30 s |
 | 6 | Caption test: a short recording, using Large if installed, else Medium, on the processor | The text contains "fellow americans" and "country" | 300 s |
 | 7 | AI test: a private Ollama starts on a free local port; asks `gemma4:12b` to reply `CIVICCAST_OK`, `gemma4:e4b` to reply `CIVICCAST_FALLBACK_OK`, and `translategemma:4b` to translate "The council meeting is open." into Spanish | Exact replies | Ready within 300 s; each request up to 300 s |
@@ -3776,6 +3809,23 @@ Then sign in and open **Readiness** (the page headed "Safe to broadcast") and ru
 
 ### Upgrade
 
+#### What an upgrade preserves
+
+Removing the application is not the same as removing station data. A fresh
+installation can adopt retained data on the computer; use a genuinely clean
+computer when you intend a new station identity. An in-place upgrade preserves
+the existing station identity, administrator accounts and configuration while
+applying database migrations. Station branding and each channel's branding are
+separate settings; changing a channel name does not rename the station.
+
+Setup migrates an old LocalSystem profile and CivicCast credentials before
+switching to the restricted service account. It prepares model-data permissions
+before the upgraded service's first normal start. A failed migration or permission
+step must be corrected through setup/recovery, not by deleting station state or
+granting all users access. After setup, check the station name in Station Profile
+and each channel's saved name/logo in Channels. Preserve the backup and setup logs
+if they differ from the saved values; do not reset the station to diagnose it.
+
 To upgrade, run the newer `setup.exe` over the existing installation. Use the release helper to assemble the runtime `packs\` and signed `station\` folders. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
 
 > **Warning:** Setup stops the CivicCast service before it replaces any file. That takes every channel off the air until setup finishes and the service starts again. Do not run an upgrade during a meeting or a scheduled program.
@@ -3921,7 +3971,7 @@ First Setup is at `/setup` in the local operator console (`http://127.0.0.1:8000
 2. Under **Durable storage**, click **Prepare storage**. This creates or activates the local database for meeting records, captions, summaries and subscriptions. If the service was started with a `DATABASE_URL` the button does nothing and just reports status.
 3. Fill in **Station name** (up to 120 characters), **Admin display name** (up to 120), **Admin username** (up to 80), **Admin password** (at least 12 characters; a counter shows "(n/12)") and **Confirm admin password**.
 4. In **Where will you keep the recovery kit?** type a note such as "printed, in the clerk's safe". This is a free-text reminder. It is not a folder and nothing is written there.
-5. Optionally fill in **Resident portal URL**. A blank box is saved as nothing.
+5. Optionally fill in **Resident portal URL**. Use a complete `http://` or `https://` address without a username or password. A blank box clears the saved address; invalid addresses are refused.
 6. Click **Create first admin**. The **Recovery kit ready** panel appears with eight one-time recovery codes. The rest of the console is locked until you confirm the kit.
 7. Click **Print kit** or **Save kit**, tick **I have saved or printed this kit...** and click **Continue to the console**.
 
@@ -4030,7 +4080,7 @@ A channel has an **egress configuration**, stored in the database. "Egress" mean
 
 A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
 
-The Channels screen (**Run Meeting** group) edits some of this: **Channel startup and repeat** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
+The Channels screen (**Run Meeting** group) edits some of this: **Channel startup and repeat** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). These panels apply only to the channel currently selected above them. Check its channel ID in the automation panel before saving; switching channel selects a different saved configuration, not a station-wide setting. It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
 
 > **Warning:** Changes to a channel's outputs do not reach a channel that is on air. A running pipeline reads its sinks, encode profile and loudness target only when it is built. A preset or a saved configuration lands at the next Stop and Start. **Apply headend preset** on a channel that is standing by on its slate restarts it at once, and every output (the cable feed included) drops for a few seconds while the pipeline rebuilds. On a channel that is airing a program nothing is interrupted, and the screen says "Preset saved. Restart the channel to put it on air."
 
@@ -4110,6 +4160,13 @@ Hardware **decoding** is off by default and the CPU decoders are preferred. `CIV
 If the GStreamer files on the computer are corrupt and cannot be repaired in place when the service starts, the service falls back to the older FFmpeg concat engine so the channel keeps airing, raises an operator alert and marks the channel degraded. You do not choose this; it is automatic.
 
 #### Loudness and the leveling ride {#configuration-loudness}
+
+The **Prepared media** loudness value in Channels comes from the last recorded
+source/preparation measurement. It is not a rolling or continuous reading of the
+currently emitted channel, and an input measurement can remain visible after a
+normalization step. Output targets describe the configured processing, not a
+measured compliance result. Use an actual output measurement when commissioning
+the feed; do not read this value as proof that the current program meets its target.
 
 Each channel has one **loudness target** (default -16 LUFS) and **tolerance** (default 2 LU). Each sink can name its own **regime**:
 
@@ -4243,6 +4300,8 @@ The Provider setup block on the Setup page lists twelve cards: Local resident po
 The same providers can be configured with environment variables instead (for example `CIVICCAST_R2_ACCOUNT_ID`, `CIVICCAST_R2_ACCESS_KEY_ID`, `CIVICCAST_R2_SECRET_ACCESS_KEY`, `CIVICCAST_R2_BUCKET`, `CIVICCAST_R2_PUBLIC_BASE_URL`, `CIVICCAST_CDN_PROVIDER`, and the `CIVICCAST_BUNNY_*`, `CIVICCAST_FASTLY_*`, `CIVICCAST_AKAMAI_*`, `CIVICCAST_IA_*`, `CIVICCAST_YOUTUBE_*` and `CIVICCAST_SMTP_*` families listed in [Appendix: settings](#app-settings)). The CDN, archive and mail details are in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
 
 For Internet Archive, local archive, YouTube and SMTP mail, saved Setup details feed the existing real adapter directly. You do not need to copy those credentials into service environment variables or restart the station for this connection. Saved fields take precedence over environment fallback. An explicit `CIVICCAST_PROVIDER_*` selector still overrides automatic selection; ask IT to check it if a saved connection remains simulated. Subscriber notices with only a webhook secret retain their existing webhook behavior; SMTP selection requires SMTP details. Configuration alone does not prove delivery.
+
+For **Subscriber notifications**, an SMTP port must be a whole number from 1 to 65535. Missing SMTP host or sender details are saved as a **draft**, not a working mail connection. Correct rejected values in place: the form retains your entries after a failed save. A successful save keeps ordinary fields visible and clears password fields; an omitted saved password is preserved. Complete the settings and check actual delivery before relying on notices.
 
 #### Connect YouTube, from account sign-in to live access {#configuration-youtube}
 
@@ -4881,7 +4940,7 @@ Managed agenda originals, their hashes, completed-page checkpoints and preview/c
 
 Use **Station backup and restore** to create, verify and restore portable station archives. The encrypted `.ccbackup` contains the database, configured station files and portable CivicCast credentials, plus every file beneath the selected media roots. Choose an absolute destination, keep the recovery passphrase separately, and verify an off-station copy. A daily UTC schedule and bounded retention are available after saving the unattended passphrase in protected station storage. The station screen shows progress and the last run; the detailed inventory, restore steps and limitations are in the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md).
 
-Restore is an offline maintenance operation. Stop CivicCast and other station writers, provision the replacement service/database, then use `civiccast backup inventory` to inspect archive paths and `civiccast backup restore` with explicit target mappings and the `RESTORE` confirmation. The command prompts for the passphrase. Do not overlay a running station. A database restore can complete before later file or credential copies fail, so keep the source archive and rerun after correcting a path or permission problem.
+Restore is an offline maintenance operation. Stop CivicCast and other station writers, provision the replacement service/database, then use `civiccast backup inventory` to inspect archive paths and `civiccast backup restore` with an explicit replacement database URL (`--target-database-url` or `CIVICCAST_TARGET_DATABASE_URL`), target mappings, `--restore-local-station-settings` and the `RESTORE` confirmation. The command never defaults to the installed database. It previews the destinations and requests confirmation before prompting for the passphrase. Run this full restore on the replacement computer: database/file mappings do not redirect the local credential vault or service settings, so this is not an isolated clone-verification command. Effective app-platform configuration, including branding, is included even when station-state uses another path. Do not overlay a running station. A database restore can complete before later file or credential copies fail, so keep the source archive and rerun after correcting a path or permission problem.
 
 The scheduled passphrase is stored separately from the archive and schedule. Keep it available to the operator who would rebuild the station. An upgrade rollback backup remains separate and is not a substitute for an off-station `.ccbackup`.
 
@@ -4931,6 +4990,8 @@ Remove-Item Env:\DATABASE_URL
 The `--out` folder must have room for a full copy of the database. Choose a drive that is not the station's data drive when you can.
 
 #### What the archive covers
+
+On an installed Windows station, open an interactive PowerShell with **Run as administrator** for `civiccast backup` commands. The CLI checks privileges before reading protected service settings or asking for a passphrase. Portable environments without an installed service have no blanket administrator requirement. Backup failures retain the failed phase and progress, an operation identifier and safe corrective guidance. Keep that identifier for support; never include credentials. A retention failure may follow publication, so verify any new archive before retrying.
 
 The station archive uses the installed integration's configured database, files, portable credential adapter and selected media roots. It is encrypted before publication; do not copy individual machine-protected DPAPI or Windows Credential Manager blobs as a substitute. Program files, packs and models are not part of the archive and must be reinstalled. Review the exact inventory and the portable credential boundaries in the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md).
 
@@ -10040,7 +10101,7 @@ NWS
 **O**
 
 Ollama
-:   The local AI engine program (version 0.30.6 in the current runtime lock), started by the service on `127.0.0.1:11434`.
+:   The local AI engine program (version 0.40.13 in the RC2 runtime lock), started by the service on `127.0.0.1:11434`.
 
 On-Air Mode
 :   A Control Room session type that really fires cues. It expires after 30 minutes. The other type, Test Mode, fires nothing.
@@ -10321,7 +10382,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 | Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-rc.2 unpublished candidate source edition | Apache-2.0 | The station itself; use each installed package's matching component records. |
+| CivicCast program and web portals | 1.0.0-rc.2 published release; source may contain later fixes | Apache-2.0 | The station itself; use each installed package's matching component records. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
@@ -10352,6 +10413,8 @@ record. Installing them does not commission public HTTPS, WHIP or TURN access.
 
 > **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of an installed package are in its `LICENSE-BOM.md` files and matching verification record; use those for that package's component inventory.
 
+The signed model creation records retain Ollama 0.30.6 as pinned in `native-windows-ollama-models.lock.json`. That provenance describes the existing model pack bytes, not the installed AI engine. RC2 installs Ollama 0.40.13 from the separate runtime dependency lock. Verification still requires each model receipt to match its exact reviewed model lock.
+
 ### Where the license texts are
 
 Each runtime pack carries a `LICENSE-BOM.md` (a per-file table of license, generated from the build) and a `licenses` folder with the license text for every license it uses. CivicCast also keeps the texts in its source tree, in `civiccast/native/license_texts`, one file per license identifier:
@@ -10372,7 +10435,7 @@ Each runtime pack carries a `LICENSE-BOM.md` (a per-file table of license, gener
 
 The installer is signed with an Authenticode signature (publisher Scott Converse, through Azure Trusted Signing). To check a download yourself, run `Get-AuthenticodeSignature .\setup.exe` and expect Status Valid; compare the SHA-256 against the release's `SHA256SUMS.txt`.
 
-<!-- SOURCES: LEGAL-NOTICES.md (full); LICENSE, LICENSE-DOCS (headers); CODE_SIGNING_POLICY.md:1-20; civiccast/native/runtime_licenses.py:1-60,172-197,514-540,560-640,871-905 (GPL exclusion list, dual-license elections, server-pack zero-GPL guard, UNRESOLVED_BASENAMES = empty at :497); civiccast/native/license_texts/ (17 files listed); civiccast/native/license_texts/__init__.py:1-30 (VC++ pointer); requirements-native-runtime.in:1-27 (ADR-0021, GPL wheels absent); requirements-native-app.txt:28-33 (LGPL-only PyAV wheel); native-windows-runtime-dependencies.lock.json (ffmpeg LGPL-3.0-or-later n8.1.2, node 24.15.0 MIT, ollama 0.30.6 MIT, postgres 17.10-2, tsduck 3.44); native-windows-ollama-models.lock.json; civiccast/native/app_payload.py:107-150 (Whisper MIT); civiccast/apps/portal-operator/package.json and portal-public/package.json (dependency names); civiccast/native/runtime_licenses.py:1089-1103 (NVIDIA EULA identifiers); civiccast/apps/installer/src-tauri/src/native_install_verify.rs:286 (LICENSE-BOM.md expected with each payload); civiccast/control_room/tsr_service/README.md:16 and docs/adr/0019 -->
+<!-- SOURCES: LEGAL-NOTICES.md (full); LICENSE, LICENSE-DOCS (headers); CODE_SIGNING_POLICY.md:1-20; civiccast/native/runtime_licenses.py:1-60,172-197,514-540,560-640,871-905 (GPL exclusion list, dual-license elections, server-pack zero-GPL guard, UNRESOLVED_BASENAMES = empty at :497); civiccast/native/license_texts/ (17 files listed); civiccast/native/license_texts/__init__.py:1-30 (VC++ pointer); requirements-native-runtime.in:1-27 (ADR-0021, GPL wheels absent); requirements-native-app.txt:28-33 (LGPL-only PyAV wheel); native-windows-runtime-dependencies.lock.json (ffmpeg LGPL-3.0-or-later n8.1.2, node 24.15.0 MIT, ollama 0.40.13 MIT, postgres 17.10-2, tsduck 3.44); native-windows-ollama-models.lock.json; civiccast/native/app_payload.py:107-150 (Whisper MIT); civiccast/apps/portal-operator/package.json and portal-public/package.json (dependency names); civiccast/native/runtime_licenses.py:1089-1103 (NVIDIA EULA identifiers); civiccast/apps/installer/src-tauri/src/native_install_verify.rs:286 (LICENSE-BOM.md expected with each payload); civiccast/control_room/tsr_service/README.md:16 and docs/adr/0019 -->
 
 ## Appendix K: Release history {#app-history}
 

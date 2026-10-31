@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
-from civiccast.dr.station_backup import BackupSchedule, StationBackupService
+from civiccast.dr.station_backup import BackupCreationError, BackupSchedule, StationBackupService
 
 staff_router = APIRouter(
     prefix="/api/staff/backups",
@@ -166,8 +166,10 @@ def download_station_backup(backup_id: str, request: Request) -> StreamingRespon
 
 def _public_error(exc: Exception) -> str:
     # Exception text can contain URLs with database passwords or provider
-    # responses. Return a stable operator-safe message; detailed diagnostics
-    # remain with the local service log.
+    # responses. Creation errors already contain allowlisted phase guidance;
+    # arbitrary exceptions must keep the stable operator-safe fallback.
+    if isinstance(exc, BackupCreationError):
+        return str(exc)
     if isinstance(exc, ValueError):
         message = str(exc)
         if "://" not in message and not re.search(r"pass(word|phrase|wd)\s*[=:]", message, re.I):

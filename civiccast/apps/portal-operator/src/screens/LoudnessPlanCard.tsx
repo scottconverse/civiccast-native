@@ -37,13 +37,15 @@ export function LoudnessPlanView({
             className="cc-mono rounded-full px-2 py-0.5 text-[11px]"
             style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
           >
-            Measured {fmtLufs(latestLoudnessLufs)}
+            Prepared media: {fmtLufs(latestLoudnessLufs)}
           </span>
         )}
       </div>
       <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-        Each output is normalised to its destination&rsquo;s loudness standard — cable to
-        ATSC&nbsp;A/85 (&minus;24&nbsp;LKFS), streaming to &minus;16&nbsp;LUFS.
+        Output targets are shown below: cable ATSC&nbsp;A/85 (&minus;24&nbsp;LKFS),
+        streaming &minus;16&nbsp;LUFS. The prepared-media value is the last recorded
+        source/preparation measurement, not a continuous meter of the live output.
+        It does not certify the final output or its current loudness.
       </p>
       {loading && (
         <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-3)' }}>
@@ -131,8 +133,8 @@ export function LoudnessPlanCard({ channelId, enabled = true }: { channelId: str
     queryFn: () => getEgressHealth(channelId),
     retry: false,
   })
-  // Pick the most recent sample that actually carries a measurement, regardless
-  // of the endpoint's ordering, so the chip never shows a stale or null reading.
+  // This is a retained preparation measurement, not a live output meter.
+  // Pick its latest health record regardless of endpoint ordering.
   const measured =
     (healthQuery.data ?? [])
       .filter((sample) => sample.last_loudness_lufs != null)

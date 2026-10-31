@@ -19,6 +19,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HlsPlayer } from './HlsPlayer'
+import { EmbedPlayer } from './EmbedPlayer'
 
 const Events = {
   MEDIA_ATTACHED: 'hlsMediaAttached',
@@ -130,6 +131,25 @@ afterEach(() => {
 })
 
 describe('HlsPlayer hls.js captions', () => {
+  it('labels buffered embedded playback separately from the newest live-edge title', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      title: 'Current program', manifest_url: '/live/playlist.m3u8',
+      program_timeline: [
+        { title: 'Earlier program', started_at: '2026-10-12T18:00:00Z' },
+        { title: 'Current program', started_at: '2026-10-12T18:01:00Z' },
+      ],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    render(<EmbedPlayer kind="channel" identity="gov" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    hls.playingDate = new Date('2026-10-12T18:00:40Z')
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+    fireEvent.canPlay(video)
+    fireEvent.timeUpdate(video)
+    await waitFor(() => expect(screen.getByLabelText('Program at playback position').textContent).toBe('Now playing: Earlier program'))
+    expect(screen.getByRole('link', { name: 'Open station portal (live edge: Current program)' })).toBeTruthy()
+  })
   it('shows the title for the buffered playback time instead of the newest source title', async () => {
     render(
       <HlsPlayer

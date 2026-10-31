@@ -36,6 +36,40 @@ function renderScreen() {
 }
 
 describe('BackupScreen', () => {
+  it('clears old operation errors and hides the prior failed job during a retry', async () => {
+    vi.mocked(getStationBackupStatus).mockResolvedValue({
+      schedule: {
+        enabled: false,
+        destination: 'D:\\CivicCastBackups',
+        hour_utc: 3,
+        minute_utc: 0,
+        retention_count: 14,
+        selected_media_roots: [],
+      },
+      scheduled_passphrase_configured: false,
+      job: { phase: 'failed', percent: 5 },
+      last_success: null,
+      last_error: 'Previous database failure',
+      backups: [],
+    })
+    vi.mocked(createStationBackup).mockRejectedValueOnce(new Error('First attempt failed'))
+      .mockImplementationOnce(() => new Promise(() => {}))
+    renderScreen()
+    expect(await screen.findByText('Previous database failure')).toBeTruthy()
+    for (const label of ['Recovery passphrase', 'Confirm passphrase']) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value: 'test-recovery-passphrase' } })
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Create backup' }))
+    expect(await screen.findByText('First attempt failed')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Create backup' }))
+    expect(await screen.findByRole('button', { name: 'Creating encrypted backup…' })).toBeTruthy()
+    expect(screen.queryByText('First attempt failed')).toBeNull()
+    expect(screen.queryByText('Previous database failure')).toBeNull()
+    expect(screen.queryByText('failed')).toBeNull()
+    expect((screen.getByLabelText('Recovery passphrase') as HTMLInputElement).value)
+      .toBe('test-recovery-passphrase')
+  })
+
   it('shows an empty state and creates only after matching recovery passphrases', async () => {
     vi.mocked(getStationBackupStatus).mockResolvedValue({
       schedule: {

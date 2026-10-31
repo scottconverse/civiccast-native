@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 # Only these fixed application messages may cross the public error boundary.
 # Never forward arbitrary ValueError text, input values or validator context.
 PUBLIC_VALIDATION_MESSAGES = {
+    "resident_portal_url": "Enter a complete http:// or https:// resident portal URL without credentials.",
     "control_characters": "This field cannot contain control characters.",
     "recording_location": (
         "Use a local recording location: a file:// URI (for example "
@@ -50,5 +51,11 @@ async def request_validation_response(
         if error["type"] == "extra_forbidden" and location:
             # An unrecognized field name is also arbitrary submitted input.
             location[-1] = "(extra field)"
+        if request.url.path.endswith("/provider-credentials") and location[:2] == [
+            "body",
+            "values",
+        ]:
+            # Map keys are arbitrary submitted input, including on type errors.
+            location[2:] = ["(credential field)"] if len(location) > 2 else []
         errors.append({"type": kind, "loc": location, "msg": message})
     return JSONResponse(status_code=422, content={"detail": errors})

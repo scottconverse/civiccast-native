@@ -426,7 +426,7 @@ function ShowsTable({ rows }: { rows: ShowsReport['rows'] }) {
             >
               <td className="cc-mono px-2 py-1 text-xs">{row.asset_id}</td>
               <td className="cc-tabular px-2 py-1 text-right">{row.play_count}</td>
-              <td className="cc-tabular px-2 py-1 text-right">{formatHms(row.total_airtime_s)}</td>
+              <td className="cc-tabular px-2 py-1 text-right">{formatHms(row.total_airtime_s)}{row.in_progress_count ? ' (in progress)' : ''}</td>
               <td className="cc-mono px-2 py-1 text-xs">{row.first_aired}</td>
               <td className="cc-mono px-2 py-1 text-xs">{row.last_aired}</td>
             </tr>
@@ -454,7 +454,8 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
         not change when a program went on air.
         {' '}An observed output start does not prove reception at a television. End and duration
         are finalized at the next observed source change or channel stop; an unfinished row is
-        shown as “Awaiting end”, not a zero-length completed broadcast. Older records are retained
+        shown as “Awaiting end” with provisional elapsed airtime bounded by now. Durations and totals
+        count only airtime within the selected window; timestamps retain the recorded evidence. Older records are retained
         as recorded and are not repaired retroactively.
       </p>
       <table className="w-full text-sm" aria-label="As-run report">
@@ -485,7 +486,7 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
                 {startVariance(row.entry.scheduled_start, row.entry.actual_start)}
               </td>
               <td className="cc-mono px-2 py-1 text-xs">{row.entry.actual_end === row.entry.actual_start ? 'Awaiting end' : row.entry.actual_end}</td>
-              <td className="cc-tabular px-2 py-1 text-right">{row.entry.actual_end === row.entry.actual_start ? 'Not finalized' : formatHms(row.entry.duration_s)}</td>
+              <td className="cc-tabular px-2 py-1 text-right">{`${formatHms(row.entry.duration_s)}${row.entry.actual_end === row.entry.actual_start ? ' (in progress)' : ''}`}</td>
               <td className="px-2 py-1 text-xs">{row.entry.source_kind}</td>
               <td className="cc-mono px-2 py-1 text-xs">{row.entry.asset_id ?? ''}</td>
               <td className="px-2 py-1 text-xs">{row.category ?? ''}</td>
@@ -525,7 +526,7 @@ function HoursTable({ report }: { report: HoursByCategoryReport }) {
             <tr key={row.category} style={{ borderTop: '1px solid var(--cc-line)' }}>
               <td className="px-2 py-1">{row.category}</td>
               <td className="cc-tabular px-2 py-1 text-right">{row.entry_count}</td>
-              <td className="cc-tabular px-2 py-1 text-right">{formatHms(row.total_seconds)}</td>
+              <td className="cc-tabular px-2 py-1 text-right">{formatHms(row.total_seconds)}{row.in_progress_count ? ' (in progress)' : ''}</td>
               <td className="cc-tabular px-2 py-1 text-right">{formatHours(row.total_hours)}</td>
             </tr>
           ))}

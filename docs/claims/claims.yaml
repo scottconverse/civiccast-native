@@ -58,6 +58,11 @@
 # Focused native three-source and prerolled replacement checks passed; historical
 # hardware/session-0 observations stay historical, not transferred to RC2.
 # Current required Windows media CI still executes the bound test file.
+# 31 operator corrections: renew reviewed backup and engine/worker/audio-tap
+# inputs after the focused PostgreSQL and native caption proofs in CURRENT.
+# Native collections are 2148 pure/2389 non-integration; floors 2098/2339
+# preserve the existing 50-test margin. Same-run producers remain required.
+# Historical installed/session-0/hardware evidence is not renewed by this.
 schema_version: 1
 
 governed_doc_set:
@@ -158,7 +163,7 @@ entries:
       # `git hash-object --path <file> <file>` per D2.
       code:
         path: civiccast/dr/backup.py
-        blob: e881a53b67bd298c379b31d8e7a3641f9dd56af4
+        blob: 30dbb684637422f709f5f63abe644b61a70eff98
       test:
         path: tests/dr/test_postgres_backup.py
         blob: 6f3ab03eb95bf1a1f079594d39fb8436f3caaf77
@@ -172,7 +177,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: db10308deb65850e0a2362b1ee1f4e3c880b802f
+        blob: d7811ca35163b3665be30785ca244b0cab4cadde
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -241,7 +246,7 @@ entries:
           blob: 37c2bd2bc951eb0bfe8d5b4b2fdef1eda6027e1c
       test:
         path: tests/dr/test_postgres_restore.py
-        blob: cb10c5b884176d4c9764c6f41b3b78053d564b60
+        blob: 09fb2fb72fa7d75e8f551feb8d8655c24f6cfa77
         node_id: "tests/dr/test_postgres_restore.py::test_run_full_drill_postgres_end_to_end"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -252,7 +257,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: db10308deb65850e0a2362b1ee1f4e3c880b802f
+        blob: d7811ca35163b3665be30785ca244b0cab4cadde
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -309,7 +314,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: db10308deb65850e0a2362b1ee1f4e3c880b802f
+        blob: d7811ca35163b3665be30785ca244b0cab4cadde
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -374,7 +379,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: db10308deb65850e0a2362b1ee1f4e3c880b802f
+        blob: d7811ca35163b3665be30785ca244b0cab4cadde
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -1107,13 +1112,13 @@ entries:
       # and hardware claims are not renewed; these are drift tripwires only.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: fad8cce8d0a07cbf0abc75bc1d4041320a01e415
+          blob: 860ed0a4aa20b00e5103ff916baaa0ea935be065
         # Sprint 3: current-source bindings reviewed for output DSP and EOS
         # preservation; focused native results: .agent-runs/native-windows/
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 6e864d3b045b2a92d1e3a5fd138914bd2ed26633
+          blob: 2e3142a838492c9fa9dbe173d80024ff591f7f3c
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1126,7 +1131,7 @@ entries:
           # This source-tripwire rebind is not installed or release proof.
           blob: b5115d53a2767f38b488831aacdbc16dbcb10d6a
         - path: civiccast/egress/gst/audio_tap.py
-          blob: 79031e2589c818c3763e825b55827d700b95d2ea
+          blob: 19dd3049257130aff222fade2f9838d4f1b7e4e6
       test:
         path: tests/egress/test_gst_engine_wsl.py
         blob: 6dcc17000e49f28131e6358bccf3e079f5cd708c
@@ -1140,7 +1145,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: db10308deb65850e0a2362b1ee1f4e3c880b802f
+        blob: d7811ca35163b3665be30785ca244b0cab4cadde
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000
@@ -2038,13 +2043,13 @@ entries:
       # and hardware claims are not renewed; these are drift tripwires only.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: fad8cce8d0a07cbf0abc75bc1d4041320a01e415
+          blob: 860ed0a4aa20b00e5103ff916baaa0ea935be065
         # Sprint 3: current-source bindings reviewed for output DSP and EOS
         # preservation; focused native results: .agent-runs/native-windows/
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 6e864d3b045b2a92d1e3a5fd138914bd2ed26633
+          blob: 2e3142a838492c9fa9dbe173d80024ff591f7f3c
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2057,7 +2062,7 @@ entries:
           # This source-tripwire rebind is not boot/pre-login acceptance.
           blob: b5115d53a2767f38b488831aacdbc16dbcb10d6a
         - path: civiccast/egress/gst/audio_tap.py
-          blob: 79031e2589c818c3763e825b55827d700b95d2ea
+          blob: 19dd3049257130aff222fade2f9838d4f1b7e4e6
       test:
         path: tests/egress/test_gst_engine_wsl.py
         blob: 6dcc17000e49f28131e6358bccf3e079f5cd708c
@@ -2071,7 +2076,7 @@ entries:
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: db10308deb65850e0a2362b1ee1f4e3c880b802f
+        blob: d7811ca35163b3665be30785ca244b0cab4cadde
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 09ede0eb7db4b84a9ea50ef007b4451793f48000

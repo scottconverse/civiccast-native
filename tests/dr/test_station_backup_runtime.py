@@ -14,6 +14,33 @@ from civiccast.dr.station_backup_runtime import build_station_backup_service
 from civiccast.native.station_secrets import StationSecretVault
 
 
+@pytest.mark.parametrize("installed", [False, True])
+def test_backup_cli_preflight_only_requires_elevation_for_installed_service(monkeypatch, installed):
+    from civiccast.native import admin_recovery
+
+    monkeypatch.setattr(
+        station_backup_runtime, "_installed_station_service_present", lambda: installed
+    )
+    checks = []
+    monkeypatch.setattr(admin_recovery, "_require_elevation", lambda: checks.append("token"))
+    station_backup_runtime.preflight_station_backup_cli()
+    assert checks == (["token"] if installed else [])
+
+
+def test_installed_backup_cli_preflight_denies_before_loading_state(monkeypatch):
+    from civiccast.native import admin_recovery
+
+    monkeypatch.setattr(station_backup_runtime, "_installed_station_service_present", lambda: True)
+
+    def denied():
+        raise admin_recovery.RecoveryError("private diagnostic")
+
+    monkeypatch.setattr(admin_recovery, "_require_elevation", denied)
+    with pytest.raises(PermissionError, match="Run as administrator") as raised:
+        station_backup_runtime.preflight_station_backup_cli()
+    assert "private diagnostic" not in str(raised.value)
+
+
 @pytest.mark.parametrize("override", ["default", "uploads", "documents"])
 def test_managed_agenda_root_uses_replacement_service_paths(tmp_path, monkeypatch, override):
     from civiccast.native.supervisor import install_layout
@@ -64,6 +91,58 @@ def test_portable_service_environment_is_allowlisted_and_excludes_database_url()
         "CIVICCAST_AGENDA_SOURCE_CLIENT": "example",
         "CIVICCAST_AGENDA_SOURCE_TIMEOUT_S": "15",
     }
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_effective_application_config_included_with_unrelated_state_override(
+    tmp_path, monkeypatch, override
+):
+    from civiccast.native.supervisor import install_layout
+
+    root = tmp_path / "replacement"
+    effective = root / "profile" / "CivicCast" / "app-platform-config.json"
+    environment = {
+        "LOCALAPPDATA": str(root / "profile"),
+        "CIVICCAST_STATION_STATE_PATH": str(root / "other" / "station-state.json"),
+    }
+    if override:
+        effective = root / "custom-config" / "branding.json"
+        environment["CIVICCAST_APP_PLATFORM_CONFIG_PATH"] = str(effective)
+    effective.parent.mkdir(parents=True)
+    effective.write_text('{"station_name":"Preserved station"}')
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///unused.db")
+    monkeypatch.setattr(
+        runtime := station_backup_runtime,
+        "_read_installed_service_environment",
+        lambda: environment,
+    )
+    monkeypatch.setattr(
+        install_layout,
+        "resolve_install_layout",
+        lambda: SimpleNamespace(civiccast_data_root=root, pg_ctl_path=root / "pg_ctl.exe"),
+    )
+    service = runtime.build_station_backup_service()
+    assert effective in service.config_paths
+    assert effective in service.config_paths_provider()
+    assert service.credential_destination is not None
+
+
+def test_full_station_restore_refuses_unacknowledged_local_settings_before_archive_access(tmp_path):
+    from civiccast.dr.station_backup import StationBackupService
+
+    service = StationBackupService(
+        database_url="sqlite:///unused.db",
+        destination=tmp_path / "backups",
+        credential_destination="local vault and service settings",
+    )
+    with pytest.raises(RuntimeError, match="explicit acknowledgement"):
+        service.restore_backup(
+            tmp_path / "nonexistent.ccbackup",
+            "recovery-test-passphrase",
+            target_database_url="sqlite:///clone.db",
+            writers_stopped=True,
+        )
+    assert not (tmp_path / "clone.db").exists()
 
 
 def test_portable_service_environment_restore_preserves_new_database_and_runtime_paths(
@@ -248,6 +327,8 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     state = station_config / "station-state.json"
     station_config.mkdir(parents=True)
     state.write_text('{"station_name":"Integration station"}')
+    app_config = station_config / "app-platform-config.json"
+    app_config.write_text('{"station_name":"Effective operator branding"}')
     caption_settings = station_config / "offline-caption-settings.json"
     caption_settings.write_text('{"enabled":false,"languages":["en"]}')
     agenda_settings = station_config / "agenda-import-settings.json"
@@ -259,6 +340,7 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
         connection.execute("INSERT INTO station VALUES ('preserved')")
         connection.commit()
     monkeypatch.setenv("PROGRAMDATA", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(profile))
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database.as_posix()}")
     monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(state))
     monkeypatch.delenv("CIVICCAST_CONFIG_DIR", raising=False)
@@ -279,6 +361,7 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     vault.set("civiccast.live-source", "camera", "camera-test-secret")
     service = build_station_backup_service()
     assert state in service.config_paths
+    assert app_config in service.config_paths
     assert caption_settings in service.config_paths
     assert agenda_settings in service.config_paths
     assert service.managed_roots == {"agenda-import": root / "data" / "uploads" / "agenda-import"}
@@ -301,7 +384,75 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     artifact = service.create_backup("recovery-test-passphrase")
     assert service.verify_backup(artifact.path, "recovery-test-passphrase").valid
     inventory = service.inspect_backup(artifact.path, "recovery-test-passphrase")
+    assert any(record["source_path"] == str(app_config) for record in inventory["payload"])
     assert any(record["source_path"] == str(late_config) for record in inventory["payload"])
     assert any(record["source_path"] == str(caption_settings) for record in inventory["payload"])
     assert b"smtp-test-secret" not in artifact.path.read_bytes()
     assert b"camera-test-secret" not in artifact.path.read_bytes()
+
+    # Restore into a different disposable station, exercising real machine-DPAPI
+    # credential import. Service-registry writes are captured, never redirected
+    # to the developer's installed service. Its merge policy has separate tests.
+    source_vault_bytes = vault.path.read_bytes()
+    replacement_root = tmp_path / "replacement" / "CivicCast"
+    replacement_database = tmp_path / "replacement.db"
+    with closing(sqlite3.connect(replacement_database)) as connection:
+        connection.execute("CREATE TABLE station (name TEXT)")
+        connection.execute("INSERT INTO station VALUES ('replacement sentinel')")
+        connection.commit()
+    monkeypatch.setenv("PROGRAMDATA", str(replacement_root.parent))
+    monkeypatch.setenv("LOCALAPPDATA", str(replacement_root / "profile"))
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(replacement_root / "station-state.json"))
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{replacement_database.as_posix()}")
+    monkeypatch.setattr(
+        install_layout,
+        "resolve_install_layout",
+        lambda: SimpleNamespace(
+            civiccast_data_root=replacement_root,
+            pg_ctl_path=tmp_path / "bin" / "pg_ctl.exe",
+        ),
+    )
+    environment_imports = []
+    monkeypatch.setattr(
+        station_backup_runtime,
+        "_restore_portable_service_environment",
+        environment_imports.append,
+    )
+    replacement_vault = StationSecretVault()
+    replacement_vault.set("civiccast.live-source", "camera", "replacement-test-secret")
+    replacement = build_station_backup_service()
+    target_paths = {
+        record["source_path"]: replacement_root / "restored-config" / str(index)
+        for index, record in enumerate(inventory["payload"])
+        if record["kind"] == "config"
+    }
+    restore_args = {
+        "target_database_url": f"sqlite:///{replacement_database.as_posix()}",
+        "target_paths": target_paths,
+        "writers_stopped": True,
+    }
+    with pytest.raises(RuntimeError, match="acknowledgement"):
+        replacement.restore_backup(artifact.path, "recovery-test-passphrase", **restore_args)
+    assert replacement_vault.get("civiccast.live-source", "camera") == "replacement-test-secret"
+    assert not environment_imports
+    with closing(sqlite3.connect(replacement_database)) as connection:
+        assert connection.execute("SELECT name FROM station").fetchall() == [
+            ("replacement sentinel",)
+        ]
+
+    result = replacement.restore_backup(
+        artifact.path,
+        "recovery-test-passphrase",
+        restore_local_station_settings=True,
+        **restore_args,
+    )
+    assert result.database_restored
+    assert replacement_vault.get("civiccast.live-source", "camera") == "camera-test-secret"
+    assert b"camera-test-secret" not in replacement_vault.path.read_bytes()
+    assert vault.path.read_bytes() == source_vault_bytes
+    assert environment_imports == [{"CIVICCAST_SMTP_PASSWORD": "smtp-test-secret"}]
+    assert target_paths[str(app_config)].read_text() == app_config.read_text()
+    with closing(sqlite3.connect(replacement_database)) as connection:
+        assert connection.execute("SELECT name FROM station").fetchall() == [("preserved",)]
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT name FROM station").fetchall() == [("preserved",)]

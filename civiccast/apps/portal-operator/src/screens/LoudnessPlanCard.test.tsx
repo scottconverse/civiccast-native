@@ -48,7 +48,7 @@ describe('LoudnessPlanView', () => {
     // The divergent cable sink is flagged as re-normalised.
     expect(text).toContain('re-normalised')
     // Last-measured loudness chip.
-    expect(text).toContain('Measured -16.3 LUFS')
+    expect(text).toContain('Prepared media: -16.3 LUFS')
   })
 
   it('shows an empty state when no sinks are configured', () => {

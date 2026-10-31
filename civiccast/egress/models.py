@@ -532,6 +532,7 @@ class EgressCommand(BaseModel):
 # created by ``Base.metadata.create_all`` with no migration path for a
 # column added to an installed station.
 SLATE_RESTART_COMMAND_PREFIX = "headend-profile-restart-"
+SCHEDULED_SLATE_START_COMMAND_PREFIX = "auto-slate-start-"
 
 
 def slate_restart_guard_state(command: EgressCommand) -> EgressState | None:
@@ -787,6 +788,8 @@ class EgressSourceSegment(BaseModel):
     #: occurrences may air the same asset, so this cannot be inferred from
     #: ``source_ref`` alone.
     schedule_occurrence_id: Annotated[str | None, Field(default=None, max_length=80)] = None
+    #: Repeats retain the database row ID but have a distinct effective start.
+    schedule_occurrence_start: datetime | None = None
     #: Original program position retained even after conforming trims into a new file.
     source_offset_seconds: Annotated[float | None, Field(default=None, ge=0)] = None
     #: Opaque credential HANDLE for a live segment whose protocol supports one

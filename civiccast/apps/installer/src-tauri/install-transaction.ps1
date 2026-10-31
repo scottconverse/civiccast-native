@@ -144,9 +144,42 @@ public static class CivicCastRecoveryFileId {
     return [CivicCastRecoveryFileId]::Read($path)
 }
 
+function Write-SnapshotProgress([string]$message) {
+    # ExecToStack returns child output only after completion. Write the existing
+    # progress log directly so silent installs show the current long-running phase.
+    $log = Join-Path (Split-Path -Parent $StateRoot) 'install-progress.log'
+    $line = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ') + ' recovery snapshot: ' + $message
+    try { [IO.File]::AppendAllText($log, $line + [Environment]::NewLine, [Text.Encoding]::UTF8) }
+    catch { Write-Warning 'Recovery snapshot progress could not be written; recovery work continues.' }
+}
+
 function Invoke-RecoveryTreeCopy([string[]]$arguments) {
-    & "$env:SystemRoot\System32\robocopy.exe" @arguments | Out-Null
-    if ($LASTEXITCODE -ge 8) { throw "Recovery copy failed (robocopy exit $LASTEXITCODE)." }
+    # Keep robocopy's exact copy/ACL/retry policy and exit-code contract. Wait in
+    # bounded intervals solely to report that the snapshot copy is still running.
+    $quoted = foreach ($argument in $arguments) {
+        $escaped = [regex]::Replace($argument, '(\\*)"', '$1$1\"')
+        $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+        '"' + $escaped + '"'
+    }
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = "$env:SystemRoot\System32\robocopy.exe"
+    $info.Arguments = $quoted -join ' '
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [Diagnostics.Process]::Start($info)
+    try {
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        $elapsed = [Diagnostics.Stopwatch]::StartNew()
+        while (-not $process.WaitForExit(15000)) {
+            if ($script:SnapshotProgressActive) {
+                Write-SnapshotProgress ("copy still running: entry {0}; {1:N0}s elapsed in this copy; copied bytes not measured" -f $script:SnapshotCopyNumber, $elapsed.Elapsed.TotalSeconds)
+            }
+        }
+        if ($process.ExitCode -ge 8) { throw "Recovery copy failed (robocopy exit $($process.ExitCode))." }
+    } finally { $process.Dispose() }
 }
 
 function Copy-RecoveryTree([string]$source, [string]$target, [string[]]$exclude = @()) {
@@ -488,7 +521,9 @@ function Begin-Transaction {
 
 function Snapshot-Transaction($state) {
     if ($state.Phase -ne 'Prepared') { throw 'Installer recovery snapshot was not prepared.' }
+    Write-SnapshotProgress 'quiescing station writers before recovery copy'
     Stop-TransactionWriters $state
+    Write-SnapshotProgress 'measuring recovery size; application and mutable station state only; media and immutable cache excluded'
     $backup = Join-Path $StateRoot 'backup'
     # Only data the installer mutates. Recordings, uploads and other media are
     # excluded; the cold cluster snapshot includes globals, schema and configs.
@@ -514,14 +549,25 @@ function Snapshot-Transaction($state) {
     # Leave headroom for copy metadata and a journal even when the volume is
     # tight; candidate's own staging has its separate free-space check.
     $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($StateRoot))
+    Write-SnapshotProgress ("size measured: {0} bytes; required reserve: {1} bytes; available: {2} bytes" -f $required, 256MB, $drive.AvailableFreeSpace)
     if ($drive.AvailableFreeSpace -lt $required + 256MB) { throw "Recovery snapshot needs $required bytes plus 256 MB reserve; setup stopped before replacement." }
     $state.Entries = $entries
     Write-Transaction $state
     Remove-OwnedPath $backup $StateRoot
-    foreach ($entry in $entries) { Copy-RecoveryEntry $entry $entry.Source $entry.Backup }
+    $script:SnapshotProgressActive = $true
+    $script:SnapshotCopyNumber = 0
+    try {
+        foreach ($entry in $entries) {
+            $script:SnapshotCopyNumber++
+            Write-SnapshotProgress ("copying entry {0} of {1}; total recovery size {2} bytes" -f $script:SnapshotCopyNumber, $entries.Count, $required)
+            Copy-RecoveryEntry $entry $entry.Source $entry.Backup
+            Write-SnapshotProgress ("copied entry {0} of {1}" -f $script:SnapshotCopyNumber, $entries.Count)
+        }
+    } finally { $script:SnapshotProgressActive = $false }
     $state.SnapshotComplete = $true
     $state.Phase = 'Active'
     Write-Transaction $state
+    Write-SnapshotProgress "complete: $required bytes; recovery point recorded before application replacement"
     Write-Output "Recovery snapshot complete: $required bytes"
 }
 

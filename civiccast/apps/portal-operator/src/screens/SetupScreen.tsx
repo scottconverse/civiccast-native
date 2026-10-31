@@ -865,6 +865,7 @@ export function ProviderReadinessPanel({ canManageProviders }: { canManageProvid
   const [proofValues, setProofValues] = useState<Record<string, string>>({})
   const [proofReviewed, setProofReviewed] = useState<Record<string, boolean>>({})
   const [savedProvider, setSavedProvider] = useState<string | null>(null)
+  const [savedProviderMessage, setSavedProviderMessage] = useState('')
   const [savedProof, setSavedProof] = useState<string | null>(null)
   const [connectionResults, setConnectionResults] = useState<
     Record<string, ProviderConnectionTestResponse>
@@ -876,9 +877,13 @@ export function ProviderReadinessPanel({ canManageProviders }: { canManageProvid
   })
   const credentialMutation = useMutation({
     mutationFn: saveProviderCredentials,
+    onMutate: () => setSavedProvider(null),
     onSuccess: (response) => {
       setSavedProvider(response.provider_id)
-      setProviderValues((current) => ({ ...current, [response.provider_id]: {} }))
+      setSavedProviderMessage(`${response.message} ${response.next_step}`)
+      setProviderValues((current) => ({ ...current, [response.provider_id]: Object.fromEntries(
+        Object.entries(current[response.provider_id] ?? {}).filter(([key]) => !response.redacted_fields.includes(key)),
+      ) }))
       void queryClient.invalidateQueries({ queryKey: ['provider-readiness'] })
       void queryClient.invalidateQueries({ queryKey: ['system-health'] })
     },
@@ -1155,7 +1160,7 @@ export function ProviderReadinessPanel({ canManageProviders }: { canManageProvid
                   </button>
                   {savedProvider === item.id && (
                     <div role="status" className="rounded-md p-2" style={{ background: 'var(--cc-ok-soft)' }}>
-                      Details saved. Run live proof before marking this provider ready.
+                      {savedProviderMessage}
                     </div>
                   )}
                   {CDN_TEST_PROVIDER_IDS.includes(item.id) && (
@@ -2105,7 +2110,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             id="first-setup-public-base-url"
             autoComplete="off"
             label="Resident portal URL"
-            help="Optional for local rehearsal; set before public launch."
+            help="Optional for local rehearsal. Use a complete http:// or https:// URL without a username or password; set before public launch."
             value={form.public_base_url ?? ''}
             onChange={(value) => update('public_base_url', value)}
           />

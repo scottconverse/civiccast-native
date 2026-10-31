@@ -242,7 +242,7 @@ Do this once, on the station computer, when CivicCast is installed and nobody ha
    - **Admin password**: at least 12 characters. A counter shows how many you have typed.
    - **Confirm admin password**: type it again.
    - **Where will you keep the recovery kit?**: a note for your records, such as "printed, stored in the clerk safe". It is not a file path, and nothing is saved there.
-   - **Resident portal URL**: optional for rehearsal. Set it before public launch.
+   - **Resident portal URL**: optional for rehearsal. Use a complete `http://` or `https://` address without credentials. Set it before public launch.
 4. Click **Create first admin**. The button stays grey until the required boxes are valid.
 5. Read the green **Recovery kit ready** panel. It shows your admin username, your admin password and eight emergency recovery codes. It says: "This screen and the saved/printed copy are the only place your admin password and these codes are ever shown together."
 6. Click **Print kit** to open your print dialog, or **Save kit** to download a text file named `civiccast-recovery-kit-<kit id>.txt` to your Downloads folder.

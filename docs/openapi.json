@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, submitted values omitted). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-rc.2"
+    "version": "1.0.0-rc.3"
   },
   "paths": {
     "/health": {
@@ -41559,6 +41559,13 @@
           "embed_html": {
             "type": "string",
             "title": "Embed Html"
+          },
+          "program_timeline": {
+            "items": {
+              "$ref": "#/components/schemas/PublicProgramTransition"
+            },
+            "type": "array",
+            "title": "Program Timeline"
           }
         },
         "type": "object",
@@ -49995,6 +50002,11 @@
           "entry_count": {
             "type": "integer",
             "title": "Entry Count"
+          },
+          "in_progress_count": {
+            "type": "integer",
+            "title": "In Progress Count",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -62793,6 +62805,11 @@
           "play_count": {
             "type": "integer",
             "title": "Play Count"
+          },
+          "in_progress_count": {
+            "type": "integer",
+            "title": "In Progress Count",
+            "default": 0
           },
           "total_airtime_s": {
             "type": "integer",

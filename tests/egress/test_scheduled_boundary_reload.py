@@ -19,6 +19,7 @@ from civiccast.egress.models import (
     EgressSinkSpec,
     EgressSourcePlan,
     EgressSourceSegment,
+    EgressStateRow,
 )
 from civiccast.egress.store import InMemoryEgressStore
 
@@ -39,6 +40,7 @@ class _BoundaryStrategy:
     name = "fake-content-reload"
     supports_live_swap = False
     supports_content_reload = True
+    supports_scheduled_start = True
 
     def __init__(self, work_dir: Path) -> None:
         self.work_dir = work_dir
@@ -68,6 +70,88 @@ class _BoundaryStrategy:
         self.reload_requests.append(request)
         self.reload_ids.append(command_id)
         return True
+
+
+@pytest.mark.parametrize("aborted", [False, True])
+def test_slate_start_holds_future_program_and_failed_arm_keeps_slate(tmp_path, aborted):
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    initial, future = _plan(tmp_path, "Slate"), _plan(tmp_path, "Scheduled program")
+    strategy = _BoundaryStrategy(tmp_path)
+    due = datetime.now(UTC) + timedelta(seconds=120)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "egress",
+        source_plan_provider=lambda _cid: initial,
+        boundary_source_plan_provider=lambda _cid, _at: future,
+        encoder_strategy=strategy,
+    )
+    daemon._start("public")
+    store.write_state(
+        EgressStateRow(channel_id="public", state="FALLBACK_SLATE", updated_at=datetime.now(UTC))
+    )
+    command_id = "auto-slate-start-exact"
+    daemon.record_rollover_plan_end("public", due, command_id=command_id)
+    store.enqueue_command(_reload_command(command_id, datetime.now(UTC)))
+    daemon.process_once("public")
+    request = strategy.reload_requests[0]
+    assert request.source_plan.segments[0].label == "Scheduled program"
+    assert request.switch_at_unix == due.timestamp()
+    assert request.switch_at_end_of_current is True
+    assert store.read_state("public").state == "FALLBACK_SLATE"
+    assert strategy.process.returncode is None and len(strategy.start_requests) == 1
+    if aborted:
+        status = tmp_path / "egress" / "public" / "reload-status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text(
+            json.dumps({"id": strategy.reload_ids[0], "result": "aborted:preroll-timeout"})
+        )
+        daemon.process_once("public")
+        assert strategy.process.returncode is None
+        assert len(strategy.start_requests) == 1
+        assert not daemon._pending_reload_settle
+
+
+def test_scheduled_settlement_allows_future_wait_but_bounds_post_due(tmp_path, monkeypatch):
+    import civiccast.egress.daemon as daemon_module
+
+    clock = {"elapsed": 0.0}
+    wall = datetime.now(UTC).timestamp()
+    monkeypatch.setattr(daemon_module.time, "time", lambda: wall + clock["elapsed"])
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    strategy = _BoundaryStrategy(tmp_path)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "egress",
+        source_plan_provider=lambda _cid: _plan(tmp_path, "Slate"),
+        boundary_source_plan_provider=lambda _cid, _at: _plan(tmp_path, "Future"),
+        encoder_strategy=strategy,
+        monotonic=lambda: clock["elapsed"],
+    )
+    daemon._start("public")
+    store.write_state(
+        EgressStateRow(channel_id="public", state="FALLBACK_SLATE", updated_at=datetime.now(UTC))
+    )
+    due = datetime.fromtimestamp(wall + 1190, UTC)
+    command_id = "auto-slate-start-long-wait"
+    daemon.record_rollover_plan_end("public", due, command_id=command_id)
+    store.enqueue_command(_reload_command(command_id, datetime.now(UTC)))
+    daemon.process_once("public")
+    assert daemon.has_pending_scheduled_start("public")
+    restarts = []
+    monkeypatch.setattr(
+        daemon, "_fall_back_to_restart_reload", lambda *a, **kw: restarts.append(kw)
+    )
+    for elapsed in (961, 1190, 2149):
+        clock["elapsed"] = elapsed
+        daemon._poll_reload_settlement("public")
+        assert daemon.has_pending_scheduled_start("public")
+        assert not restarts
+    clock["elapsed"] = 2150
+    daemon._poll_reload_settlement("public")
+    assert not daemon.has_pending_scheduled_start("public")
+    assert len(restarts) == 1
 
 
 def _config() -> EgressConfig:

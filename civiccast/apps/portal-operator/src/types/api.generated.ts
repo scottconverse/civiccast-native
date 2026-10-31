@@ -1147,6 +1147,7 @@ export interface ChannelEmbedResponse {
   manifest_url: string | null
   portal_url: string
   embed_html: string
+  program_timeline?: Array<PublicProgramTransition>
 }
 
 export interface ChannelLogEntry {
@@ -2467,6 +2468,7 @@ export interface HoursByCategoryRow {
   total_hours: number
   total_seconds: number
   entry_count: number
+  in_progress_count?: number
 }
 
 export interface IdlePage {
@@ -4461,6 +4463,7 @@ export interface ShowsReport {
 export interface ShowsReportRow {
   asset_id: string
   play_count: number
+  in_progress_count?: number
   total_airtime_s: number
   first_aired: string
   last_aired: string

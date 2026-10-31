@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 
-import { BackupSetupPanel, CostForecastPanel, FirstRecordingProgress, R2ConciergeCard, SetupScreen } from './SetupScreen'
+import { BackupSetupPanel, CostForecastPanel, FirstRecordingProgress, ProviderReadinessPanel, R2ConciergeCard, SetupScreen } from './SetupScreen'
 
 afterEach(() => {
   cleanup()
@@ -37,6 +37,54 @@ function inputById(id: string) {
   if (!input) throw new Error(`missing input #${id}`)
   return input
 }
+
+it('keeps mail settings after rejection and distinguishes a saved draft from readiness', async () => {
+  let rejectPort = true
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+    if (String(input).endsWith('/provider-readiness')) {
+      return jsonResponse({ items: [{
+        id: 'subscriber-notifications', label: 'Subscriber notifications', required: false,
+        status: 'needs_input', message: 'Configure mail delivery.', next_step: 'Enter mail settings.',
+        credential_fields: [
+          { id: 'smtp_host', label: 'SMTP host', secret: false, required: false },
+          { id: 'smtp_port', label: 'SMTP port', secret: false, required: false },
+          { id: 'smtp_password', label: 'SMTP password', secret: true, required: false },
+        ],
+      }] })
+    }
+    expect(String(input)).toBe('/api/staff/installer/provider-credentials')
+    expect(init?.method).toBe('POST')
+    if (rejectPort) return jsonResponse({ detail: 'SMTP port must be a whole number from 1 to 65535.' }, 400)
+    return jsonResponse({ provider_id: 'subscriber-notifications', status: 'stored',
+      redacted_fields: ['smtp_password'],
+      message: 'Incomplete mail settings saved as a draft. Secret values will not be shown again.',
+      next_step: 'Enter an SMTP host and sender email before testing subscriber notifications.',
+    })
+  })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  render(<QueryClientProvider client={client}><MemoryRouter><ProviderReadinessPanel canManageProviders /></MemoryRouter></QueryClientProvider>)
+  const host = await screen.findByLabelText('SMTP host') as HTMLInputElement
+  const port = screen.getByLabelText('SMTP port') as HTMLInputElement
+  const password = screen.getByLabelText('SMTP password') as HTMLInputElement
+  fireEvent.change(host, { target: { value: 'mail.example.test' } })
+  fireEvent.change(port, { target: { value: 'not-a-port' } })
+  fireEvent.change(password, { target: { value: 'private-password' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save details' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('SMTP port must be a whole number')
+  expect(host.value).toBe('mail.example.test')
+  expect(port.value).toBe('not-a-port')
+  expect(password.value).toBe('private-password')
+  expect(screen.queryByText(/saved as a draft/)).toBeNull()
+
+  rejectPort = false
+  fireEvent.change(port, { target: { value: '587' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save details' }))
+  expect(await screen.findByText(/Incomplete mail settings saved as a draft/)).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(host.value).toBe('mail.example.test')
+  expect(port.value).toBe('587')
+  expect(password.value).toBe('')
+})
 
 it('reports actual recording progress, refreshes failures and links resident playback', async () => {
   const fetch = vi.spyOn(globalThis, 'fetch')

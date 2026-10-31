@@ -211,6 +211,8 @@ What "Keep this channel on air" really does, from the code we read:
 
 ## Live captions during the meeting
 
+Speech recognition, delivery of embedded captions in the emitted stream, and captions visible in a resident's player are separate observations. A recent passing decode-back proof confirms the tested embedded-stream boundary; missing proof means delivery is **Not verified**, not necessarily that recognition failed. Old or invalid proof times and failed refreshes cannot keep a green **Captions on** claim. Check the resident preview for words belonging to the current program as well as the proof details.
+
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
 Whistle runs live recognition on the CPU and sends first-pass captions without waiting for a second recognition to agree. Primary inference is serialized across the station's channels. If Whistle fails or exceeds its 30-second request deadline, Whisper supplies backup captions while CivicCast automatically tries a fresh Whistle process. A successful recovery returns that channel to Whistle without restarting the station. Whisper also transcribes recordings and can use supported NVIDIA CUDA acceleration. On **System Health**, temporary delay is distinguished from sustained overload so an operator can see when captioning is catching up.

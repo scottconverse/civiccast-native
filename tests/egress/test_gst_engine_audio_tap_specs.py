@@ -22,8 +22,11 @@ from __future__ import annotations
 import importlib
 import sys
 import types
+from unittest.mock import Mock
 
 import pytest
+
+from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter, read_program_boundary
 
 _ENGINE_MODULE_NAME = "civiccast.egress.gst.engine"
 
@@ -121,3 +124,76 @@ def test_audio_tap_caps_unchanged_mono_16k_s16le(engine_module) -> None:
     assert caps_spec.props["caps"] == (
         "audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"
     )
+
+
+def test_internal_occurrence_fences_before_deferred_publication(engine_module, tmp_path) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    engine.audio_tap_writer = writer
+    callbacks = []
+    engine_module.GLib.idle_add = lambda *args: callbacks.append(args)
+    source = {
+        "kind": "program",
+        "asset_id": "a",
+        "schedule_item_id": "row",
+        "schedule_occurrence_start": "2026-10-30T00:00:00Z",
+        "event_id": "first",
+    }
+    try:
+        engine._select_caption_source(source, 100)
+        outgoing = engine._caption_program_token
+        assert engine._caption_fence_pending is True
+        assert not (tmp_path / "program-boundary.json").exists()
+        # A continuation may have a new event marker, but retains its occurrence.
+        engine._select_caption_source({**source, "event_id": "horizon"}, 200)
+        assert len(callbacks) == 1
+        # A repeat is a new owner even with the same asset and schedule row.
+        engine._select_caption_source(
+            {**source, "schedule_occurrence_start": "2026-10-30T00:00:38Z"}, 300
+        )
+        incoming = engine._caption_program_token
+        assert outgoing != incoming
+        writer.write_pcm_s16le(b"\x01\x00" * 10, program_token=outgoing)
+        # An older deferred callback cannot publish/reinstall the superseded owner.
+        first, *args = callbacks[0]
+        assert first(*args) is False
+        assert not (tmp_path / "program-boundary.json").exists()
+        last, *args = callbacks[1]
+        assert last(*args) is False
+        assert read_program_boundary(tmp_path) == (incoming, 0)
+        assert engine._caption_fence_pending is False
+        engine._select_caption_source({"kind": "slate", "event_id": "role-slate"}, 400)
+        assert engine._caption_program_token != incoming
+        assert len(callbacks) == 3
+    finally:
+        assert writer.close() == "drained"
+    assert not list(tmp_path.glob("chunk-*.wav")), "outgoing callback crossed the occurrence fence"
+
+
+def test_reload_fence_is_adopted_once_even_for_same_occurrence(engine_module) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._finish_caption_program = Mock()
+    engine._begin_caption_program(100)
+    token = engine._caption_program_token
+    source = {"kind": "program", "asset_id": "a", "schedule_occurrence_start": "same"}
+    engine._caption_source_identity = ("program", "a", None, "same")
+    engine._select_caption_source(source, 101)
+    assert engine._caption_program_token == token
+    assert engine._caption_adopt_next_source is False
+    engine_module.GLib.idle_add = Mock()
+    engine._select_caption_source({**source, "schedule_occurrence_start": "next"}, 200)
+    assert engine._caption_program_token != token
+    assert engine_module.GLib.idle_add.call_count == 1
+
+
+def test_audio_ownership_pair_publishes_only_after_writer_fence(engine_module) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._caption_audio_state = ("outgoing", 100)
+    observed = []
+    engine.audio_tap_writer = types.SimpleNamespace(
+        fence_program=lambda token: observed.append((token, engine._caption_audio_state)) or 7,
+    )
+    token, first = engine._fence_caption_program(200)
+    assert observed == [(token, ("outgoing", 100))]
+    assert engine._caption_audio_state == (token, 200)
+    assert first == 7

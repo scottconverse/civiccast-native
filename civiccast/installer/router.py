@@ -558,7 +558,7 @@ def provider_credentials(
     except OSError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Provider credentials could not be stored safely: {exc}",
+            detail="Provider credentials could not be stored safely. Check the station credential-store permissions and available disk space.",
         ) from exc
 
 

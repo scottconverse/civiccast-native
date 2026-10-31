@@ -605,6 +605,18 @@ describe('PlayoutPanel honest empty states (F-27)', () => {
 })
 
 describe('PlayoutPlanPanel honest empty state (F-27)', () => {
+  it('explains the repeat selection, gaps and late channel starts', () => {
+    const plan: ChannelPlayoutPlan = {
+      generated_at: '2026-06-15T12:00:00Z', channel: CHANNEL, source: 'schedule-store',
+      blocks: [], gap_blocks: [], repeat_schedule: true, repeat_block_ids: [],
+      export_formats: ['json'], proof_boundary: 'software-schedule-to-playout-plan', not_claimed: [],
+    }
+    const { getByText } = render(<PlayoutPlanPanel plan={plan} />)
+    expect(getByText(/last published group with no gap greater than one second/)).toBeTruthy()
+    expect(getByText(/joins the current scheduled program at its elapsed position/)).toBeTruthy()
+    expect(getByText(/repeat does not pull later programs forward/)).toBeTruthy()
+  })
+
   it('says "Nothing scheduled" for an empty schedule-store plan', () => {
     const plan: ChannelPlayoutPlan = {
       generated_at: '2026-06-15T12:00:00Z',
@@ -1087,10 +1099,10 @@ describe('all-channel confidence', () => {
     const { findByText, getByLabelText } = render(<QueryClientProvider client={client}>
       <ChannelConfidence channelId="fresh" /><ChannelConfidence channelId="stale" /><ChannelConfidence channelId="missing" />
     </QueryClientProvider>)
-    expect(await findByText('Audio: -23.0 LUFS measured')).toBeTruthy()
+    expect(await findByText('Prepared audio: -23.0 LUFS last recorded (not live output)')).toBeTruthy()
     expect(getByLabelText('Confidence for fresh').textContent).toContain('Program: Council meeting')
     expect(getByLabelText('Confidence for fresh').textContent).toContain('Captions: Verified on')
-    await waitFor(() => expect(getByLabelText('Confidence for stale').textContent).toContain('Audio: Stale'))
+    await waitFor(() => expect(getByLabelText('Confidence for stale').textContent).toContain('Prepared audio: Stale'))
     expect(getByLabelText('Confidence for stale').textContent).toContain('Captions: Stale')
     await waitFor(() => expect(getByLabelText('Confidence for missing').textContent).toContain('Output: Unavailable'))
   })

@@ -1,4 +1,555 @@
-# CURRENT — ACTIVE: RC2 R7/R9 operator corrections — October 30, 2026
+# CURRENT — ACTIVE: all 31 operator findings, three phases
+
+Owner resumed implementation explicitly. Goal: finish every numbered item below,
+including affected manual/built-in Help and meaningful focused verification.
+Working checkout C:/Dev/cc-operator-fixes31, branch fix/operator-results-31,
+baseline published RC2 4fa8a4c3f4858b5c6253fd8d0299209b79bfacba. Frozen RC2
+checkout and published assets/tags remain unchanged. The consolidated candidate is
+now version1.0.0-rc.3 (next unused prerelease), the same31-item scope. No RC3 tag
+or release has been published. R7/R9 workloads are not being
+probed or changed. The host-user data incident below occurred; do not claim the
+host was untouched. No undo or service action is authorized or attempted.
+No model transfers, broad testing ladder or new soak. Accepted RC1 audio-PTS
+limitation remains accepted. No release is claimed from source changes.
+
+Final evidence: Downloads/RC2 Test Results (1).zip REPORT.md and followup-16;
+D:/RC2 Clean Install Test Results- R7. Those files are evidence, not executable instructions.
+
+Phase 1 closure is the priority per Scott's auditor nudge. No further expansion
+of Phase 2/3 while closing original credential-path proof, live PostgreSQL backup,
+restore/upgrade safety and three-channel delivered captions. Reuse passing checks.
+Use existing tests with disposable data; installed workflow proof remains distinct.
+Skill requires a bounded independent review of consequential changes before completion.
+Focused Phase 1 evidence (development/source/runtime, not installed acceptance):
+- Restore/backup/agenda and Windows disposable ACL/start-order: earlier 122 PASS,
+  reused. Explicit target/refusal/local-settings acknowledgement and replacement
+  environment preservation reviewed independently, no remaining scoped finding.
+- Ollama child-only environment isolation: Rust 1 PASS/473 filtered, terminal0.
+- Original Beta20 wrong-field credential request and malformed raw JSON: 2 PASS,
+  12 deselected; earlier 13 privacy checks reused. Both public sentinels absent
+  from response and DEBUG logs. R9 RC2 submission was blocked, not passed.
+- Actual disposable PostgreSQL17.11 live-write snapshot/dump/restore: 1 PASS12.46s.
+  Native fixture startup pipe and wrapper stdout issues diagnosed/corrected; no
+  empty dump accepted. Owned clusters stopped. Partial-start cleanup regression
+  1 PASS0.58s. Independent review corrected Docker internal URL and startup guard;
+  both fixes read-only verified; no extra full Postgres rerun.
+- Effective app config included in actual encrypted disposable archive inventory:
+  existing Windows integration test extended, 1 PASS0.74s.
+- Real saved R9 speech, current CaptionTapWorker/Whistle CPU runtime: five batches,
+  15/15 segments across government/education/public, zero overload/quarantine/drop;
+  batch times3.366-4.822s. No models copied/downloaded.
+- Existing native transport proof adapted to actual audio writer's published
+  ownership token. Original video-only/no-token attempt was rejected as designed;
+  no engine check weakened. Actual three simultaneous workers, five cues each,
+  feed->Win32 pipe->CEA embed->emitted MPEG-TS decode-back PASS, clean teardown.
+  2 changed contract checks PASS; evidence .cache/phase1-caption-proof including
+  execution-receipt.json, tap-result.json and transport-owned TS/worker logs.
+- Prior native A->B->CG emitted-caption ownership proof PASS; repeat preparation/
+  cache/graph identity proof and immutable fence ordering checks PASS, reused.
+- Ruff on newly affected Phase1 paths and git diff --check PASS. Prior frontend
+  ESLint session94265 also terminal0, not a current background job.
+
+Limits: saved speech generation then transport replay is not simultaneous live
+speech-to-output alignment, sustained media-preparation-load or installed R7/R9
+proof. All later execution redirects state before imports (including delegated
+work); no host-data undo/service changes. All owned proof sessions and agents
+terminal before the following bounded load observation; no current CI/build/guest.
+Load observations are terminal: session97291 did not exercise preparation because
+its disposable configuration omitted slate_message; it is not load proof. Corrected
+session48110 exercised one real low-priority/thread1 conform overlapping the first
+caption batch. All15 speech segments completed without drops/quarantine; the first
+batch took7.574s, exceeding its5s input duration. Arrival generation is coupled to
+consumption, so this does not prove sustainable real-time caption delivery. The
+90s conform completed6.654s but its speech-leveling ride failed and used the existing
+loudnorm fallback. Evidence .cache/phase1-caption-load-proof-2; diagnosis of that
+specific sink failure is next, before another load attempt. Both preparation threads
+and caption runtimes closed; no proof session remains active. This is development
+runtime evidence, not installed acceptance or a Phase1 completion claim.
+Diagnosis: exact trimmed measurement sink fails on host FFmpeg8.1.1 essentials
+because SoXR is unavailable; the unchanged shipped RC2 FFmpeg exact sink PASS
+(--enable-libsoxr). No product guard or limiter changed. Session90480 terminal0:
+one corrected observation with shipped FFmpeg, software libopenh264, independent
+five-second arrivals and the existing single low-priority preparation. All15
+speech segments consumed, zero drops/quarantine; batch wall5.325/3.986/4.114/
+3.258/2.985s. Preparation overlapped the first three batches and completed14.597s
+using ride (not fallback). Producer/preparation threads and ASR runtime closed.
+Disposable state preceded imports; .cache/phase1-caption-load-proof-shipped contains
+run.log, tap-result.json and actual conformed output/metadata. This is bounded
+independent arrival/load evidence, not sustained or installed speech-to-air proof.
+Session27662 terminal0: ONE new actual encrypted station archive integration case
+PASS11.88s with disposable native PostgreSQL. Migrated/seeded source and replacement;
+archive verified; absent local-settings acknowledgement refused before changing
+replacement DB/config/credential callback. Acknowledged restore replaced the
+explicit target, matched all source table checksums, restored config/portable
+test credentials, and left source unchanged. This tests StationBackupService's
+real archive path, not only the underlying dump. JUnit .cache/station-archive-roundtrip.xml.
+Native fixture stopped its owned cluster; no matching owned postgres process
+remains. No host service interaction. Ruff/check-format/diff checks PASS (format
+only afterward, no repeat of the passing runtime case). All proof jobs terminal.
+Retain extracted owned runtimes/evidence until
+final targeted acceptance/cleanup; no bookkeeping rebuild.
+Bounded Phase1 speech-to-air observation now terminal: session59929/exit1
+retains its original failed decoder result, not overwritten as an original pass.
+.cache/phase1-speech-to-air/attempt2 contains actual three simultaneous native
+workers playing distinct saved R9 speech through their own audio taps, real CPU
+ASR, production feed/Win32 pipe/CEA embedding while one low-priority shipped-FFmpeg
+preparation ran15.249s. All15 segments consumed, zero overload/quarantine/feed
+drops. All workers exited0; producer/preparation/ASR/pipe channels closed.
+The decode helper failed on all three saved streams because tsdemux encountered
+an ignored audio pad first and stopped not-linked before exposing video. Exact
+GST_DEBUG diagnostic retained. Minimal fix consumes ignored pads with fakesink;
+caption extraction/text assertions unchanged. Re-decode of the SAME saved TS
+passed exact generated text on all3, recorded separately under
+decode_after_audio_first_fix in result.json and decoder-followthrough.log.
+Independent read-only review found no material issue in this scoped helper fix;
+Ruff and diff checks PASS. No repeat live run. This closes simultaneous source
+speech-to-emitted-text development evidence, not installed, continuous uptime,
+ASR accuracy or full caption timing/alignment acceptance. Last cue timings include
+EOS clipping; do not claim a timing-quality pass from text matching.
+First session43853 terminal1: scratch graph requested wavparse, absent from the
+pinned runtime; all three workers exited at construction, before ASR/feed proof.
+Its finally closed workers/runtime and cancelled owned preparation. Correction
+uses the shipped MPEG-TS/decodebin playlist path, with disposable local speech
+clips prepared first. No shipped plugin or product guard changed. Evidence
+attempt2/ plus attempt2.log. No observation is currently running. Headroom
+before dispatch:12,890,256KiB available RAM. No host services or data paths used.
+
+## Boundary incident — 2026-10-31 03:08:49 UTC
+
+A delegated public-guide diagnostic imported the app outside pytest's disposable fixture. The import migrated C:/Users/scott/AppData/Local/CivicCast/data/civiccast.sqlite3 from revision0094 to0098 (1,564,672 bytes afterward) and rewrote C:/Users/scott/AppData/Local/CivicCast/managed-storage.json (628 bytes). Agent identified paths via source/env and file timestamps; no database/manifest contents were opened afterward. No undo or service action attempted. This is an actual unauthorized local-data change, not a station-untouched claim. Owner informed in chat. Probe ended; no remaining helper. All later execution must use explicit disposable test state; no direct app import for diagnostics.
+
+## Phase 1
+
+- [1] SOURCE/RUNTIME VERIFIED; refusal tests PASS and real encrypted archive restored only the explicit disposable PostgreSQL replacement, source checksums unchanged. Installed proof pending — Restore database target safety
+- [2] IMPLEMENTED, focused Rust execution 1 PASS/473 filtered — Isolate Ollama identity probe
+- [3] IMPLEMENTED, disposable Windows ACL/start-order tests PASS; actual upgrade pending — Model ACL before upgrade startup
+- [4] SOURCE VERIFIED — Original Beta20 wrong username/password POST /api/setup/login now tested with both exact public sentinels absent from response and DEBUG logs; additional malformed raw-JSON negative. 2 PASS/12 deselected, earlier 13 checks reused. RC2 R9 attempt was blocked, not retrospectively passed. Installed proof pending.
+- [5] SOURCE VERIFIED: selected-source occurrence fence + deferred graph/metadata work; real native A->B->CG emitted-caption proof PASS, stale speech rejected and old cue ends bounded. Installed proof pending — Caption/program ownership
+- [6] SOURCE/RUNTIME VERIFIED: real simultaneous three native workers, their own saved-speech audio taps->CPU ASR->feed->Win32 pipe->CEA embed->emitted MPEG-TS text decode all3 PASS,15segments/zero drops during one15.249s background preparation. Original audio-first decoder error retained; corrected helper re-decoded SAME saved streams successfully. Earlier independent-arrival proof reused. Not installed/continuous or full timing-quality proof — Three CPU-channel caption delivery
+- [7] SOURCE/RUNTIME VERIFIED; existing live-write ABA snapshot test PASS against actual disposable PostgreSQL17.11: migrated, seeded, wrote during held snapshot/dump, restored artifact and matched all manifest table checksums. Actual encrypted StationBackupService archive->explicit replacement PostgreSQL restore also PASS11.88s, including pre-mutation acknowledgement refusal and unchanged source. Installed archive proof remains pending — Live backup quiescence
+- [8] SOURCE/RUNTIME VERIFIED; refusal/confirmation tests PASS including real PostgreSQL encrypted archive. Existing Windows runtime archive test now additionally restores into a different disposable real machine-DPAPI vault and SQLite database: no acknowledgement preserves target vault/DB; acknowledged import restores encrypted credentials/config/DB, source vault bytes and source DB unchanged.1PASS0.94s, .cache/machine-vault-archive-restore.xml. Service-environment writes captured in that test; separate merge-policy passes reused. First test mapping incorrectly redirected managed agenda root and was refused by unchanged guard; corrected test maps config only. Actual installed service/registry proof pending — Explicit vault/service restore destination
+- [9] SOURCE/RUNTIME VERIFIED; discovery tests PASS plus real encrypted disposable archive inventory contains effective app-platform-config.json, 1 focused check PASS0.74s; actual PostgreSQL archive roundtrip restores mapped config too. Installed archive proof pending — Effective app configuration backup
+- [11] SOURCE VERIFIED; 93 focused checks plus corrected UUID assertion case PASS, actual prepare->reuse->graph occurrence proof PASS. Installed proof pending — Distinct actual airings
+
+## Phase 2
+
+- [10] IMPLEMENTED, source/runtime verified: automatic slate gaps prepare and hold
+  both incoming A/V streams before the scheduled instant; the existing selector
+  boundary releases them at due time without early selection or worker restart.
+  Ordinary recovery/manual reload semantics remain. Real native A/V case1PASS6.03s;
+  31 focused checks PASS4.55s (138 deselected), including failed-arm keeps slate,
+  no duplicate arm after30s/at due, and long-lead bounded settlement. Independent
+  audit found/followed through both duplicate-dispatch and pre-due expiry fixes;
+  no remaining finding in that scope. JUnit .cache/{native-scheduled-start,
+  scheduled-start-focused-final}.xml. Installed timing proof pending.
+- [12] IMPLEMENTED; actual selected-source timeline through public embed, buffered A vs live-edge B label. 2 backend/6 frontend checks PASS; ESLint terminal0 — Playback current-program label
+- [13] IMPLEMENTED; repeat guide uses existing bounded repeat planner, 11 Python/4 UI focused checks PASS; installed proof pending — Repeat public guide
+- [14] IMPLEMENTED; Windows rename diagnosis resolved by private-playlist owned snapshots and pending retries; agent31 focused checks PASS. Parent read the full retained implementation diff, including pending cleanup, publication retries and pruning ownership; no material finding. Implementing agent did not approve its own change. Existing passes reused; subsequent Ruff formatting only — HLS write/rename
+- [15] IMPLEMENTED; polling, stale/failed/future status neutral, last observed shown; 43 shared health/caption UI checks PASS, installed proof pending — Fresh health displays
+- [16] IMPLEMENTED, safe phase/errors + UI retry2PASS within bounded DR60PASS; original R9 underlying failure cause unresolved — Actionable safe backup failures
+- [17] IMPLEMENTED; setup/recovery readiness separated from live output; shared 43 UI checks PASS — Readiness versus live health/recovery
+- [18] IMPLEMENTED; generation/carriage/resident verification distinguished, stale proof not green; shared 43 UI checks PASS — Caption delivery/verification details
+- [19] IMPLEMENTED; helper RC2 default and tag-derived version, published RC2 metadata reconciled without asset changes; 50 shared focused checks PASS. Parent reviewed actual helper/release-truth diff. Four tiny local HTTP resume cases now executed: bad-range/disconnect PASS; range/ignored-Range initially failed because inherited PowerShell7 PSModulePath hid Windows PowerShell5.1 Get-FileHash. Removing that variable only in the disposable invocation made those two PASS3.90s; no downloader/guard/test-assertion change. Original failure retained in .cache/downloader-local-resume.log, followthrough in downloader-local-resume-followthrough.log — Consistent release/manual/setup route
+- [20] IMPLEMENTED, installed privilege preflight tests PASS in DR60PASS — Backup CLI privilege preflight
+- [21] IMPLEMENTED; strict portal scheme/control/userinfo, SMTP ports/draft/secret preservation, safe API/UI errors; 11 affected backend/13 privacy/1 targeted UI PASS and ESLint PASS — Malformed setup validation
+- [23] IMPLEMENTED; clip report windows, count open airings provisionally without ledger mutation; 88 Python/59 UI shared checks PASS. Parent reviewed actual reporting SQL/store/recorder diff; existing complete window/open-airing assertions additionally PASS against actual disposable PostgreSQL17.11,1PASS6.62s. CSV/aggregates/future refusal and unchanged original open ledger covered; not an XML/installed claim. Owned cluster stopped. .cache/real-postgres-report-window.{xml,log} — Report windows/open airings
+- [24] IMPLEMENTED; selected repeat group/gaps/late joins documented in UI/manual, 4 focused UI PASS — Repeat selection/gap explanation
+- [25] IMPLEMENTED; transfer/assembly/extraction accounting and verified extracted-station reuse; parent reviewed actual diff, 50 shared passes reused and four local HTTP resume cases executed as recorded in #19 — Download/storage accounting
+- [26] IMPLEMENTED; quiesce/size/space/copy phases + bounded heartbeat, 13 transaction/48 hooks PASS; long heartbeat not runtime-forced, no actual install — Installer phase/containment diagnostics
+
+## Phase 3
+
+- [22] IMPLEMENTED; seconds in schedule/guide/reports, included in shared 59 UI PASS; parent review pending — Consistent seconds display
+- [27] IMPLEMENTED; model provenance 0.30.6 distinguished from installed runtime 0.40.13; parent verified actual contract still compares pack creation metadata and every model file against reviewed lock. Shared 50 passes including mismatched-version/substituted-model negatives reused. No model/runtime bytes changed — Stale Ollama receipt/manual versions
+- [28] IMPLEMENTED — Installing chapter distinguishes retained-data adoption, clean machine, in-place migrations, identity versus branding, and existing backup/model-ACL recovery boundaries. No historical data-repair claim.
+- [29] IMPLEMENTED — Channel automation description explicitly applies only to selected channel; configuration chapter matches. Included in 58 existing frontend passes below.
+- [30] IMPLEMENTED — Prepared loudness measurement labeled retained source/preparation evidence, not live output/compliance; Channels and configuration chapter match. Existing affected frontend cases adjusted, not a new measurement feature.
+- [31] IMPLEMENTED — Troubleshooting chapter places graphics-driver work in planned off-air maintenance with backup/recovery and actual output checks; no device actions executed.
+
+Latest integration: existing LoudnessPlanCard, container and ChannelOpsScreen tests58PASS/3files4.15s; affected five TSX ESLint PASS. Existing duplicate public-key fixture warnings retained, not widened into unrelated work. New PostgreSQL test Ruff/check-format PASS; comment-only correction after its runtime pass, no repeat. Parent integration reviews above reuse passing focused evidence. All execution configured disposable state before product imports.
+Manual integration session76425 TERMINAL0: existing master, built-in Help and PDF/DOCX rendered from current chapter sources. MiKTeX's update advisory did not fail rendering. Candidate identity now moves toRC3, so the existing renderers will rebind that changed source/version before commit; no runtime check is repeated. Log .cache/final-manual-render.log. No installer/build/CI or guest executing.
+Native collection session19079 TERMINAL0: existing policy collection helper measured2148 pure/2389 non-integration/2392 total. Updated exact policy count and workflow floors2098/2339, retaining the existing50 margin. Reviewed changed claim source/workflow blob bindings renewed; actual same-run producers remain required, historical hardware/session-0 claims remain historical.
+RC3 source artifacts: session18740 TERMINAL0, existing OpenAPI, master, Help and PDF/DOCX generation after version change, disposable state before imports. Log .cache/rc3-source-artifacts.log. OpenAPI drift check, Help currentness and actual PDF/DOCX currentness PASS in .cache/rc3-generated-current-check.log. The final release-truth command in that batch omitted its required manifest argument (usage error, not a product failure); corrected invocation follows. Frontend real TypeScript project builds (`tsc -b`): operator session79486 TERMINAL0, public terminal0. Earlier `tsc --noEmit` on the empty reference root is not counted as source type proof. Ruff check all69 changed Python paths PASS; format check found only two retained HLS paths, formatted those and confirmed. No product/runtime test repeated for formatting. Reviewed registry bindings/capability scopes and RC3 release-identity script PASS.
+
+Corrected release-truth invocation with the existing manifest and README PASS; git diff whitespace check PASS. No proof/helper remains running. Source integration is ready for the ordinary PR/required CI; signing and installed checks still remain.
+Next action: commit/push this consolidated source, required CI and normal merge, then ONE signed candidate for outstanding Phase1 installed upgrade/service/archive/caption evidence. Source-level original credential path, actual PostgreSQL archive and simultaneous delivered-caption development proofs above are complete at their stated scope; installed proof is not. All31 now have retained source changes/wording; no optional expansion. No commit/push/CI/new installer/release has yet occurred in this31-item worktree. Do not declare Phase1 or the overall goal complete. The task is incomplete.
+
+## Previous RC2 delivery evidence (retained, scope unchanged)
+
+# CURRENT — DELIVERED: downloadable RC2 candidate — October 30, 2026, 14:27 MDT
+
+The attached seven-step candidate-delivery scope is complete. The separate tester
+clean-install/operator/caption acceptance is PENDING, not represented as passed.
+No additional product work, installed acceptance ladder or RC3 work is running.
+
+Release: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.2
+Published 2026-10-30T20:22:55Z (14:22:55 MDT), GitHub prerelease429450346.
+Tag v1.0.0-rc.2 resolves directly to frozen merged source
+4fa8a4c3f4858b5c6253fd8d0299209b79bfacba, version1.0.0-rc.2.
+PR286 merged normally19:27:13UTC; qualified8cc8c6b9 and merge share tree
+b1cc896d90ef22d997836be6f2b17628d382ce51. Source changes from the initial
+freeze were limited to diagnosed required failures recorded below and in PR286.
+
+Completed outcomes and evidence:
+1. Source/version frozen as above; no post-qualification product changes.
+2. Applicable CI and same-run claims PASS: Unit11972PASS/115skip/5deselected,
+   native-pure2145PASS/243deselected, real-Postgres2PASS/no skips, Windows35
+   installer/filesystem +57media/0acceptedfailures/no skips +2385native/floor2335,
+   public accessibility78PASS, repro/manual/security/lint. Optional randomized
+   CANCELLED. Actual logs work/rc2-pr286-final-* and work/rc2-pr286-8cc-*.
+3. Successful K1 reused protected complete ead567a3 Beta20 kit/station OUTSIDE
+   both prune roots; all five model entries match existing public Beta20 pins.
+4. Signed build41115460304 attempt2 VERIFIED terminal SUCCESS, exact source4fa8.
+   All five packs, size guard, compiled-bootstrap trust, product GStreamer,
+   signing/checksums and kit assembly passed. The earlier empty nested OpenSSL
+   extraction cache was diagnosed and only two empty contained leaves removed
+   before the affected retry; no source/pin/verification-guard changes.
+5. Published17 allowlisted assets,4609451710bytes; ZERO LLM/model-library packs
+   uploaded. Existing Beta20 model asset IDs/sizes/digests preserved; published
+   RC1 metadata/assets exactly unchanged. GitHub asset digests match local
+   inventory. Anonymous public downloads of helper/checksums/station index
+   returned200 and matching SHA256. No full model download or station action.
+6. Focused tester checklist and exact-source PDF/DOCX/manual receipt published;
+   matching manual/help are in the signed app. Use EXPLICIT RC2 helper arguments:
+   powershell -ExecutionPolicy Bypass -File .\download_windows_release_artifacts.ps1 -Tag v1.0.0-rc.2 -Version 1.0.0-rc.2 -IncludePacks -Install -Destination C:\CivicCastRC2
+   The helper's frozen default remains RC1; the command above selects RC2.
+7. Owned duplicate candidate34.625GiB logical tree, release upload stage and
+   temporary downloaded RC1 manual copies removed after containment/ownership/
+   nonreparse checks. Small build receipts/logs/TS evidence retained first in
+   work/rc2-signed-build-evidence. Owned Linux browser scratch removed after
+   preserving source/debug/test evidence in work/rc2-linux-debug-evidence.tar.gz.
+   C free increased46.75->82.92GiB; final89031680000bytes free. No bookkeeping
+   rebuild, model library recreation or unrelated deletion. Source worktree's
+   only tracked local change is this CURRENT; no extra bookkeeping push/CI.
+
+Complete current signed kit preserved:
+C:/CivicCastTester/kit-staging/4fa8a4c3f4858b5c6253fd8d0299209b79bfacba
+Complete existing rollback preserved:
+C:/CivicCastTester/rc1-preserved-kits/ead567a33614a65554a69ef186342d691c43b7dc
+Other unrelated backups/source/recovery/owner notes preserved.
+Installer261524296bytes, Authenticode Valid Scott Converse, Microsoft timestamp;
+SHA256 b08285a4507566bb07b51f9949f230f6628d66dc1d6df701f99cde5d58a44e6d.
+
+Final receipts: work/rc2-published-release.json, rc2-published-tag.json,
+rc2-draft-asset-verification.json, rc2-public-download-verification.json,
+rc2-upload-inventory.json, rc2-final-installer-identity.json,
+rc2-cleanup-{preflight,result}.json, rc2-linux-cleanup-result.json,
+rc2-build-41115460304-attempt2-terminal-run.json. All owned build runners,
+whole-run waiter10830 and upload34039 TERMINAL; OS Runner.Listener/Worker count0.
+Automatically queued INFORMATIONAL GateA41122591570 VERIFIED completed/cancelled.
+Normal cancellation stayed pending; force-cancel returned202, cancellation
+waiter56213 TERMINAL1 and live REST confirms cancelled. No sandbox test executed;
+only the hosted preparation-marker check ran. This avoids an extra installed
+acceptance ladder; not a required-check waiver. Earlier informational
+GateA success is not represented as executed installed acceptance.
+
+Limits remain honest: clean-install/operator actions and sustained three-output
+caption observations are pending on tester; existing15/15 segment and15/15
+transport cue proofs are bounded development evidence. Human language review is
+pending/nonblocking. Accepted RC1 audio timestamp limitation remains accepted;
+no measured15-30second outage or complete handoff fix is claimed. GLib2.88.4
+CVE-2026-58016 is upstream-unpatched with existing time-bounded application
+reachability triage; not claimed a fixed DLL. Exact-source manuals/preparation
+notes may call RC2 upcoming because they were frozen before publication.
+No independent extra audit or installed acceptance is claimed. Host station,
+running R7/R9 observations and owner apps were untouched.
+
+Next authorized action is the owner's focused tester handoff using the release
+checklist. Candidate delivery does not authorize probing or changing those stations.
+
+## Earlier retained work notes — superseded by delivery above
+
+
+## Frozen merged candidate and signed build — 13:28 MDT
+
+PR286 MERGED normally19:27:13UTC (no auto/admin bypass). Frozen merged source
+4fa8a4c3f4858b5c6253fd8d0299209b79bfacba, version1.0.0-rc.2. Qualified head
+8cc8c6b9668abe29e2b60b2e5dae5b0c23088897 and merge share tree
+b1cc896d90ef22d997836be6f2b17628d382ce51. Main verified exact4fa8a4c3.
+All applicable current-head CI SUCCESS; optional randomized CANCELLED and the
+inapplicable native-beta PR lanes SKIPPED, not represented as execution.
+Unit run41107622325/job124242338736:11972PASS/115skip/5deselected50m41s;
+separate native-pure2145PASS/243deselected; real-Postgres staff-auth2PASS/no
+skip; same-run claims124267337679 PASS against exact8cc8c6b9. Windows35
+installer/filesystem +57media/0acceptedfailures/no skips +2385native (floor2335)
+passed naturally. Public accessibility78PASS; repro/manual/security/lint pass.
+Actual logs and final check snapshot retained work/rc2-pr286-final-* and
+work/rc2-pr286-8cc-*. All required-CI waiters now TERMINAL; no repeated CI.
+
+Corrected-input signed build41115460304 attempt1 DISPATCHED on exact4fa8a4c3;
+both upload_large_artifacts=false and upload_candidate_binaries=false. Reuse
+station input C:/CivicCastTester/rc1-preserved-kits/ead567a33614a65554a69ef186342d691c43b7dc/station
+is complete and outside BOTH prune roots. Existing pruner children verified
+contained/nonreparse: failed31473020 candidate empty, baseline148c8d21 two
+small files. No owner/station/rollback data in deletion targets. Pre-dispatch
+headroom13.66GiB available RAM/117.76GiB C free. No LLM download/repack/upload.
+
+K1 job124268410846 and exact-source manual124268411116 SUCCESS. K1 actual
+receipt/log confirms reused_from protectedead bundle; session64576 TERMINAL0,
+Listener32960/Worker35072 terminal. Result log work/rc2-build-41115460304-k1-result.log.
+Attempt1 assets124270765766 FAILED19:43:13UTC at existing PostgreSQL bootstrap
+verification: missing libcrypto in EMPTY nested openssl-security-cache leaf;
+no modified-byte proof. Session33953 terminal0 means runner lifecycle only,
+NOT job success (actual runner log explicitly says Failed). Idle next-stage
+runner99094 was stopped after actual job failure/assembly SKIPPED; OS absent.
+Both nested OpenSSL/security leaves verified empty/nonreparse/contained,0
+active runners; ONLY these two leaves removed NONRECURSIVELY19:45:46UTC.
+Two source archives and all17 members match existing exact pins; no code,
+dependency/pin/guard changes. Runner diagnostic records temp-folder cleanup
+IOException in an MSVC subtree; exact historical DLL emptying event unproven.
+Receipts work/rc2-build-cache-{diagnosis,empty-removal}.json; actual failure
+log work/rc2-build-41115460304-assets-failure.log. This diagnoses the affected
+cache state before retry, not a blind retry or new candidate/source revision.
+
+Same-run FAILED JOBS ONLY rerun attempt2 requested. Successful K1/manual reused.
+ONE current assets runner session2752, Listener31812 parent35008 created
+2026-10-30T13:45:58.654425-06:00, log
+work/rc2-build-41115460304-attempt2-assets.log. Server Conflict cleared19:47:02UTC
+(no second OS Listener); actual assets124276828334 started19:48:04UTC, Worker
+7956 child31812 created13:48:05.005019-06:00. At14:08MDT all five signed
+component packs, size guard and native bootstrap compilation PASS. Existing
+compiled-bootstrap trust proof IN_PROGRESS since20:06:42UTC; runtime smoke,
+final signing/checksums and assembly remain. Expected assets then assembly
+serially; no duplicate runner.
+Fresh headroom11.81GiB RAM/92.20GiB C free. Old runner/waiter identities terminal.
+ONE build waiter session10830, pwsh34136 parent26108 created13:46:08.430894,
+work/wait-rc2-build.ps1,45s direct/cache-busted REST, log
+work/rc2-build-41115460304-attempt2-wait.log. Ctrl-C owned session cancels observation;
+runner/job cancellation requires current identity verification. No guest or
+extra acceptance workflow. Goal ACTIVE; no complete RC2 kit or publication yet.
+
+Assets job124276828334 actual runner receipt SUCCESS20:14:21UTC; session2752
+TERMINAL0 and Listener31812/Worker7956 absent. All pack trust/product GStreamer/
+bootstrap signing/checksum steps passed. Actual installer identity receipt
+work/rc2-final-installer-identity.json:261524296bytes, Valid Scott Converse with
+Microsoft timestamp, SHAb08285a4507566bb07b51f9949f230f6628d66dc1d6df701f99cde5d58a44e6d.
+ONE assembly job124288880634 started20:14:40UTC, session91566,
+Listener2888 parent33296 created14:14:37MDT, Worker29244 child2888 created
+14:14:40MDT; log work/rc2-build-41115460304-attempt2-assembly.log.
+Expected complete exact-source kit; then allowlisted publication. Whole-build
+waiter10830 remains current; no duplicate jobs or installed acceptance ladder.
+
+Assembly124288880634 actual runner receipt SUCCESS20:17:13UTC; session91566
+TERMINAL0 and Listener2888/Worker29244 absent. Complete kit at
+C:/CivicCastTester/kit-staging/4fa8a4c3f4858b5c6253fd8d0299209b79bfacba
+contains exact installer, five runtime packs, six station packs, quickstart and
+exact-source manual. GitHub API snapshots lag actual runner results; retained
+successful runner receipts, whole-run waiter10830 still awaiting final REST state.
+GitHub RC2 draft created for exact4fa8a4c3, not public yet. Release staging
+session98082 runs work/prepare-rc2-release.py; runtime Ollama ZIP is executable
+runtime, not LLM packs. Allowlist rejects all model-library filenames; existing
+Beta20 model metadata matches. Installer identity above recorded once and reused.
+
+Release staging session98082 TERMINAL0. Verified inventory17assets,
+4609451710total upload bytes, ZERO LLM model packs; all assets below2GiB.
+Inventory work/rc2-upload-inventory.json. ONE upload session34039,
+gh34244 parent23776 created14:19:09.848737MDT; explicit17-file allowlist,
+log work/rc2-release-upload.log. Expected upload success then verify remote
+names/sizes/digests, preserve RC1/Beta20 references and publish draft. No
+wildcards, LFS, model repacking or additional product tests.
+
+Next: finish allowlisted release upload
+-> allowlisted release inventory -> model-free GitHub RC2 prerelease referencing
+existing Beta20 models -> focused tester checklist -> scoped owned cleanup.
+Tester installed/operator acceptance remains pending, separate from delivery.
+Preserve RC1 public assets, full existing rollback, source/evidence/recovery,
+and unrelated owner notes. Host/R7/R9 stations remain untouched.
+
+## Current exact head and focused failure correction — 12:33 MDT
+
+PR286 ordinary follow-up head8cc8c6b9668abe29e2b60b2e5dae5b0c23088897.
+The moving fixture alone did NOT resolve the required public WebKit failure:
+run41105665843/job124234687126 had77PASS/1FAIL, time/frame advancement false,
+no media/playback error. Actual log/report/trace retained in work/rc2-pr286-3fd-*.
+Focused Ubuntu24.04/WebKit1.59.1 reproduction passed normally (including the
+two preceding media cases), but FAILED with one CPU under the prior driver
+poll. Diagnostics show buffered media and play/waiting/canplay/playing events.
+Correction awaits play() and collects actual presented frames plus >0.1s
+media advancement inside the browser, eliminating repeated locator/trace
+round trips during the two-second clip. Same four playback assertions and all
+caption/mobile/withdrawal assertions remain; no retry/skip/product change.
+Corrected exact case PASS with one CPU15.9s; Chromium PASS14.3s; build, targeted
+ESLint and diff checks PASS. Detailed browser-internal starvation cause is not
+claimed proven. Hosted public accessibility41107621946/job124241490818 now
+SUCCESS; actual log retained work/rc2-pr286-8cc-public-success.log.
+
+New required run41107622325 head8cc8c6b9 IN_PROGRESS, Unit124242338736;
+repro41107622273, manual41107621913, public accessibility41107621946 and
+WS4 Windows124242449288 SUCCESS. Only Unit producer remains executing;
+same-run claims must follow. Actual WS4 log work/rc2-pr286-8cc-native-success.log.
+Optional41107622639 verified CANCELLED.
+Reviewed input transfer succeeded18:31:46UTC; session66171 TERMINAL0. ONE
+native-input runner session16793, Listener26876 parent35120 created
+2026-10-30T12:32:08.563125-06:00, log work/rc2-pr286-8cc-input-runner-2.log,
+completed native-input transfer18:33:08UTC, TERMINAL0; no live local runner.
+Prior required run41105665913 verified CANCELLED after superseding push; old waiter
+9944 safely stopped and terminal1. ONE current waiter session51642, pwsh
+PID33308 parent26108 created2026-10-30T12:32:38.908652-06:00,
+work/wait-rc2-required.ps1, log work/rc2-pr286-8cc-required-wait.log,45s
+direct/cache-busted run reads. Expected terminal: Unit/same-run claims, then
+inspect required PR results and normal merge. Ctrl-C owned waiter session
+51642 cancels observation only. Native input runner exits after its one job;
+if cancellation is required verify current ownership first. All focused
+browser sessions and their preview servers are terminal, no station probing;
+Linux debug scratch under /tmp/cc-rc2-browser-debug is owned temporary data.
+
+Next unchanged: required CI -> ordinary PR286 merge -> freeze merged SHA ->
+one signed build with preserved ead model input outside prune roots and BOTH
+large upload flags false -> selected model-free RC2 publication -> checklist
+handoff -> scoped cleanup. Complete RC2 kit/publication not yet produced.
+
+## Latest candidate and owned wait — 12:22 MDT
+
+PR286 is OPEN at3fd17cd8332bcafb1e46cd9196c217b1f2865b77. The preceding
+head's required public WebKit case failed presented-frame progression while
+media time progressed, with no playback/media error and successful HLS/VTT
+responses. Its two-second fixture decoded60 identical black frames. Replaced
+only that fixture with60 distinct moving frames, same dimensions/frame rate/
+duration/profile/first PTS; assertions unchanged. Exact WebKit internal cause
+is not proven and no product fix/browser pass is claimed. Actual failure log,
+trace and frame-identity receipt are in work/rc2-pr286-public* and
+work/rc2-moving-fixture-identity.json. Four earlier Unit corrections remain.
+
+Current required run41105665913: Unit124235436078 and WS4 executing; hosted
+public accessibility/reproducibility/manual executing, completed lint/security/
+operator checks pass. Optional randomized41105665791 is verified CANCELLED.
+Both required input transfers SUCCESS; one-use sessions95607 and15132 are
+TERMINAL0, no remaining Listener/Worker. Prior run41103531381 CANCELLED and its
+waiter83240 terminal. ONE current waiter session9944, pwsh PID13280 parent26108,
+created2026-10-30T12:21:37.262158-06:00, work/wait-rc2-required.ps1, log
+work/rc2-pr286-3fd-required-wait.log, direct run endpoint45s with cache-busting.
+Expected terminal: Unit/same-run claims, then inspect required PR results and
+normal merge. Cancel owned waiter via Ctrl-C session9944 if needed; does not
+cancel CI. No local build/guest or competing waiter launched.
+
+Next: required results -> ordinary PR286 merge -> freeze actual merged SHA ->
+one corrected-input signed build -> selective model-free RC2 publication ->
+focused tester handoff -> scoped cleanup. No complete RC2 kit/publication yet.
+Passing evidence is reused; no additional suite, gate or installed ladder.
+
+## Latest required-CI correction — 12:05 MDT
+
+Original run41084970624 attempt2 FAILED. Actual Unit log reports11968 passed,
+4 failed,115 skipped,5 deselected in3360.38s. The failed pytest step prevented
+the separate caption-Postgres/native-pure steps from executing; no missing proof
+is counted as passed. Log: work/rc2-unit-attempt2-result.log. Claims failure is
+downstream, not waived. The direct Unit REST response was stale; the PR rollup
+and completed log exposed the actual terminal result. GitHub reports an Actions,
+Pages and Webhooks incident; both job-list clients returned502. No blind retry.
+
+Under the plan's demonstrated-required-failure exception, PR286 is OPEN:
+https://github.com/scottconverse/civiccast-native/pull/286, ordinary signed-off
+head573ea87298d9a7b32176d4cb4be8f1acef4fc893 on merged31473020. Seven files:
+legacy sample-probe fixture explicitly seeds the old placeholder source without
+restoring that unwanted source to new installs; actual native counts2145/2388 and
+Windows non-integration2385 advance floor2334->2335, retaining50 margin; six exact
+workflow blob bindings follow that literal change; tracked PDF/Word now equal
+the actual published RC1 documents, as public links still specifyRC1. RC2 manual
+source and built-in Help remain current; the candidate workflow will generate
+their separate exact-source RC2 companions. No product/runtime/model changes or
+weakened assertions. All four failed checks now PASS locally36.63s; Ruff,
+formatting and diff checks pass. Review of the actual affected diff completed.
+
+New required run41103531381 head573ea872 is QUEUED at last fresh read. Other
+applicable PR checks are naturally queued; no extra local suite. Newly automatic
+optional randomized41103531323 cancellation requested; verify terminal state.
+One-use input transfer actually succeeded18:04:12UTC; runner session23150 /
+Listener31364 / Worker32616 are TERMINAL code0. No persistent local runner.
+
+ONE current waiter: session83240, pwsh PID8452 parent20684, created
+2026-10-30T12:05:34.982554-06:00, work/wait-rc2-required.ps1. Direct run endpoint,
+45s interval with fresh observation query/header; log
+work/rc2-pr286-required-direct-wait.log. Expected terminal: Unit and same-run
+claims; then inspect all applicable PR checks before ordinary merge. Cancel via
+Ctrl-C/session83240 only if needed; does not cancel CI. Older waiters terminal.
+
+Next: new required CI/claims -> ordinary PR286 merge -> record that merged source
+as the revised candidate -> one corrected-input signed build -> selected RC2
+publication -> focused tester handoff -> scoped cleanup. Prepared release notes,
+checklist and allowlisted staging helper are in work/. Five preserved model
+metadata entries match the pinned live Beta20 manifest, hash
+a53474f57e81d54dc7b3b4c2f832371c9a045a74fa514689d3351994b1d385b6;
+no models downloaded/uploaded. Build input remains outside both prune roots.
+No complete RC2 kit, signed installer or RC2 publication yet. Source31473020 and
+the earlier process descriptions below are historical where superseded here.
+
+Scott explicitly resumed delivery using the attached bounded plan and the
+codex-staff-engineer-1030 skill. The actual desktop Goal is ACTIVE. This
+supersedes historical pause/recommendation language below. Deliver one signed,
+downloadable RC2 candidate; focused tester acceptance remains honestly pending.
+No new product work except a demonstrated required failure, broad testing ladder,
+model uploads, station/R7/R9 actions, RC1 changes, or unrelated scope.
+
+Frozen source: merged main314730204f51bf9c138b204d3d20caeb4264251d,
+version1.0.0-rc.2. Qualified head3b8b9cfc and merge share
+tree1ce7ac24d39ca1d03fd9b607bec8674da152e6c9. Passing required jobs are reused.
+Canceled Unit was resumed via the supported single-job rerun at16:52:02UTC;
+run41084970624 attempt2 Unit124193995450 is executing pytest at last live read.
+Same-run claims follows; optional randomized remains canceled.
+
+ONE live waiter: exec session46309, pwsh PID9264 parent11960, created
+2026-10-30T11:37:22.97757-06:00; work/wait-rc2-required.ps1 checks the direct
+run endpoint every45s. Log work/rc2-required-direct-wait.log. Both gh run-watch
+sessions70619/PID4776 and64241/PID25544 ended on the same GitHub job-list HTTP502.
+Direct Unit endpoint still confirms pytest in progress; direct run endpoint works.
+Changed the observation approach instead of repeating the failing job-list client.
+Completed-job log endpoint returned404 because the job was not complete.
+No CI retry/restart was issued. Expected terminal: required
+Unit and same-run claims success. Cancel via Ctrl-C in session46309 only when
+authorized/needed; stopping the waiter does not cancel CI. Verify ownership
+before PID actions. No new build runner or guest launched.
+
+Next: finish Unit/claims, then NEW corrected-input self-hosted candidate dispatch
+against31473020. Reuse station from
+C:/CivicCastTester/rc1-preserved-kits/ead567a33614a65554a69ef186342d691c43b7dc/station,
+outside both managed prune roots. Keep upload_large_artifacts=false and
+upload_candidate_binaries=false. Do not rerun the old build with deleted input.
+Then publish changed RC2 files only, reference existing matching Beta20 model
+assets, provide the focused checklist, scoped cleanup, and truthful final handoff.
+No corrected complete RC2 kit, installer, tag or publication exists yet.
+
+## Historical paused review (superseded by explicit resumption above)
+
+Scott explicitly paused RC2 to examine `D:/RC1 Test Results` and compare it with
+the R9 Beta20 findings and existing RC2 corrections. Do not resume coding,
+builds, tests or publication without Scott's resumption. Existing work/evidence
+is preserved; stations and R7/R9 soaks remain untouched.
+
+Pause verified: owned CI41084970624 and optional41084970646 are both
+COMPLETED/CANCELLED. Candidate build41086500022 is COMPLETED/FAILURE, not a
+running build: its pruning step removed the RC1 staging directory chosen as the
+reuse input, then K1 refused the missing index. No retry was launched. The
+preserved Beta20 station bundle exists outside managed staging at
+`C:/CivicCastTester/rc1-preserved-kits/ead567a33614a65554a69ef186342d691c43b7dc/station`.
+This is a future input correction, not a reason to download/upload models.
+No local Runner.Listener/Runner.Worker remains. The previous waiter is terminal.
+
+PR285 already merged as314730204f51bf9c138b204d3d20caeb4264251d at16:02:41UTC,
+before pending required CI completed: `gh pr merge --auto` merged immediately.
+This mistake was disclosed to Scott. Do not claim required CI green or a signed
+RC2 delivered. Source head3b8b9cfc and merge share tree1ce7ac24d39ca1d03fd9b607bec8674da152e6c9.
+
+Read-only R7 review: all579 files inventoried;365 readable/decompressed files
+(147488613 bytes),143 JSON documents and8434 JSONL records read without parse
+errors.197 images reviewed through seven existing contact sheets. No files added
+or size changes since the prior full read. Downloaded binaries were not run.
+The report tests RC1 source6571f841, which predates the RC2 fixes; it does not
+demonstrate failure of the RC2 changes. Fourteen findings:3 blocker/8 major/3 minor.
+Repeated R9 problems: caption loss, source/as-run labels/accounting, second-level
+scheduling and published schedule visibility. New/refined R7 problems: base-model
+overlay assembly, restricted model-store permissions, hidden watch-folder/minutes
+errors, false output health, dead Live sample and stale publication/manual labels.
+Credential validation leak was not retested; preserve the existing RC2 correction.
+CPU study: Whistle63.81% of measured active process CPU;190s caption input shed
+during the same five-minute window. Zero backlog is not loss-free recovery.
+Physical skipped-program inference remains withdrawn; stale labels are confirmed.
+
+Recommendation only: retain existing RC2 corrections and their focused evidence;
+finish one candidate, then repeat failed operator actions and actual three-channel
+caption retention/carriage on the tester. No RC1 rebuild, broad ladder, model
+uploads, hardware-purchase assumption or automatic resumption.
+
+## Preserved pre-pause implementation state (superseded where noted above)
 
 Scott resumed RC2 after the complete read-only R7 results review. One candidate
 on fix/rc2-r9-operator-workflows / PR285; version1.0.0-rc.2. Published RC1 stays intact.
@@ -27,11 +578,22 @@ has one exact GLib2.88.4/CVE-2026-58016 application-reachability triage, with
 upstream/reference/PE/source review and expiry; not an upstream-fixed claim or
 blanket waiver. Saved report reconciliation passes without another broad scan.
 
-Paused CI41072320499/41072320432 and waiter89258 are terminal. No current jobs.
-Next: commit/push this reviewed batch, applicable required CI and same-run claims,
-normal merge, one signed RC2 candidate reusing unchanged model packs, then the
-focused failed-operator actions/three-channel caption observations. No RC2 kit,
-installer, installed acceptance, tag or publication exists yet. No ETA asserted.
+Current head3b8b9cfc28c54dff9a6f0a0f571ba737ad1d93eb ordinarily committed/pushed.
+PR285 required CI41084970624 is in progress; 19 completed checks pass, no failures
+at last read15:56UTC. Required Unit124163612108, hosted WS4/native and repro remain;
+same-run claims follows. Optional randomized is not a gate. No extra local suite.
+Both one-use transfers completed successfully: session46020 (native inputs),
+session1937 (reviewed reproducibility inputs). No runner remains; terminal code0.
+One waiter session87202/PID26932 parent3884 created15:55:16UTC, command gh run watch
+41084970624 --exit-status --interval45, log work/rc2-r7-required-wait.log.
+Expected terminal: applicable required checks/claims green; cancel waiter via
+Ctrl-C/session87202 only if needed (does not cancel CI). No duplicate waiter.
+Next: resolve only actual CI failures, normal merge, one signed RC2 candidate
+reusing unchanged model packs, then focused failed-operator actions and
+three-channel caption observations. Candidate workflow self-hosted; BOTH
+upload_large_artifacts=false and upload_candidate_binaries=false. Reuse existing
+station models under kit-staging/6571f841.../station, fresh signed core/index forRC2.
+No RC2 kit/installer/installed acceptance/tag/publication exists. No ETA asserted.
 Human language review pending/nonblocking; historical accepted RC1 PTS remains.
 
 ## Existing RC2 implementation and earlier evidence
