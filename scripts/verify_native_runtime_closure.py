@@ -1972,6 +1972,7 @@ _OBSERVED_PACKAGE_MANIFEST_COMPONENTS = frozenset(
         "microsoft.sechealthui_1000.26100.33438.0_x64__8wekyb3d8bbwe",
         "microsoft.sechealthui_1000.26100.33648.0_x64__8wekyb3d8bbwe",
         "microsoft.windowsfeedbackhub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+        "microsoftcorporationii.windowssubsystemforlinux_3.0.3.0_x64__8wekyb3d8bbwe",
     }
 )
 _OBSERVED_PACKAGE_METADATA_RESOURCE_COMPONENTS = frozenset(
@@ -2204,7 +2205,7 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             "were observed outside the payload. This narrow reported-data exception "
             "covers only observed DesktopAppInstaller package resource indexes (PRI), "
             "the observed WindowsFeedbackHub microsoft.system.package.metadata PRI "
-            "index, observed SecHealthUI/WindowsFeedbackHub root AppxManifest.xml "
+            "index, observed SecHealthUI/WindowsFeedbackHub/WSL root AppxManifest.xml "
             "manifests, and the observed WSL resources.pri and Windows Terminal "
             "resources.pri at their package roots. It "
             "does not apply to executable or unknown-protection mappings, DLLs, or "
