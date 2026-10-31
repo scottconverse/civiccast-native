@@ -8,7 +8,7 @@ has no per-minute software fee.
 
 ## RC3 development
 
-`v1.0.0-rc.3` is an **unpublished candidate** incorporating the 31 R7/R9 operator findings. Source changes cover clean-install and upgrade permissions, credential redaction, backup/restore destinations, delivered captions, scheduling, truthful health/reporting, and matching manual/help. Required CI and isolated installed acceptance remain pending; source checks alone do not establish a working installed candidate. Human language review remains pending and nonblocking.
+`v1.0.0-rc.3` is an **unpublished candidate** incorporating the 31 R7/R9 operator findings. It is not available as a public release. Source changes cover clean-install and upgrade permissions, credential redaction, backup/restore destinations, delivered captions, scheduling, truthful health/reporting, and matching manual/help. Required CI and isolated installed acceptance remain pending; source checks alone do not establish a working installed candidate. Human language review remains pending and nonblocking.
 
 ## Current published package
 
@@ -45,12 +45,12 @@ identities are recorded in
 
 ## Install and run
 
-Download the signed RC1 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools. Use Windows 11 x64 and a Windows administrator account. Allow about **100 GB free** when preparation and installation share a drive (including roughly **22 GB of model downloads**), plus recording space. Keep the complete kit for offline installation:
+Download the signed RC2 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools. Use Windows 11 x64 and a Windows administrator account. Allow about **100 GB free** when preparation and installation share a drive (including roughly **22 GB of model downloads**), plus recording space. Keep the complete kit for offline installation:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-RC1.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-rc.1/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-RC1"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-RC2.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-rc.2/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-RC2"
 ```
 
 Keep the PowerShell window open until it reports **Done**. During silent setup,
@@ -60,14 +60,14 @@ names the step in progress. If a download is interrupted, rerun the same command
 
 See [Install CivicCast on Windows](INSTALL-WINDOWS.md) for first setup, existing installations, offline copies and password recovery. Open **CivicCast Operator Console** after setup finishes.
 
-The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs/USER-MANUAL.docx)) covers operation, installation and architecture. Online manual revisions reach installed copies with a replacement application package. Additional guides: [Admin](docs/admin-guide.md), [Meeting Operator](docs/meeting-operator-guide.md), [Records Clerk](docs/records-clerk-guide.md) and [Tester Start Here](docs/tester/START-HERE.md).
+The [RC3 source manual](docs/USER-MANUAL.md) describes the candidate controls. The published RC2 manual ([PDF](docs/USER-MANUAL.pdf), [Word](docs/USER-MANUAL.docx)) covers that package's operation, installation and architecture. Online manual revisions reach installed copies with a replacement application package. Additional guides: [Admin](docs/admin-guide.md), [Meeting Operator](docs/meeting-operator-guide.md), [Records Clerk](docs/records-clerk-guide.md) and [Tester Start Here](docs/tester/START-HERE.md).
 
 ### Developer — run from source, contribute
 
 Source contributors can inspect the [station operations record](docs/ops/station-operations-goal.md),
 [Sprint 2](docs/ops/sprint2-unattended.md), and
 [Sprint 3](docs/ops/sprint3-output-completion.md) for the implementation scope
-and focused evidence behind Beta 16. Use the current published RC1
+and focused evidence behind Beta 16. Use the current published RC2
 release page for installation.
 
 ```bash
@@ -139,7 +139,7 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-release. The [RC1 verification record](docs/releases/v1.0.0-rc.1-verification.md)
+release. The [RC2 verification record](docs/releases/v1.0.0-rc.2-verification.md)
 describes the current published package boundary and scoped acceptance, and the Beta 11
 host report is separately scoped historical runtime evidence.
 

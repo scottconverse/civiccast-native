@@ -69,8 +69,10 @@ def _restore_database_target(explicit: str | None) -> str:
 def _database_target_label(value: str) -> str:
     from sqlalchemy.engine import make_url
 
+    from civiccast.db.url import normalize_database_url
+
     try:
-        url = make_url(value)
+        url = make_url(normalize_database_url(value))
         if url.get_backend_name() not in {"postgresql", "sqlite"} or not url.database:
             raise ValueError("unsupported target")
         # Neither authentication nor arbitrary query parameters belong in a preview.

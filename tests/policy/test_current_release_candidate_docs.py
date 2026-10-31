@@ -115,7 +115,9 @@ def test_current_release_identity_is_consistent_across_runtime_and_installer() -
         encoding="utf-8"
     )
     assert f'$Tag = "{PUBLISHED_RELEASE_TAG}"' in downloader
-    assert f'$Version = "{PUBLISHED_RELEASE_TAG.removeprefix("v")}"' in downloader
+    assert '$Version = ""' in downloader
+    assert "$Version = $Tag -replace '^v', ''" in downloader
+    assert '$Tag -ne "v$Version"' in downloader
 
 
 def test_retired_wsl_install_docs_are_explicitly_historical() -> None:

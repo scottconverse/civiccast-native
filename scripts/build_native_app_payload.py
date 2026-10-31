@@ -135,6 +135,9 @@ DEFAULT_WHISTLE_ENGINE_CACHE = ROOT / "build" / "native-whistle-cache"
 DEFAULT_INTERPRETER_ZIP = (
     ROOT / "build" / "native-app-cache" / "python-3.12.16-civiccast-embed-amd64.zip"
 )
+HTTP_CLIENT_BACKPORT_SOURCE = (
+    ROOT / "scripts" / "resources" / "cpython-3.12.16-http-client-security1.py.txt"
+)
 
 REQUIRED_RUNTIME_IMPORTS = frozenset(
     {
@@ -709,6 +712,9 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
     embeddable's isolated, site-disabled layout into one that imports the
     packages the next step installs -- without it the interpreter runs but
     cannot find `civiccast`.
+
+    After original provenance verification, replace the stdlib HTTP client with
+    the pinned security backport and enforce the independent installed ZIP pin.
     """
     if not zip_path.is_file():
         _fail(
@@ -726,13 +732,27 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
     if size != INTERPRETER_ZIP_BYTES:
         _fail(f"interpreter zip size mismatch: expected {INTERPRETER_ZIP_BYTES}, got {size}")
 
-    from civiccast.native.python_runtime import verify_runtime_files
+    from civiccast.native.python_runtime import (
+        STDLIB_PATH,
+        patch_stdlib_http_client,
+        verify_runtime_files,
+    )
 
     with zipfile.ZipFile(zip_path) as archive:
         problems = verify_runtime_files(archive.read)
         if problems:
             _fail("interpreter provenance: " + "; ".join(problems))
+        # Validate the reviewed backport before writing any extracted files.
+        # Keep the original provenance and PSF LICENSE.txt unchanged; installed
+        # verification independently pins the sole approved stdlib replacement.
+        try:
+            patched_stdlib = patch_stdlib_http_client(
+                archive.read(STDLIB_PATH), HTTP_CLIENT_BACKPORT_SOURCE.read_bytes()
+            )
+        except (OSError, ValueError, zipfile.BadZipFile) as exc:
+            _fail(f"interpreter HTTP client security backport: {exc}")
         archive.extractall(out)
+    (out / STDLIB_PATH).write_bytes(patched_stdlib)
 
     # Make the site-packages we are about to populate importable. The default
     # embeddable `._pth` lists `python312.zip` and `.` and leaves `import site`
@@ -753,6 +773,9 @@ def extract_verified_interpreter(zip_path: Path, out: Path) -> None:
         lines.append("import site")
     pth.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
     (out / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
+    problems = verify_runtime_files(lambda name: (out / name).read_bytes(), installed=True)
+    if problems:
+        _fail("installed interpreter provenance: " + "; ".join(problems))
 
 
 # ---------------------------------------------------------------------------
