@@ -59,7 +59,7 @@ dependencies = [
   # (civiccast/agenda/pdf_import.py, product-hole fix). Pure-Python, ships
   # inline types (py.typed), no mypy override needed. Raised 2026-10-07 to
   # clear PDF parsing/text-extraction resource exhaustion in uploaded agendas.
-  "pypdf>=6.21.2",
+  "pypdf>=6.21.4",
   # Independent local PDF text/render fallback for retained agenda documents.
   "pypdfium2>=4.30.0",
   "filelock>=3.16.0",

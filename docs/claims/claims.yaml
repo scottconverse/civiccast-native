@@ -1118,7 +1118,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 2e3142a838492c9fa9dbe173d80024ff591f7f3c
+          blob: 172c52fa65560727dd648c3dec7de0cc100ef528
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1131,7 +1131,7 @@ entries:
           # This source-tripwire rebind is not installed or release proof.
           blob: b5115d53a2767f38b488831aacdbc16dbcb10d6a
         - path: civiccast/egress/gst/audio_tap.py
-          blob: 19dd3049257130aff222fade2f9838d4f1b7e4e6
+          blob: baf21b4672a5345f6dd14e5a487f20d4f6c7b3ef
       test:
         path: tests/egress/test_gst_engine_wsl.py
         blob: 6dcc17000e49f28131e6358bccf3e079f5cd708c
@@ -2049,7 +2049,7 @@ entries:
         # sprint3-output/evidence/{outputs,eos}.md. Historical acceptance stays
         # historical; these bindings do not certify a new installed package.
         - path: civiccast/egress/gst/engine.py
-          blob: 2e3142a838492c9fa9dbe173d80024ff591f7f3c
+          blob: 172c52fa65560727dd648c3dec7de0cc100ef528
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2062,7 +2062,7 @@ entries:
           # This source-tripwire rebind is not boot/pre-login acceptance.
           blob: b5115d53a2767f38b488831aacdbc16dbcb10d6a
         - path: civiccast/egress/gst/audio_tap.py
-          blob: 19dd3049257130aff222fade2f9838d4f1b7e4e6
+          blob: baf21b4672a5345f6dd14e5a487f20d4f6c7b3ef
       test:
         path: tests/egress/test_gst_engine_wsl.py
         blob: 6dcc17000e49f28131e6358bccf3e079f5cd708c

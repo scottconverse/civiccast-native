@@ -133,7 +133,7 @@ def read_segment_start_seconds(path: Path) -> float | None:
             if name == b"ccTS":
                 if size != 8:
                     raise ValueError("invalid caption WAV timestamp")
-                return struct.unpack("<Q", source.read(8))[0] / 1_000_000_000
+                return float(struct.unpack("<Q", source.read(8))[0]) / 1_000_000_000
             source.seek(size + size % 2, 1)
     return None
 

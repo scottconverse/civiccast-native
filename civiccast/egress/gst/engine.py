@@ -1770,7 +1770,7 @@ class GstPlayoutEngine:
         # Publish a coherent pair only AFTER the writer's fence. A callback
         # holding the old pair is refused by the writer; one seeing the new pair
         # cannot accidentally combine the incoming token with an outgoing cutoff.
-        self._caption_audio_state = (token, cutoff_ns)
+        self._caption_audio_state: tuple[str, int | None] = (token, cutoff_ns)
         self._caption_program_token = token
         self._caption_audio_cutoff_ns = cutoff_ns
         return token, first_segment
@@ -2818,7 +2818,10 @@ class GstPlayoutEngine:
                     if structure is not None and structure.get_name() == "civiccast-source":
                         current = json.loads(structure.get_string("identity"))
                 elif info.type & Gst.PadProbeType.BUFFER:
-                    active = self.selector.get_property("active-pad")
+                    selector = self.selector
+                    if selector is None:
+                        return Gst.PadProbeReturn.OK
+                    active = selector.get_property("active-pad")
                     index = self.selector_sink_pads.index(active)
                     source = current
                     if index != 0 or not current:
