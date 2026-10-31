@@ -1,4 +1,4 @@
-# CURRENT â€” ACTIVE: all 31 operator findings, three phases
+# CURRENT — ACTIVE: all 31 operator findings, three phases
 
 Current follow-up closes the diagnosed WS4 selector/startup regressions: selector-src BUFFER no longer reads active-pad while retirement releases request pads; physical source legs carry serialized sticky identity and the first selected source adopts the existing startup caption token. Parent reviewed full diff; bounded independent read-only review found no material issue. Actual affected batch: 10 regression checks plus 6/7 previously failed native cases PASS; 16 PASS/1 FAIL176.37s, original result retained .cache/ws4-specific-followthrough.{xml,log}, terminal exit1. Remaining rollover case had a different incoming filesrc18 flow error before preroll at cycle4, after three successful commits. ONE diagnostic execution of only that unchanged case with GST_DEBUG=2 PASS81.43s, terminal exit0, .cache/ws4-rollover-diagnosis.{xml,log}; no cause/fix claimed for that intermittent incoming error and no further local replay. Ruff/format/diff and affected Mypy(engine+gst/audio_tap) PASS. First Mypy invocation named nonexistent egress/audio_tap.py and executed no checking; corrected path succeeded. Claims bind both engine references to exact new blob; producer requirements/assertions unchanged. Next ordinary source push requires natural new-head CI and same-run claims; no waiver, no merge/build/guest yet.
 
@@ -123,22 +123,22 @@ clips prepared first. No shipped plugin or product guard changed. Evidence
 attempt2/ plus attempt2.log. No observation is currently running. Headroom
 before dispatch:12,890,256KiB available RAM. No host services or data paths used.
 
-## Boundary incident â€” 2026-10-31 03:08:49 UTC
+## Boundary incident — 2026-10-31 03:08:49 UTC
 
 A delegated public-guide diagnostic imported the app outside pytest's disposable fixture. The import migrated C:/Users/scott/AppData/Local/CivicCast/data/civiccast.sqlite3 from revision0094 to0098 (1,564,672 bytes afterward) and rewrote C:/Users/scott/AppData/Local/CivicCast/managed-storage.json (628 bytes). Agent identified paths via source/env and file timestamps; no database/manifest contents were opened afterward. No undo or service action attempted. This is an actual unauthorized local-data change, not a station-untouched claim. Owner informed in chat. Probe ended; no remaining helper. All later execution must use explicit disposable test state; no direct app import for diagnostics.
 
 ## Phase 1
 
-- [1] SOURCE/RUNTIME VERIFIED; refusal tests PASS and real encrypted archive restored only the explicit disposable PostgreSQL replacement, source checksums unchanged. Installed proof pending â€” Restore database target safety
-- [2] IMPLEMENTED, focused Rust execution 1 PASS/473 filtered â€” Isolate Ollama identity probe
-- [3] IMPLEMENTED, disposable Windows ACL/start-order tests PASS; actual upgrade pending â€” Model ACL before upgrade startup
-- [4] SOURCE VERIFIED â€” Original Beta20 wrong username/password POST /api/setup/login now tested with both exact public sentinels absent from response and DEBUG logs; additional malformed raw-JSON negative. 2 PASS/12 deselected, earlier 13 checks reused. RC2 R9 attempt was blocked, not retrospectively passed. Installed proof pending.
-- [5] SOURCE VERIFIED: selected-source occurrence fence + deferred graph/metadata work; real native A->B->CG emitted-caption proof PASS, stale speech rejected and old cue ends bounded. Installed proof pending â€” Caption/program ownership
-- [6] SOURCE/RUNTIME VERIFIED: real simultaneous three native workers, their own saved-speech audio taps->CPU ASR->feed->Win32 pipe->CEA embed->emitted MPEG-TS text decode all3 PASS,15segments/zero drops during one15.249s background preparation. Original audio-first decoder error retained; corrected helper re-decoded SAME saved streams successfully. Earlier independent-arrival proof reused. Not installed/continuous or full timing-quality proof â€” Three CPU-channel caption delivery
-- [7] SOURCE/RUNTIME VERIFIED; existing live-write ABA snapshot test PASS against actual disposable PostgreSQL17.11: migrated, seeded, wrote during held snapshot/dump, restored artifact and matched all manifest table checksums. Actual encrypted StationBackupService archive->explicit replacement PostgreSQL restore also PASS11.88s, including pre-mutation acknowledgement refusal and unchanged source. Installed archive proof remains pending â€” Live backup quiescence
-- [8] SOURCE/RUNTIME VERIFIED; refusal/confirmation tests PASS including real PostgreSQL encrypted archive. Existing Windows runtime archive test now additionally restores into a different disposable real machine-DPAPI vault and SQLite database: no acknowledgement preserves target vault/DB; acknowledged import restores encrypted credentials/config/DB, source vault bytes and source DB unchanged.1PASS0.94s, .cache/machine-vault-archive-restore.xml. Service-environment writes captured in that test; separate merge-policy passes reused. First test mapping incorrectly redirected managed agenda root and was refused by unchanged guard; corrected test maps config only. Actual installed service/registry proof pending â€” Explicit vault/service restore destination
-- [9] SOURCE/RUNTIME VERIFIED; discovery tests PASS plus real encrypted disposable archive inventory contains effective app-platform-config.json, 1 focused check PASS0.74s; actual PostgreSQL archive roundtrip restores mapped config too. Installed archive proof pending â€” Effective app configuration backup
-- [11] SOURCE VERIFIED; 93 focused checks plus corrected UUID assertion case PASS, actual prepare->reuse->graph occurrence proof PASS. Installed proof pending â€” Distinct actual airings
+- [1] SOURCE/RUNTIME VERIFIED; refusal tests PASS and real encrypted archive restored only the explicit disposable PostgreSQL replacement, source checksums unchanged. Installed proof pending — Restore database target safety
+- [2] IMPLEMENTED, focused Rust execution 1 PASS/473 filtered — Isolate Ollama identity probe
+- [3] IMPLEMENTED, disposable Windows ACL/start-order tests PASS; actual upgrade pending — Model ACL before upgrade startup
+- [4] SOURCE VERIFIED — Original Beta20 wrong username/password POST /api/setup/login now tested with both exact public sentinels absent from response and DEBUG logs; additional malformed raw-JSON negative. 2 PASS/12 deselected, earlier 13 checks reused. RC2 R9 attempt was blocked, not retrospectively passed. Installed proof pending.
+- [5] SOURCE VERIFIED: selected-source occurrence fence + deferred graph/metadata work; real native A->B->CG emitted-caption proof PASS, stale speech rejected and old cue ends bounded. Installed proof pending — Caption/program ownership
+- [6] SOURCE/RUNTIME VERIFIED: real simultaneous three native workers, their own saved-speech audio taps->CPU ASR->feed->Win32 pipe->CEA embed->emitted MPEG-TS text decode all3 PASS,15segments/zero drops during one15.249s background preparation. Original audio-first decoder error retained; corrected helper re-decoded SAME saved streams successfully. Earlier independent-arrival proof reused. Not installed/continuous or full timing-quality proof — Three CPU-channel caption delivery
+- [7] SOURCE/RUNTIME VERIFIED; existing live-write ABA snapshot test PASS against actual disposable PostgreSQL17.11: migrated, seeded, wrote during held snapshot/dump, restored artifact and matched all manifest table checksums. Actual encrypted StationBackupService archive->explicit replacement PostgreSQL restore also PASS11.88s, including pre-mutation acknowledgement refusal and unchanged source. Installed archive proof remains pending — Live backup quiescence
+- [8] SOURCE/RUNTIME VERIFIED; refusal/confirmation tests PASS including real PostgreSQL encrypted archive. Existing Windows runtime archive test now additionally restores into a different disposable real machine-DPAPI vault and SQLite database: no acknowledgement preserves target vault/DB; acknowledged import restores encrypted credentials/config/DB, source vault bytes and source DB unchanged.1PASS0.94s, .cache/machine-vault-archive-restore.xml. Service-environment writes captured in that test; separate merge-policy passes reused. First test mapping incorrectly redirected managed agenda root and was refused by unchanged guard; corrected test maps config only. Actual installed service/registry proof pending — Explicit vault/service restore destination
+- [9] SOURCE/RUNTIME VERIFIED; discovery tests PASS plus real encrypted disposable archive inventory contains effective app-platform-config.json, 1 focused check PASS0.74s; actual PostgreSQL archive roundtrip restores mapped config too. Installed archive proof pending — Effective app configuration backup
+- [11] SOURCE VERIFIED; 93 focused checks plus corrected UUID assertion case PASS, actual prepare->reuse->graph occurrence proof PASS. Installed proof pending — Distinct actual airings
 
 ## Phase 2
 
@@ -151,29 +151,29 @@ A delegated public-guide diagnostic imported the app outside pytest's disposable
   audit found/followed through both duplicate-dispatch and pre-due expiry fixes;
   no remaining finding in that scope. JUnit .cache/{native-scheduled-start,
   scheduled-start-focused-final}.xml. Installed timing proof pending.
-- [12] IMPLEMENTED; actual selected-source timeline through public embed, buffered A vs live-edge B label. 2 backend/6 frontend checks PASS; ESLint terminal0 â€” Playback current-program label
-- [13] IMPLEMENTED; repeat guide uses existing bounded repeat planner, 11 Python/4 UI focused checks PASS; installed proof pending â€” Repeat public guide
-- [14] IMPLEMENTED; Windows rename diagnosis resolved by private-playlist owned snapshots and pending retries; agent31 focused checks PASS. Parent read the full retained implementation diff, including pending cleanup, publication retries and pruning ownership; no material finding. Implementing agent did not approve its own change. Existing passes reused; subsequent Ruff formatting only â€” HLS write/rename
-- [15] IMPLEMENTED; polling, stale/failed/future status neutral, last observed shown; 43 shared health/caption UI checks PASS, installed proof pending â€” Fresh health displays
-- [16] IMPLEMENTED, safe phase/errors + UI retry2PASS within bounded DR60PASS; original R9 underlying failure cause unresolved â€” Actionable safe backup failures
-- [17] IMPLEMENTED; setup/recovery readiness separated from live output; shared 43 UI checks PASS â€” Readiness versus live health/recovery
-- [18] IMPLEMENTED; generation/carriage/resident verification distinguished, stale proof not green; shared 43 UI checks PASS â€” Caption delivery/verification details
-- [19] IMPLEMENTED; helper RC2 default and tag-derived version, published RC2 metadata reconciled without asset changes; 50 shared focused checks PASS. Parent reviewed actual helper/release-truth diff. Four tiny local HTTP resume cases now executed: bad-range/disconnect PASS; range/ignored-Range initially failed because inherited PowerShell7 PSModulePath hid Windows PowerShell5.1 Get-FileHash. Removing that variable only in the disposable invocation made those two PASS3.90s; no downloader/guard/test-assertion change. Original failure retained in .cache/downloader-local-resume.log, followthrough in downloader-local-resume-followthrough.log â€” Consistent release/manual/setup route
-- [20] IMPLEMENTED, installed privilege preflight tests PASS in DR60PASS â€” Backup CLI privilege preflight
-- [21] IMPLEMENTED; strict portal scheme/control/userinfo, SMTP ports/draft/secret preservation, safe API/UI errors; 11 affected backend/13 privacy/1 targeted UI PASS and ESLint PASS â€” Malformed setup validation
-- [23] IMPLEMENTED; clip report windows, count open airings provisionally without ledger mutation; 88 Python/59 UI shared checks PASS. Parent reviewed actual reporting SQL/store/recorder diff; existing complete window/open-airing assertions additionally PASS against actual disposable PostgreSQL17.11,1PASS6.62s. CSV/aggregates/future refusal and unchanged original open ledger covered; not an XML/installed claim. Owned cluster stopped. .cache/real-postgres-report-window.{xml,log} â€” Report windows/open airings
-- [24] IMPLEMENTED; selected repeat group/gaps/late joins documented in UI/manual, 4 focused UI PASS â€” Repeat selection/gap explanation
-- [25] IMPLEMENTED; transfer/assembly/extraction accounting and verified extracted-station reuse; parent reviewed actual diff, 50 shared passes reused and four local HTTP resume cases executed as recorded in #19 â€” Download/storage accounting
-- [26] IMPLEMENTED; quiesce/size/space/copy phases + bounded heartbeat, 13 transaction/48 hooks PASS; long heartbeat not runtime-forced, no actual install â€” Installer phase/containment diagnostics
+- [12] IMPLEMENTED; actual selected-source timeline through public embed, buffered A vs live-edge B label. 2 backend/6 frontend checks PASS; ESLint terminal0 — Playback current-program label
+- [13] IMPLEMENTED; repeat guide uses existing bounded repeat planner, 11 Python/4 UI focused checks PASS; installed proof pending — Repeat public guide
+- [14] IMPLEMENTED; Windows rename diagnosis resolved by private-playlist owned snapshots and pending retries; agent31 focused checks PASS. Parent read the full retained implementation diff, including pending cleanup, publication retries and pruning ownership; no material finding. Implementing agent did not approve its own change. Existing passes reused; subsequent Ruff formatting only — HLS write/rename
+- [15] IMPLEMENTED; polling, stale/failed/future status neutral, last observed shown; 43 shared health/caption UI checks PASS, installed proof pending — Fresh health displays
+- [16] IMPLEMENTED, safe phase/errors + UI retry2PASS within bounded DR60PASS; original R9 underlying failure cause unresolved — Actionable safe backup failures
+- [17] IMPLEMENTED; setup/recovery readiness separated from live output; shared 43 UI checks PASS — Readiness versus live health/recovery
+- [18] IMPLEMENTED; generation/carriage/resident verification distinguished, stale proof not green; shared 43 UI checks PASS — Caption delivery/verification details
+- [19] IMPLEMENTED; helper RC2 default and tag-derived version, published RC2 metadata reconciled without asset changes; 50 shared focused checks PASS. Parent reviewed actual helper/release-truth diff. Four tiny local HTTP resume cases now executed: bad-range/disconnect PASS; range/ignored-Range initially failed because inherited PowerShell7 PSModulePath hid Windows PowerShell5.1 Get-FileHash. Removing that variable only in the disposable invocation made those two PASS3.90s; no downloader/guard/test-assertion change. Original failure retained in .cache/downloader-local-resume.log, followthrough in downloader-local-resume-followthrough.log — Consistent release/manual/setup route
+- [20] IMPLEMENTED, installed privilege preflight tests PASS in DR60PASS — Backup CLI privilege preflight
+- [21] IMPLEMENTED; strict portal scheme/control/userinfo, SMTP ports/draft/secret preservation, safe API/UI errors; 11 affected backend/13 privacy/1 targeted UI PASS and ESLint PASS — Malformed setup validation
+- [23] IMPLEMENTED; clip report windows, count open airings provisionally without ledger mutation; 88 Python/59 UI shared checks PASS. Parent reviewed actual reporting SQL/store/recorder diff; existing complete window/open-airing assertions additionally PASS against actual disposable PostgreSQL17.11,1PASS6.62s. CSV/aggregates/future refusal and unchanged original open ledger covered; not an XML/installed claim. Owned cluster stopped. .cache/real-postgres-report-window.{xml,log} — Report windows/open airings
+- [24] IMPLEMENTED; selected repeat group/gaps/late joins documented in UI/manual, 4 focused UI PASS — Repeat selection/gap explanation
+- [25] IMPLEMENTED; transfer/assembly/extraction accounting and verified extracted-station reuse; parent reviewed actual diff, 50 shared passes reused and four local HTTP resume cases executed as recorded in #19 — Download/storage accounting
+- [26] IMPLEMENTED; quiesce/size/space/copy phases + bounded heartbeat, 13 transaction/48 hooks PASS; long heartbeat not runtime-forced, no actual install — Installer phase/containment diagnostics
 
 ## Phase 3
 
-- [22] IMPLEMENTED; seconds in schedule/guide/reports, included in shared 59 UI PASS; parent read schedule range/guide recurrence/report formatting and retained duration handling, no scoped finding â€” Consistent seconds display
-- [27] IMPLEMENTED; model provenance 0.30.6 distinguished from installed runtime 0.40.13; parent verified actual contract still compares pack creation metadata and every model file against reviewed lock. Shared 50 passes including mismatched-version/substituted-model negatives reused. No model/runtime bytes changed â€” Stale Ollama receipt/manual versions
-- [28] IMPLEMENTED â€” Installing chapter distinguishes retained-data adoption, clean machine, in-place migrations, identity versus branding, and existing backup/model-ACL recovery boundaries. No historical data-repair claim.
-- [29] IMPLEMENTED â€” Channel automation description explicitly applies only to selected channel; configuration chapter matches. Included in 58 existing frontend passes below.
-- [30] IMPLEMENTED â€” Prepared loudness measurement labeled retained source/preparation evidence, not live output/compliance; Channels and configuration chapter match. Existing affected frontend cases adjusted, not a new measurement feature.
-- [31] IMPLEMENTED â€” Troubleshooting chapter places graphics-driver work in planned off-air maintenance with backup/recovery and actual output checks; no device actions executed.
+- [22] IMPLEMENTED; seconds in schedule/guide/reports, included in shared 59 UI PASS; parent read schedule range/guide recurrence/report formatting and retained duration handling, no scoped finding — Consistent seconds display
+- [27] IMPLEMENTED; model provenance 0.30.6 distinguished from installed runtime 0.40.13; parent verified actual contract still compares pack creation metadata and every model file against reviewed lock. Shared 50 passes including mismatched-version/substituted-model negatives reused. No model/runtime bytes changed — Stale Ollama receipt/manual versions
+- [28] IMPLEMENTED — Installing chapter distinguishes retained-data adoption, clean machine, in-place migrations, identity versus branding, and existing backup/model-ACL recovery boundaries. No historical data-repair claim.
+- [29] IMPLEMENTED — Channel automation description explicitly applies only to selected channel; configuration chapter matches. Included in 58 existing frontend passes below.
+- [30] IMPLEMENTED — Prepared loudness measurement labeled retained source/preparation evidence, not live output/compliance; Channels and configuration chapter match. Existing affected frontend cases adjusted, not a new measurement feature.
+- [31] IMPLEMENTED — Troubleshooting chapter places graphics-driver work in planned off-air maintenance with backup/recovery and actual output checks; no device actions executed.
 
 Latest integration: existing LoudnessPlanCard, container and ChannelOpsScreen tests58PASS/3files4.15s; affected five TSX ESLint PASS. Existing duplicate public-key fixture warnings retained, not widened into unrelated work. New PostgreSQL test Ruff/check-format PASS; comment-only correction after its runtime pass, no repeat. Parent integration reviews above reuse passing focused evidence. All execution configured disposable state before product imports.
 Manual integration session76425 TERMINAL0: existing master, built-in Help and PDF/DOCX rendered from current chapter sources. MiKTeX's update advisory did not fail rendering. Candidate identity now moves toRC3, so the existing renderers will rebind that changed source/version before commit; no runtime check is repeated. Log .cache/final-manual-render.log. No installer/build/CI or guest executing.
@@ -190,7 +190,7 @@ Next action: terminal required CI/same-run claims and normal merge, then ONE sig
 
 ## Previous RC2 delivery evidence (retained, scope unchanged)
 
-# CURRENT â€” DELIVERED: downloadable RC2 candidate â€” October 30, 2026, 14:27 MDT
+# CURRENT — DELIVERED: downloadable RC2 candidate — October 30, 2026, 14:27 MDT
 
 The attached seven-step candidate-delivery scope is complete. The separate tester
 clean-install/operator/caption acceptance is PENDING, not represented as passed.
@@ -271,10 +271,10 @@ running R7/R9 observations and owner apps were untouched.
 Next authorized action is the owner's focused tester handoff using the release
 checklist. Candidate delivery does not authorize probing or changing those stations.
 
-## Earlier retained work notes â€” superseded by delivery above
+## Earlier retained work notes — superseded by delivery above
 
 
-## Frozen merged candidate and signed build â€” 13:28 MDT
+## Frozen merged candidate and signed build — 13:28 MDT
 
 PR286 MERGED normally19:27:13UTC (no auto/admin bypass). Frozen merged source
 4fa8a4c3f4858b5c6253fd8d0299209b79bfacba, version1.0.0-rc.2. Qualified head
@@ -369,7 +369,7 @@ Tester installed/operator acceptance remains pending, separate from delivery.
 Preserve RC1 public assets, full existing rollback, source/evidence/recovery,
 and unrelated owner notes. Host/R7/R9 stations remain untouched.
 
-## Current exact head and focused failure correction â€” 12:33 MDT
+## Current exact head and focused failure correction — 12:33 MDT
 
 PR286 ordinary follow-up head8cc8c6b9668abe29e2b60b2e5dae5b0c23088897.
 The moving fixture alone did NOT resolve the required public WebKit failure:
@@ -412,7 +412,7 @@ one signed build with preserved ead model input outside prune roots and BOTH
 large upload flags false -> selected model-free RC2 publication -> checklist
 handoff -> scoped cleanup. Complete RC2 kit/publication not yet produced.
 
-## Latest candidate and owned wait â€” 12:22 MDT
+## Latest candidate and owned wait — 12:22 MDT
 
 PR286 is OPEN at3fd17cd8332bcafb1e46cd9196c217b1f2865b77. The preceding
 head's required public WebKit case failed presented-frame progression while
@@ -441,7 +441,7 @@ one corrected-input signed build -> selective model-free RC2 publication ->
 focused tester handoff -> scoped cleanup. No complete RC2 kit/publication yet.
 Passing evidence is reused; no additional suite, gate or installed ladder.
 
-## Latest required-CI correction â€” 12:05 MDT
+## Latest required-CI correction — 12:05 MDT
 
 Original run41084970624 attempt2 FAILED. Actual Unit log reports11968 passed,
 4 failed,115 skipped,5 deselected in3360.38s. The failed pytest step prevented
@@ -731,7 +731,7 @@ boundary before another retry; no timeout/assertion weakening. Existing failure
 has NO measured restart/resumed-output interval: standalone worker test launches
 one process, records10s no-output watchdog and exit, no daemon recovery. Recovery
 duration unavailable, NOT10s. Existing source/logs inspected only; no new probe.
-New owner acceptance via watcher: roughly15â€“30s acceptable for one-off successful
+New owner acceptance via watcher: roughly15–30s acceptable for one-off successful
 recovery. This is an estimate/preference, NOT measured outage, required new test,
 or waiver of required CI. Current audioPTS failure is a different condition.
 
@@ -1164,7 +1164,7 @@ station action, model-transfer, force-push or DeepSeek. Completion not yet claim
 
 Prior preparation receipt follows; its no-publication boundary is superseded above.
 
-# READY FOR SCOTT TAG/PUBLISH APPROVAL â€” October 29, 2026
+# READY FOR SCOTT TAG/PUBLISH APPROVAL — October 29, 2026
 
 Preparation COMPLETE. No tag/publication/asset replacement authorized or performed.
 Source ead567a33614a65554a69ef186342d691c43b7dc, version1.0.0-beta.20 unchanged.
@@ -1177,7 +1177,7 @@ companion hashes, provenance and limitations in coding-chat outputs:
 C:/Users/scott/Documents/Codex/2026-10-28/re/outputs/CivicCast-signed-installer-ead567a3.md
 and matching.json. This local receipt does not require a signing rebuild or CI rerun.
 
-Required isolated lifecycle PASS08:37â€“09:00UTC, receipt:
+Required isolated lifecycle PASS08:37–09:00UTC, receipt:
 C:/CivicCastTester/civiccast-ead567a3-20261029-retry/receipt.json.
 Install/packaged agenda proof/uninstall exit0; setup/launcher/uninstaller signatures
 Valid; offlineAI/caption activation and guest service/health/schema passed. Installed
@@ -1270,7 +1270,7 @@ Current sole receipt waiter72811/blocking cell335; stage installing08:37:26Z.
 
 Previous source delivery receipt follows.
 
-# DELIVERED: retained PDF processing and agenda preview â€” October 29, 2026
+# DELIVERED: retained PDF processing and agenda preview — October 29, 2026
 
 Both authorized PRs are normally merged. PR280 merged at 2026-10-29T07:16:02Z,
 merge ead567a33614a65554a69ef186342d691c43b7dc, final source head
@@ -1308,7 +1308,7 @@ its legacy checkpoint carry-forward finding in2a304e4 with focused proof. No fin
 
 Candidate B: C:/Dev/cc-pdf-processing, feat/agenda-packet-preview, based on actual
 PR279 merge26c53c6a. Supported agenda-section parsing preserves 30 ordered parents/
-children on pages1â€“4 and excludes attachments; HTML children retained too. Durable
+children on pages1–4 and excludes attachments; HTML children retained too. Durable
 preview/resume/cancel and authenticated original inspection precede explicit confirm.
 Resume pins the original hash across amendments; incomplete results and operator
 changes refuse confirmation. Other providers retain their existing import route.
@@ -1362,11 +1362,11 @@ must stop its hidden development helpers after it; root owns follow-up commit/CI
 
 ---
 Historical handoff and PR278 receipt follow; preserved from prior candidate.
-# CivicCast current handoff â€” October 27, 2026
+# CivicCast current handoff — October 27, 2026
 
 Owner standing instruction: maintain the coordinator failure log at C:/Users/scott/Documents/Codex/2026-10-19/i-cannot-get-astra-to-finish-2/outputs/CODEX-FAILURE-LOG.md. Record future directive violations/material avoidable mistakes with evidence and impact for a possible OpenAI report; do not publish without instruction.
 
-## CURRENT â€” DELIVERED: PR277 REVIEW CORRECTIONS (PR278) â€” October 28, 2026
+## CURRENT — DELIVERED: PR277 REVIEW CORRECTIONS (PR278) — October 28, 2026
 
 DELIVERED. PR #278 https://github.com/scottconverse/civiccast-native/pull/278 merged to
 `main` at 2026-10-28T23:46:47Z: merge commit `ba80846330108bf300e48bb64507b748c099b8d7`,
@@ -1388,12 +1388,12 @@ root coordinates. Branch `fix/pr277-review-corrections` from actual current main
 affected docs/types; no Phase 2, no installer/release/tag/publication, no LFS/spending, no
 station API/probe/DB/restart/install action, no frozen-candidate edits.
 
-CORRECTION 1 â€” failed page could still be imported as complete
+CORRECTION 1 — failed page could still be imported as complete
 (`civiccast/agenda_import/docparse.py`). Diagnosis: a page whose `extract_text()` raised was
 replaced by empty text, so a document with a lost middle page reported `partial=False`/
 `reason=None` whenever any other page yielded numbered items, and the caller persisted an
 incomplete agenda. Fix: `PdfExtraction.pages_failed` records every failed page; a
-non-zero count always ends as `partial=True` â€” `reason="page_failed"` when items were
+non-zero count always ends as `partial=True` — `reason="page_failed"` when items were
 recovered from other pages, `reason="unreadable"` when EVERY page failed (the existing
 "nothing usable" outcome). `PrimeGovSource` refuses either before persistence
 (`pdf_partial`, now naming the unreadable page count; `pages_read` counts only pages that
@@ -1401,7 +1401,7 @@ yielded text). Regressions: middle-page failure, first-page failure, all-pages f
 (`tests/agenda_import/test_docparse.py`), plus a PrimeGov refusal test asserting the
 partial result never reaches the mapper (`test_primegov.py`).
 
-CORRECTION 2 â€” text budget skipped single/final pages
+CORRECTION 2 — text budget skipped single/final pages
 (`civiccast/agenda_import/docparse.py`). Diagnosis: the overrun check ran after the page
 was parsed and appended and only when another page remained, so a single-page or
 oversized FINAL page bypassed the 2,000,000-character cap and imported as complete. Fix:
@@ -1413,11 +1413,11 @@ other providers' legacy `extract_items_from_pdf` are unchanged. Regressions: sin
 overrun, final-page overrun, exactly-at-limit completion (`test_docparse.py`) and a real
 subprocess single-page overrun refused before import (`test_primegov.py`, tiny budget).
 
-CORRECTION 3 â€” discovered archived year could not be imported
+CORRECTION 3 — discovered archived year could not be imported
 (`primegov.py`, `router.py`, operator `AgendasScreen.tsx`). Diagnosis: `since` selects any
 archived year for discovery, but the import lookup searched only the current year and the
 two prior ones, so a meeting discovered with e.g. `since=2023-01-01` in 2026 returned
-not-found. Fix: smallest compatible explicit year context â€” optional PrimeGov-only
+not-found. Fix: smallest compatible explicit year context — optional PrimeGov-only
 `archive_year` field on the existing import-external body (rejected 422 for the other
 vendors or for a future archive year; years 1 through the current UTC year are supported), forwarded through the
 `AgendaSource.fetch_agenda` Protocol keyword (other adapters accept and ignore it), and used
@@ -1472,7 +1472,7 @@ watcher process is left running).
 
 ---
 
-## HISTORICAL â€” PHASE 1 DELIVERED â€” October 28, 2026
+## HISTORICAL — PHASE 1 DELIVERED — October 28, 2026
 
 P1 public PrimeGov PDF retrieval, P2 bounded download/extraction, and P3 archived/upcoming discovery are implemented and merged. Phase 2 is not started.
 
@@ -1536,7 +1536,7 @@ no extra tests, no rebuild, no LFS, no spending and no station action.
 - NEXT STEP: normal reviewable PR, bounded watch of the auto-triggered required
   checks, then normal merge; no admin/bypass, no tag/release/rebuild/station work.
 
-## HISTORICAL â€” DELIVERED: Beta20 recovery-fix package published â€” October 27, 2026
+## HISTORICAL — DELIVERED: Beta20 recovery-fix package published — October 27, 2026
 
 Scott authorized publishing the prepared signed Beta20 (source `8fdce69e`, build
 `40616252842`, setup SHA-256 `2c6d2614...388e4b`) and updating public download
@@ -1545,15 +1545,15 @@ host-station action. Sole executor: DeepSeek LOW
 `work/deepseek-beta20-publish.py` (activity/state in
 `outputs/deepseek-beta20-publish/`); root coordinates only.
 
-Routine decision under the delegated rule â€” revision convention. The
+Routine decision under the delegated rule — revision convention. The
 `v1.0.0-beta.20` tag and release already exist (tag target
 `a17449189a39af6474d914137eab020169f91023`, PR #259 publication, revised
 October 22 for documentation).
-- Option A â€” new revision tag `v1.0.0-beta.20.1` plus a new release. Pro:
+- Option A — new revision tag `v1.0.0-beta.20.1` plus a new release. Pro:
   distinct tag identity for the new bytes. Con: no existing convention for a
   patch tag on this line, a second 26-asset release (or an incomplete
   complete-kit set), a release-truth `current` switch and extra history.
-- Option B â€” in-place asset revision of the existing published release, keeping
+- Option B — in-place asset revision of the existing published release, keeping
   the tag and its history, exactly as the October 22 documentation revision did
   (its truth note already reads "use revision source for this package" with the
   original tag target unchanged). Pro: existing convention, tags/history
@@ -1561,7 +1561,7 @@ October 22 for documentation).
   release infrastructure. Con: published bytes change under one tag, mitigated
   by explicit revision-source notes in the release body, truth manifest and
   verification record. **Recommended and taken.**
-- Option C â€” move/force the existing tag. Forbidden by policy; not considered.
+- Option C — move/force the existing tag. Forbidden by policy; not considered.
 No tag was created, moved or deleted, so no tag/release workflow hook could fire
 a duplicate build; this repo's workflow triggers are workflow_dispatch,
 PR/branch-push and workflow_run, none tag-based.
@@ -1670,9 +1670,9 @@ station.**
 - Stop boundary: READY FOR OWNER TAG/PUBLISH APPROVAL. No tag, release,
   publication, LFS transfer, spending, reboot, or host-station action occurred.
 
-## Current task â€” October 27, 2026: black/silent outage cause, fix, local hotfix
+## Current task — October 27, 2026: black/silent outage cause, fix, local hotfix
 
-## DELIVERED â€” October27, 2026 15:56 MDT
+## DELIVERED — October27, 2026 15:56 MDT
 
 PR273 MERGED normally (no bypass) at2026-10-27T21:56:58Z.
 Final PR head1412c0060db6863f983dc381f1e51597a0930296.
@@ -1696,7 +1696,7 @@ cache prevents repeated registrations. Local backed-up module hotfix is active,
 not a newly published signed installer. This work is delivered; historical
 checkpoints below are not instructions to restart it.
 
-## Application-upgrade checkpoint â€” October 27, 2026
+## Application-upgrade checkpoint — October 27, 2026
 
 PAUSED by Scott. Preparing for application upgrade does not authorize resumption.
 No native DeepSeek runner is running (verified by process command line).
@@ -1799,7 +1799,7 @@ and every recovery retry re-entered the same poisoned probe.
   and the historical filesrc11 cause are unchanged and not requalified.
 
 
-## Current owner scope â€” YouTube live acceptance completed October 27
+## Current owner scope — YouTube live acceptance completed October 27
 
 Scott requested setup and real YouTube validation. Installed Setup now holds the
 existing authorized YouTube credentials. Installed Publish sent channel public to
@@ -1814,7 +1814,7 @@ not establish a fix for that operational failure. Scott deferred investigating i
 until after this YouTube test. No tag/public release authorized by this test.
 
 
-## Delivery complete â€” October 27, 2026, 02:57 MDT
+## Delivery complete — October 27, 2026, 02:57 MDT
 
 PR272 merged normally at 08:57:42 UTC as 69c2bcaea51e573ab1fd707a42260ae14bdc6e9e,
 head 677d800f16b1c67d5e849aefd6ccc9efc47e9d43. Independently verified GitHub
@@ -1832,7 +1832,7 @@ in the detailed execution record below.
 
 ## Current outcomes and owner authority
 
-F1â€“F3, F5â€“F7 and N1â€“N8 are delivered through PR267â€“271; do not reopen them. F2 live
+F1–F3, F5–F7 and N1–N8 are delivered through PR267–271; do not reopen them. F2 live
 YouTube transmission/playback remains explicitly deferred, not a gate.
 Scott resumed the work and explicitly directed native host installation/testing,
 no sandbox, finish the goal. This supersedes the prior leave-station-untouched
@@ -1842,7 +1842,7 @@ replacement, LFS transfer/spending through October, reboot or physical hardware.
 ## Direct native installation: complete
 
 The retained signed423393349f87148e7253f93691a9a70478cc120c candidate installed
-on this machine at C:/Program Files/CivicCast (Native), exit0, 07:30:57â€“07:41:37UTC.
+on this machine at C:/Program Files/CivicCast (Native), exit0, 07:30:57–07:41:37UTC.
 Normal installer recovery snapshot protected the previous app/database. Installed
 manifest matched source; launcher/uninstaller signatures valid and matched prior
 F5 hashes. Supervisor is running; operator/public pages HTTP200. These page and
@@ -1899,7 +1899,7 @@ Worker /root/f4_resume finished; no owned local test jobs remain.
 The historical exact cause remains unknown. The following explicit acceptance
 revision replaces that forensic clause; it does not claim the old cause was found.
 
-## Adopted owner-delegated F4 decision â€” acceptance revision
+## Adopted owner-delegated F4 decision — acceptance revision
 
 Scott instructed the coordinator to record issue, options/pros/cons, recommendation
 and reasons, then take that recommendation as his decision and continue. Root
@@ -1941,7 +1941,7 @@ new-candidate acceptance or a proved original F4 cause. Preserve those dirty fil
 Full transfer snapshot remains in coordinator outputs/CIVICCAST-FULL-CONTEXT-HANDOFF-2026-10-26.md.
 Everything below is historical evidence, not current execution instructions.
 
-## Archived execution history â€” not current instructions
+## Archived execution history — not current instructions
 
 The entries below preserve earlier evidence. Their old candidate statuses, PIDs,
 resource blockers, and next-action instructions are superseded by the current
@@ -2184,7 +2184,7 @@ outcome above.
   Bounded model-assisted/root sample review: Spanish/Vietnamese preserve meaning;
   Chinese generalizes council to municipal meeting; Arabic incorrectly says
   legislative session; Filipino order sentence ambiguous. Explicit draft edits
-  for those three passed existing edit/approveâ†’published tracks. No professional
+  for those three passed existing edit/approve→published tracks. No professional
   or native-language certification claimed; stations need qualified reviewers.
 - Parent N7 material review complete. API/manual/help generated; PDF/DOCX82632
   terminal0 (usual MiKTeX update warnings only), docsite12764 terminal0. N7 ready
@@ -2333,12 +2333,12 @@ outcome above.
   access checks, timestamp links and accessible transcript; checks pending.
   Parent authorized N1 checks alongside hosted CI after headroom check (11GB free).
 
-## Active F4/F6/F7 checkpoint â€” October 25, 2026
+## Active F4/F6/F7 checkpoint — October 25, 2026
 
 - Scott explicitly resumed this work in the parent Codex chat; the earlier chat
   remains paused and must not be messaged. Parent owns the complete roadmap;
-  this directly controlled worker owns only F4/F6/F7. F1â€“F3 are merged; F5 and
-  N1â€“N8 remain pending. No tags, publication, installer build or station changes.
+  this directly controlled worker owns only F4/F6/F7. F1–F3 are merged; F5 and
+  N1–N8 remain pending. No tags, publication, installer build or station changes.
 - N7 selection for later work: Spanish, Chinese, Tagalog/Filipino, Vietnamese,
   Arabic (top five US languages besides English). Preserve existing Spanish;
   specify supported Chinese written variants honestly during N7 implementation.
@@ -2390,7 +2390,7 @@ outcome above.
 - Prior F1-F3 records below are historical; PR267 receipts remain preserved in
   C:\Dev\civiccast-f1-f3\docs\handoff\CURRENT.md.
 
-## Active F1â€“F3 delivery checkpoint â€” October 25, 2026
+## Active F1–F3 delivery checkpoint — October 25, 2026
 - OAuth resumption: Scott authorized using civiccast1@gmail.com in Chrome and
   subsequently explicitly approved creating its YouTube channel. Created Google
   project `keen-apogee-512802-i5` (CivicCast YouTube), configured an external/testing
@@ -2429,7 +2429,7 @@ outcome above.
 - F1 VERIFIED: original review missed fixes already in main (`5c3540ec`, `5ca75521`).
   Retained package-timeline clipping/rebasing and approved-source repackaging gates.
   Added real FFmpeg fractional-trim + bilingual-caption regression: removed head/tail
-  excluded, retained cues align to 0â€“0.167 and0.467â€“0.567 seconds, originals unchanged.
+  excluded, retained cues align to 0–0.167 and0.467–0.567 seconds, originals unchanged.
   Existing trim/repackage/review regressions passed; no caption engine was replaced.
 - F2 ACCEPTED BY OWNER; LIVE REHEARSAL IS FOLLOW-UP: protected Setup values now feed existing
   IA/YouTube/NAS/SMTP adapters with environment fallback and explicit provider override.
@@ -2509,7 +2509,7 @@ outcome above.
   merge, release, installer, LFS transfer, spending or installed-station changes.
 
 
-## Historical restart checkpoint â€” October 25, 2026
+## Historical restart checkpoint — October 25, 2026
 
 Scott requested preparation for context compaction and a Codex app update/restart.
 This checkpoint is a local documentation change only; it has not been committed
@@ -2555,7 +2555,7 @@ or pushed, and must not automatically trigger another PR or CI cycle.
 The following entries retain their original preparation/history scope. This
 restart checkpoint and the confirmed merge receipts supersede pending wording.
 
-## Completed follow-up â€” targeted Brotli correction
+## Completed follow-up — targeted Brotli correction
 
 The checker integration below is complete: PR265 merged into main at
 `f9d380bebb15489762424f4f1293f4e6f050211a` after current-head unit tests,
@@ -2750,7 +2750,7 @@ identified; availability of every third-party download and access to private
 signing credentials are not implied by a successful Git clone.
 
 
-## Integration and advisory investigation â€” October 24, 2026
+## Integration and advisory investigation — October 24, 2026
 
 Scott authorized [PR265](https://github.com/scottconverse/civiccast-native/pull/265)
 and merge after applicable CI passes, followed by a Brotli investigation/report.

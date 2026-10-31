@@ -104,12 +104,12 @@ strong_claim_tokens:
 entries:
   # WS2 drill: Postgres backup CAPTURE. The motivating failure named in the
   # spec header ("Postgres backup/restore is implemented" while no
-  # pg_restore existed) is resolved here the way the rule intends â€” not by
+  # pg_restore existed) is resolved here the way the rule intends — not by
   # softening the claim away, but by binding it to what THIS SHA's bound
   # test actually proves.
   #
   # Round-2 audit correction (CC-WS3-001, Critical): the round-1 version of
-  # this entry was itself still an overclaim â€” it said "restore" while
+  # this entry was itself still an overclaim — it said "restore" while
   # tests/dr/test_postgres_backup.py only ever calls run_postgres_backup()
   # (pg_dump). No pg_restore call exists anywhere on this branch; the
   # restore half of civiccast/dr/backup.py lives on the unmerged WS2
@@ -119,12 +119,12 @@ entries:
   #
   # A `ws2-postgres-restore-drill` claim (or equivalent) covering pg_restore
   # registers as its OWN entry once the WS2 branch's restore code and its
-  # own testcontainers coverage enter this branch's ancestry (merge) â€” not
+  # own testcontainers coverage enter this branch's ancestry (merge) — not
   # before. Until then, claiming "restore" here would be exactly the
   # CC-WS3-001 lexical tripwire's job to catch (see
   # claim_capability_token_violations in scripts/policy/check_claims_evidence.py).
   #
-  # Round-4 update: that ancestry condition is NOW SATISFIED â€” WS2 merged to
+  # Round-4 update: that ancestry condition is NOW SATISFIED — WS2 merged to
   # program/native-windows at 0d288df5 (AUDIT_PASS 38866d0f) and entered this
   # branch via the round-4 base merge. This entry stays scoped to capture;
   # registering the restore-drill claim (bound to
@@ -391,7 +391,7 @@ entries:
         blob: ed37496a372ccefcd54fb79cc67cd5772c0753a6
       fixtures:
         # GOOD_MANIFEST/GOOD_RELEASES (the fixture data the bound test
-        # consumes) are inline literals in this SAME test file â€” there is
+        # consumes) are inline literals in this SAME test file — there is
         # no separate fixture file for this test.
         - path: tests/policy/test_release_truth.py
           blob: 27dfdbf1a0376638647149d4f2c73030fecebb3a
@@ -407,18 +407,18 @@ entries:
           independently pass, same-run.
         ci_safe: true
 
-  # D9 program claim: the native-Windows decision-gate spike (charter Â§2).
+  # D9 program claim: the native-Windows decision-gate spike (charter §2).
   # external_evidence: hardware/manual-verdict evidence recorded outside CI.
   # 2026-08-07 (owner decision): the D5 external-authority mechanism this
   # entry's control used to resolve against (an owner/auditor-signed record
   # in the separate civiccast-audit-control repository, checked by
   # scripts/policy/check_claims_evidence.py's --mode external-evidence) was
-  # removed outright â€” see CHANGELOG.md and that script's module docstring.
+  # removed outright — see CHANGELOG.md and that script's module docstring.
   # This claim's control can therefore no longer be machine-resolved by any
   # mechanism; it is retained as an inert, manually-reviewed historical
   # record, not an automated gate. What DOES remain automated and unweakened
   # is D2 blob-drift binding on the code files below (worker.py, engine.py,
-  # graph.py, control.py, audio_tap.py) â€” any further change to those files
+  # graph.py, control.py, audio_tap.py) — any further change to those files
   # still fails closed, same as every other entry in this registry.
   # F2 current-source review: 2026-09-11 background preparation and early pipe
   # acceptance; native retirement unblocks inactive legs before NULL. Current
@@ -446,7 +446,7 @@ entries:
       2026-08-07: this claim previously stated that "the bindings below
       require current-source external evidence... before this historical
       gate can resolve for a new source SHA" under an owner-accepted trust
-      root â€” that resolution path (D5, an owner/auditor-signed
+      root — that resolution path (D5, an owner/auditor-signed
       civiccast-audit-control authority record) was removed the same day
       (see CHANGELOG.md) and is not replaced by any other automated
       mechanism. This claim does NOT assert that the current engine files
@@ -465,7 +465,7 @@ entries:
       evidence doc's own correction note states no graph JSON was
       committed alongside this spike's evidence (the run used
       graph.demo_test_graph()-generated graphs, regenerated per-run, not a
-      captured file) â€” narrowed rather than bound to an equivalent-but-not-
+      captured file) — narrowed rather than bound to an equivalent-but-not-
       identical committed JSON elsewhere in this repo (CC-WS3-005, round 3).
     where:
       file: docs/evidence/native-engine-gate.md
@@ -477,7 +477,7 @@ entries:
         blob: 80038afe884c19efe9c9f2f9dccb66db3d3a5b78
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/ worker.py + engine.py + graph.py at
-      # integration-branch HEAD, zero modifications â€” the exact files WSL
+      # integration-branch HEAD, zero modifications — the exact files WSL
       # production runs." All three are now bound (was worker.py only).
       # Current-source narrowing: 28053a94 added mandatory caption transport
       # across the shared engine graph and made audio_tap.py a direct engine
@@ -1157,11 +1157,11 @@ entries:
         blob: ed37496a372ccefcd54fb79cc67cd5772c0753a6
       # CC-WS3-005 (round 3, narrowing): this used to bind
       # spike-session0/evidence/demo-graph.json as if it were the exact
-      # graph config the decision-gate spike ran â€” native-engine-gate.md's
+      # graph config the decision-gate spike ran — native-engine-gate.md's
       # own CORRECTION note says that is false ("no graph JSON was
       # committed with this evidence"; reruns regenerate via
       # graph.demo_test_graph()). Bound here instead: graph.py itself (the
-      # SAME file already bound under `code` above â€” role-path aliasing
+      # SAME file already bound under `code` above — role-path aliasing
       # across different roles is explicitly fine, CC-WS3-003) as the
       # honest reproducible dependency, not a stand-in for a captured
       # exact-config artifact that was never committed for this spike.
@@ -1184,15 +1184,15 @@ entries:
           is no other mode. The only automated guarantee this claim now
           carries is D2 blob-drift on worker.py, engine.py, caption_flow.py,
           decode_policy.py, graph.py, control.py, and audio_tap.py (no separate graph-configuration
-          artifact is asserted â€” none was committed with this spike's
+          artifact is asserted — none was committed with this spike's
           evidence).
         expected_red_when: >-
-          Never â€” this control cannot fail or pass; it is not evaluated by
+          Never — this control cannot fail or pass; it is not evaluated by
           any code path. Blob drift on any of
           worker.py/engine.py/caption_flow.py/decode_policy.py/graph.py/control.py/audio_tap.py is instead
           caught, unconditionally, by the D2 blob_drift_violations check
           that runs against every registered claim regardless of
-          resolution â€” see that check's own violation for the actual
+          resolution — see that check's own violation for the actual
           fail-closed guarantee this entry carries today.
         ci_safe: false
 
@@ -1200,13 +1200,13 @@ entries:
   # 5 gate input). external_evidence, same posture as native-decision-gate
   # above, INCLUDING the 2026-08-07 correction: the D5 external-authority
   # mechanism this entry's control used to resolve against was removed
-  # outright (owner decision â€” see CHANGELOG.md and
+  # outright (owner decision — see CHANGELOG.md and
   # scripts/policy/check_claims_evidence.py's module docstring); the control
   # below is now inert. D2 blob-drift binding on the code files remains
   # automated and unweakened. The engine files this spike exercised were
   # copied unmodified from `program/native-windows` @
   # 3b4b24511c711fcc023cbf865f412687a7bf4e19 (that commit IS in this
-  # branch's ancestry â€” 3ca1d44d descends from 115531df, which is where
+  # branch's ancestry — 3ca1d44d descends from 115531df, which is where
   # this evidence file was added).
   # The same bounded Beta 19 producer record updates current-source tripwires
   # only; pre-login/LocalSystem acceptance remains historical and unrenewed.
@@ -1230,7 +1230,7 @@ entries:
       2026-08-07: this claim previously stated that "the bindings below
       require current-source external evidence from a real pre-login
       LocalSystem rerun... before this historical observation can resolve
-      for a new source SHA" under an owner-accepted trust root â€” that
+      for a new source SHA" under an owner-accepted trust root — that
       resolution path (D5, an owner/auditor-signed civiccast-audit-control
       authority record) was removed the same day (see CHANGELOG.md) and is
       not replaced by any other automated mechanism. This claim does NOT
@@ -2089,7 +2089,7 @@ entries:
       # Unlike native-decision-gate, this evidence doc's own header lists
       # demo-graph.json as part of the run's identity ("Graph: demo-graph.json
       # in this directory ... 3 videotestsrc legs -> openh264 -> mpegtsmux ->
-      # filesink") â€” a genuinely committed, doc-identified configuration
+      # filesink") — a genuinely committed, doc-identified configuration
       # artifact, not a stand-in. Stays bound as-is (no narrowing needed).
       fixtures:
         - path: docs/evidence/session0-demo-graph.json
@@ -2111,11 +2111,11 @@ entries:
           on worker.py, engine.py, caption_flow.py, decode_policy.py,
           graph.py, control.py, and audio_tap.py.
         expected_red_when: >-
-          Never â€” this control cannot fail or pass; it is not evaluated by
+          Never — this control cannot fail or pass; it is not evaluated by
           any code path. Blob drift on any of
           worker.py/engine.py/caption_flow.py/decode_policy.py/graph.py/control.py/audio_tap.py is instead
           caught, unconditionally, by the D2 blob_drift_violations check
           that runs against every registered claim regardless of
-          resolution â€” see that check's own violation for the actual
+          resolution — see that check's own violation for the actual
           fail-closed guarantee this entry carries today.
         ci_safe: false
