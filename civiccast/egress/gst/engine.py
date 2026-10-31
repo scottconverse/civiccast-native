@@ -1752,7 +1752,11 @@ class GstPlayoutEngine:
             source.get("schedule_item_id"),
             occurrence or source.get("event_id"),
         )
-        if getattr(self, "_caption_adopt_next_source", False):
+        if getattr(self, "_caption_adopt_next_source", False) or not hasattr(
+            self, "_caption_source_identity"
+        ):
+            # The first observed frame owns the existing startup caption source.
+            # Only a subsequent occurrence needs to replace it and reject old tokens.
             self._caption_adopt_next_source = False
             self._caption_source_identity = identity
             return
@@ -2497,7 +2501,46 @@ class GstPlayoutEngine:
             raise
         finally:
             self._collecting = None
+        if out_pad is not None:
+            self._install_source_role_marker(out_pad, leg.label)
         return out_pad, audio_out_pad, collected
+
+    def _install_source_role_marker(self, pad: Gst.Pad, label: str) -> None:
+        """Carry fallback role identity through the selector with the actual frame."""
+        payload = json.dumps(
+            {
+                "kind": label,
+                "asset_id": None,
+                "schedule_item_id": None,
+                "label": label,
+                "event_id": uuid.uuid4().hex,
+            }
+        )
+        pending = False
+
+        def mark_role(pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            nonlocal pending
+            if info.type & Gst.PadProbeType.EVENT_DOWNSTREAM:
+                event = info.get_event()
+                structure = event.get_structure() if event is not None else None
+                if structure is not None and structure.get_name() == "civiccast-source":
+                    # The playlist marker runs first on this pad and supplies
+                    # richer occurrence metadata before the same frame arrives.
+                    pending = False
+                elif event is not None and event.type == Gst.EventType.SEGMENT:
+                    pending = True
+            elif info.type & Gst.PadProbeType.BUFFER and pending:
+                # Finish SEGMENT propagation before another sticky event, as in
+                # the playlist marker. Clear first because push_event re-enters.
+                pending = False
+                structure = Gst.Structure.new_empty("civiccast-source")
+                structure.set_value("identity", payload)
+                pad.push_event(
+                    Gst.Event.new_custom(Gst.EventType.CUSTOM_DOWNSTREAM_STICKY, structure)
+                )
+            return Gst.PadProbeReturn.OK
+
+        pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM | Gst.PadProbeType.BUFFER, mark_role)
 
     def _dispose_elements_best_effort(self, elements: list[Gst.Element]) -> None:
         """NULL + remove a list of elements from the pipeline, swallowing every
@@ -2818,21 +2861,10 @@ class GstPlayoutEngine:
                     if structure is not None and structure.get_name() == "civiccast-source":
                         current = json.loads(structure.get_string("identity"))
                 elif info.type & Gst.PadProbeType.BUFFER:
-                    selector = self.selector
-                    if selector is None:
-                        return Gst.PadProbeReturn.OK
-                    active = selector.get_property("active-pad")
-                    index = self.selector_sink_pads.index(active)
+                    # Serialized source events describe this actual selected
+                    # frame. Reading active-pad here can invert the selector's
+                    # lock order against concurrent request-pad retirement.
                     source = current
-                    if index != 0 or not current:
-                        label = self.graph.sources[index].label
-                        source = {
-                            "kind": "slate" if label == "slate" else label,
-                            "asset_id": None,
-                            "schedule_item_id": None,
-                            "label": label,
-                            "event_id": f"role-{active.get_name()}",
-                        }
                     identity = source.get("event_id")
                     if identity and identity != selected_id:
                         _, running_time, _ = self._measure_first_buffer(pad, info)
