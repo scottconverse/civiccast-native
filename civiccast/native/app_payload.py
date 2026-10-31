@@ -345,7 +345,7 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: Re-pinned 2026-10-28: add PDFium 5.14.0 for local PDF recovery/rendering;
 #: all existing distribution versions/hashes, including the LGPL PyAV override, remain.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "3b1749af9ce5cf54c1073cd7429d119942475753254cbdd2a128f021b249f74e"
+    "52f2256b1b882f28dce641d1196b8b325ae2fcc3c089baa0da9d93ede3b23411"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).
