@@ -171,8 +171,6 @@ jobs:
         shell: pwsh
         env:
           CIVICCAST_MSVC_INSTALLATION_PATH: ${{ github.workspace }}\msvc-build-tools
-          npm_config_loglevel: verbose
-          npm_config_timing: "true"
           npm_config_logs_dir: ${{ github.workspace }}\evidence\repro-diagnostics\npm-logs
         run: |
           $diagnostics = Join-Path '${{ github.workspace }}' 'evidence/repro-diagnostics'
@@ -197,6 +195,7 @@ jobs:
 
       - name: Retain native npm crash details
         if: ${{ failure() && steps.repeat-build.outcome == 'failure' }}
+        timeout-minutes: 2
         shell: pwsh
         run: |
           $diagnostics = Join-Path '${{ github.workspace }}' 'evidence/repro-diagnostics'
@@ -219,6 +218,7 @@ jobs:
 
       - name: Upload native npm crash details
         if: ${{ failure() && steps.repeat-build.outcome == 'failure' }}
+        timeout-minutes: 5
         uses: actions/upload-artifact@v4
         with:
           name: native-app-repro-crash-diagnostics
