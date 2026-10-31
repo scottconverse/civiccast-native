@@ -258,6 +258,7 @@ export function HlsPlayer({
     let hls: Hls | null = null
     let cancelled = false
     let cleanupNativeHls: (() => void) | null = null
+    let cleanupHlsStartup: (() => void) | null = null
 
     void import('hls.js').then((mod) => {
       if (cancelled) return
@@ -366,7 +367,30 @@ export function HlsPlayer({
           hls.subtitleTrack = desired
         }
       }
-      hls.attachMedia(video)
+      // A short VOD can finish buffering while its initial gap seek is still
+      // waiting for the decoder's first frame. Ending MSE during that seek can
+      // strand WebKit at HAVE_METADATA. Preserve normal EOS after real preroll.
+      const mediaOverrides = { endOfStream: false }
+      let bufferedToEnd = false
+      const releaseStartupEos = () => {
+        if (video.readyState < 2 || video.seeking) return
+        cleanupHlsStartup?.()
+        if (bufferedToEnd) hls?.trigger(HlsCtor.Events.BUFFER_EOS, {})
+      }
+      const onBufferedToEnd = () => {
+        bufferedToEnd = true
+        releaseStartupEos()
+      }
+      cleanupHlsStartup = () => {
+        mediaOverrides.endOfStream = true
+        video.removeEventListener('loadeddata', releaseStartupEos)
+        video.removeEventListener('seeked', releaseStartupEos)
+        hls?.off(HlsCtor.Events.BUFFERED_TO_END, onBufferedToEnd)
+      }
+      video.addEventListener('loadeddata', releaseStartupEos)
+      video.addEventListener('seeked', releaseStartupEos)
+      hls.on(HlsCtor.Events.BUFFERED_TO_END, onBufferedToEnd)
+      hls.attachMedia({ media: video, overrides: mediaOverrides })
       hls.on(HlsCtor.Events.MEDIA_ATTACHED, () => {
         hls?.loadSource(manifestUrl)
       })
@@ -391,6 +415,7 @@ export function HlsPlayer({
       })
       hls.on(HlsCtor.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          cleanupHlsStartup?.()
           setState('error')
           setErrorMessage(
             data.type === HlsCtor.ErrorTypes.NETWORK_ERROR
@@ -410,6 +435,7 @@ export function HlsPlayer({
         shouldResumeAfterSwitch || (!video.paused && !video.ended)
       video.removeEventListener('canplay', onCanPlay)
       cleanupNativeHls?.()
+      cleanupHlsStartup?.()
       hls?.destroy()
       if (hlsRef.current === hls) hlsRef.current = null
     }

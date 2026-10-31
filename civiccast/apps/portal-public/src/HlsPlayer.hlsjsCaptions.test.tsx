@@ -26,6 +26,8 @@ const Events = {
   MANIFEST_PARSED: 'hlsManifestParsed',
   SUBTITLE_TRACKS_UPDATED: 'hlsSubtitleTracksUpdated',
   SUBTITLE_TRACK_SWITCH: 'hlsSubtitleTrackSwitch',
+  BUFFERED_TO_END: 'hlsBufferedToEnd',
+  BUFFER_EOS: 'hlsBufferEos',
   ERROR: 'hlsError',
 } as const
 
@@ -62,6 +64,7 @@ class FakeHls {
   private _subtitleTrack = -1
   playingDate: Date | null = null
   subtitleDisplay = true
+  mediaOverrides: { endOfStream: boolean } | undefined
 
   on(event: string, cb: (event: string, data: unknown) => void) {
     const list = this.listeners.get(event) ?? []
@@ -69,11 +72,20 @@ class FakeHls {
     this.listeners.set(event, list)
   }
 
+  off(event: string, cb: (event: string, data: unknown) => void) {
+    this.listeners.set(event, (this.listeners.get(event) ?? []).filter((listener) => listener !== cb))
+  }
+
+  trigger(event: string, data: unknown) {
+    this.emit(event, data)
+  }
+
   private emit(event: string, data: unknown) {
     for (const cb of this.listeners.get(event) ?? []) cb(event, data)
   }
 
-  attachMedia() {
+  attachMedia(data: { overrides: { endOfStream: boolean } }) {
+    this.mediaOverrides = data.overrides
     this.emit(Events.MEDIA_ATTACHED, {})
   }
   loadSource() {
@@ -131,6 +143,65 @@ afterEach(() => {
 })
 
 describe('HlsPlayer hls.js captions', () => {
+  it('releases a fully buffered VOD only after its initial seek has prerolled', async () => {
+    render(<HlsPlayer manifestUrl="/short-vod/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    const eos = vi.fn()
+    hls.on(Events.BUFFER_EOS, eos)
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
+    Object.defineProperty(video, 'seeking', { configurable: true, value: true })
+
+    hls.trigger(Events.BUFFERED_TO_END, {})
+    fireEvent.seeked(video)
+    expect(hls.mediaOverrides?.endOfStream).toBe(false)
+    expect(eos).not.toHaveBeenCalled()
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
+    fireEvent.loadedData(video)
+    expect(eos).not.toHaveBeenCalled()
+
+    Object.defineProperty(video, 'seeking', { configurable: true, value: false })
+    fireEvent.seeked(video)
+    expect(hls.mediaOverrides?.endOfStream).toBe(true)
+    expect(eos).toHaveBeenCalledOnce()
+    fireEvent.loadedData(video)
+    expect(eos).toHaveBeenCalledOnce()
+  })
+
+  it('restores normal EOS when preroll finishes before buffering does', async () => {
+    render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    const eos = vi.fn()
+    hls.on(Events.BUFFER_EOS, eos)
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
+    fireEvent.loadedData(video)
+    expect(hls.mediaOverrides?.endOfStream).toBe(true)
+    expect(eos).not.toHaveBeenCalled()
+    hls.trigger(Events.BUFFERED_TO_END, {})
+    expect(eos).not.toHaveBeenCalled()
+  })
+
+  it.each(['unmount', 'fatal error'])('withdraws startup EOS listeners on %s', async (ending) => {
+    const { unmount } = render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    const eos = vi.fn()
+    hls.on(Events.BUFFER_EOS, eos)
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    hls.trigger(Events.BUFFERED_TO_END, {})
+    if (ending === 'unmount') unmount()
+    else hls.trigger(Events.ERROR, { fatal: true, type: ErrorTypes.NETWORK_ERROR })
+    expect(hls.mediaOverrides?.endOfStream).toBe(true)
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+    fireEvent.loadedData(video)
+    fireEvent.seeked(video)
+    hls.trigger(Events.BUFFERED_TO_END, {})
+    expect(eos).not.toHaveBeenCalled()
+  })
+
   it('labels buffered embedded playback separately from the newest live-edge title', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       title: 'Current program', manifest_url: '/live/playlist.m3u8',

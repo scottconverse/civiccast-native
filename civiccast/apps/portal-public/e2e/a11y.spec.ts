@@ -6,6 +6,124 @@ const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const evidenceDir = process.env.CIVICCAST_EVIDENCE_DIR ?? 'test-results/evidence'
 mkdirSync(evidenceDir, { recursive: true })
 
+const mediaStartupDiagnostics = new Set([
+  'built embed plays captions on an external origin and clears withdrawn playback',
+  'published agenda chapters seek the selected recording after a correction',
+])
+
+test.beforeEach(async ({ page }, testInfo) => {
+  if (!mediaStartupDiagnostics.has(testInfo.title)) return
+  await page.addInitScript(() => {
+    const events: unknown[] = []
+    const playStates = new WeakMap<HTMLMediaElement, string>()
+    const sources = new Set<MediaSource>()
+    const buffers = new Map<SourceBuffer, { source: MediaSource; mimeType: string }>()
+    const ranges = (value: TimeRanges) => Array.from(
+      { length: value.length }, (_, index) => [value.start(index), value.end(index)],
+    )
+    const readSnapshot = () => ({
+      videos: Array.from(document.querySelectorAll('video'), (video) => ({
+        currentTime: video.currentTime, paused: video.paused, ended: video.ended,
+        seeking: video.seeking, readyState: video.readyState, networkState: video.networkState,
+        error: video.error && { code: video.error.code, message: video.error.message },
+        buffered: ranges(video.buffered), seekable: ranges(video.seekable),
+        playPromise: playStates.get(video) ?? 'not called',
+        videoWidth: video.videoWidth, videoHeight: video.videoHeight,
+        totalVideoFrames: video.getVideoPlaybackQuality?.()?.totalVideoFrames,
+      })),
+      mediaSources: Array.from(sources, (source) => ({
+        readyState: source.readyState, duration: source.duration,
+        sourceBuffers: source.sourceBuffers.length,
+        activeSourceBuffers: source.activeSourceBuffers.length,
+      })),
+      sourceBuffers: Array.from(buffers, ([buffer, { source, mimeType }]) => {
+        try {
+          return { mimeType, sourceState: source.readyState, updating: buffer.updating,
+            mode: buffer.mode, timestampOffset: buffer.timestampOffset,
+            buffered: ranges(buffer.buffered) }
+        } catch (error) {
+          return { mimeType, sourceState: source.readyState, error: String(error) }
+        }
+      }),
+    })
+    const snapshot = () => {
+      try { return readSnapshot() } catch (error) { return { captureError: String(error) } }
+    }
+    const record = (event: string) => {
+      events.push({ at: performance.now(), event, ...snapshot() })
+      if (events.length > 128) events.shift()
+    }
+    for (const event of ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'play',
+      'playing', 'waiting', 'stalled', 'suspend', 'seeking', 'seeked', 'pause', 'ended', 'error']) {
+      document.addEventListener(event, (event) => {
+        if (event.target instanceof HTMLVideoElement) record(`media:${event.type}`)
+      }, true)
+    }
+    const play = HTMLMediaElement.prototype.play
+    HTMLMediaElement.prototype.play = function () {
+      playStates.set(this, 'pending')
+      record('play:called')
+      const result = play.call(this)
+      void result.then(() => {
+        playStates.set(this, 'resolved')
+        record('play:resolved')
+      }, (error: unknown) => {
+        playStates.set(this, `rejected: ${String(error)}`)
+        record('play:rejected')
+      })
+      return result
+    }
+    const constructors = new Set([
+      window.MediaSource,
+      (window as unknown as { ManagedMediaSource?: typeof MediaSource }).ManagedMediaSource,
+    ])
+    for (const constructor of constructors) {
+      if (!constructor) continue
+      const addSourceBuffer = constructor.prototype.addSourceBuffer
+      constructor.prototype.addSourceBuffer = function (mimeType: string) {
+        const buffer = addSourceBuffer.call(this, mimeType)
+        try {
+          if (buffers.has(buffer)) return buffer
+          if (!sources.has(this)) {
+            sources.add(this)
+            for (const event of ['sourceopen', 'sourceended', 'sourceclose']) {
+              this.addEventListener(event, () => record(`mse:${event}`))
+            }
+          }
+          buffers.set(buffer, { source: this, mimeType })
+          for (const event of ['updateend', 'error', 'abort']) {
+            buffer.addEventListener(event, () => record(`buffer:${event}`))
+          }
+          record('buffer:added')
+        } catch (error) {
+          record(`buffer:diagnostic-error:${String(error)}`)
+        }
+        return buffer
+      }
+    }
+    Object.assign(window, { __civiccastMediaDiagnostics: { events, snapshot } })
+  })
+})
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (!mediaStartupDiagnostics.has(testInfo.title) || testInfo.status === testInfo.expectedStatus) return
+  const frames = await Promise.all(page.frames().map(async (frame) => {
+    try {
+      return await frame.evaluate(() => {
+        const diagnostics = (window as unknown as {
+          __civiccastMediaDiagnostics?: { events: unknown[]; snapshot: () => unknown }
+        }).__civiccastMediaDiagnostics
+        return { url: location.href, events: diagnostics?.events, state: diagnostics?.snapshot() }
+      })
+    } catch (error) {
+      return { url: frame.url(), error: String(error) }
+    }
+  }))
+  await testInfo.attach('media-startup-diagnostics', {
+    body: Buffer.from(JSON.stringify(frames, null, 2)), contentType: 'application/json',
+  })
+})
+
 const liveOnAir = {
   state: 'on_air',
   live_session_id: 'council-2026-05-15',
@@ -808,7 +926,15 @@ test('published agenda chapters seek the selected recording after a correction',
     return readyState
   })
   expect(readyState).toBeGreaterThanOrEqual(3)
+  // The chapter action resumes playback. Capture the actual seek event before
+  // pressing, so driver round trips cannot miss the 0.5s landing as it advances.
+  await video.evaluate((node: HTMLVideoElement) => {
+    delete node.dataset.chapterSeekTime
+    node.addEventListener('seeked', () => {
+      node.dataset.chapterSeekTime = String(node.currentTime)
+    }, { once: true })
+  })
   await page.getByRole('button', { name: 'Jump to Decision' }).press('Enter')
-  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(0.5, 1)
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => Number(node.dataset.chapterSeekTime ?? NaN))).toBeCloseTo(0.5, 1)
   await expect(page.getByRole('heading', { name: 'January Council' })).toBeVisible()
 })
