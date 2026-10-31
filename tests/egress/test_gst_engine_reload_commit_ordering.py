@@ -49,6 +49,9 @@ class _Recorder:
 
 class _FakeState:
     NULL = "NULL"
+    PAUSED = "PAUSED"
+    PLAYING = "PLAYING"
+    VOID_PENDING = "VOID_PENDING"
 
 
 class _FakeStateChangeReturn:
@@ -105,6 +108,11 @@ class _FakeElementIterator:
 class _FakePipeline:
     def __init__(self, recorder: _Recorder) -> None:
         self.recorder = recorder
+        self.state = _FakeState.PLAYING
+        self.pending_state = _FakeState.VOID_PENDING
+
+    def get_state(self, _timeout: int) -> tuple[str, str, str]:
+        return _FakeStateChangeReturn.SUCCESS, self.state, self.pending_state
 
     def remove(self, element: _FakeOldElement) -> None:
         self.recorder.calls.append(f"pipeline.remove:{element.name}")
@@ -4697,10 +4705,11 @@ class _StubLeg:
     audio: tuple[Any, ...] = ()
 
 
+@pytest.mark.parametrize("refusal", ["failure", "raise"])
 def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
-    engine_module, monkeypatch: pytest.MonkeyPatch
+    engine_module, monkeypatch: pytest.MonkeyPatch, refusal: str
 ) -> None:
-    """A boolean state refusal must unwind the incoming leg immediately."""
+    """A failed or raising state change must unwind the incoming leg immediately."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     engine._reload_txn_counter = count(1)
@@ -4721,8 +4730,15 @@ def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
 
     class _IncomingElement(_FakeOldElement):
         def sync_state_with_parent(self) -> bool:
+            return self.set_state(engine.pipeline.state) != _FakeStateChangeReturn.FAILURE
+
+        def set_state(self, _state: Any) -> str:
             recorder.calls.append(f"sync:{self.name}")
-            return self.name != "refused"
+            if self.name == "refused":
+                if refusal == "raise":
+                    raise RuntimeError("refused")
+                return _FakeStateChangeReturn.FAILURE
+            return _FakeStateChangeReturn.SUCCESS
 
     incoming = [_IncomingElement(name, recorder) for name in ("later", "refused", "started")]
     monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
@@ -4758,14 +4774,16 @@ def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
 
 
 @pytest.mark.parametrize("playlist", [False, True], ids=["source-leg", "playlist-concats"])
+@pytest.mark.parametrize("decoder_async", [False, True], ids=["immediate", "decoder-async"])
 def test_reload_activates_downstream_before_immediate_producers(
-    engine_module, monkeypatch: pytest.MonkeyPatch, playlist: bool
+    engine_module, monkeypatch: pytest.MonkeyPatch, playlist: bool, decoder_async: bool
 ) -> None:
     """A producer can start inside sync, before the next element is activated.
 
     Model the resulting FLUSHING as a stopped producer, despite successful state
     sync. Playlist concats are constructed before their feeder chains, so merely
-    reversing the complete construction list would still fail that shape.
+    reversing the complete construction list would still fail that shape. Async
+    decoder preroll must not change the target applied to its live upstream source.
     """
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
@@ -4789,26 +4807,41 @@ def test_reload_activates_downstream_before_immediate_producers(
             self.first_buffer_delivered = False
 
         def sync_state_with_parent(self) -> bool:
+            # decodebin can put the parent into PAUSED/PAUSED while it awaits
+            # input. Sampling it again strands a live upstream source there.
+            state = engine.pipeline.pending_state
+            if state == _FakeState.VOID_PENDING:
+                state = engine.pipeline.state
+            return self.set_state(state) != _FakeStateChangeReturn.FAILURE
+
+        def set_state(self, state: Any) -> str:
             self.active = True
             recorder.calls.append(f"sync:{self.name}")
+            if self.name == "decodebin" and decoder_async:
+                engine.pipeline.state = _FakeState.PAUSED
+                engine.pipeline.pending_state = _FakeState.PAUSED
             if self.producer:
+                if state != _FakeState.PLAYING:
+                    recorder.calls.append(f"waiting-for-playing:{self.name}")
+                    return _FakeStateChangeReturn.NO_PREROLL
                 downstream = self.downstream
                 while downstream is not None:
                     if not downstream.active:
                         recorder.calls.append(f"flushing:{self.name}")
-                        return True  # State success does not restart this task.
+                        return _FakeStateChangeReturn.SUCCESS
                     downstream = downstream.downstream
                 self.first_buffer_delivered = True
-            return True
+            return _FakeStateChangeReturn.SUCCESS
 
     video_concat = _IncomingElement("video-concat") if playlist else None
     audio_concat = _IncomingElement("audio-concat") if playlist else None
     video_tail = _IncomingElement("video-caps", video_concat)
     audio_tail = _IncomingElement("audio-caps", audio_concat)
     audio_convert = _IncomingElement("audio-convert", audio_tail)
-    video_source = _IncomingElement("video-source", video_tail, producer=True)
+    decoder = _IncomingElement("decodebin", video_tail)
+    video_source = _IncomingElement("video-source", decoder, producer=True)
     audio_source = _IncomingElement("audio-source", audio_convert, producer=True)
-    incoming = [video_source, video_tail, audio_source, audio_convert, audio_tail]
+    incoming = [video_source, decoder, video_tail, audio_source, audio_convert, audio_tail]
     if playlist:
         incoming = [video_concat, audio_concat, *incoming]
     video = _FakeOldPad("incoming-video", recorder, None)

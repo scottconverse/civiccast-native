@@ -5871,14 +5871,22 @@ class GstPlayoutEngine:
             activation_elements.extend(
                 element for element in reversed(new_elements) if element not in output_elements
             )
+            # decodebin's async preroll can temporarily put the parent into
+            # PAUSED/PAUSED. Sampling that parent again for its upstream live
+            # source strands the source in PAUSED, waiting to feed that decoder.
+            # Capture the same target sync_state_with_parent would use once,
+            # before activation, and apply it to the entire incoming leg.
+            _state_result, activation_state, activation_pending = self.pipeline.get_state(0)
+            if activation_pending != Gst.State.VOID_PENDING:
+                activation_state = activation_pending
             for element in activation_elements:
-                # State refusal is returned as False, not necessarily raised.
+                # State refusal is returned as FAILURE, not necessarily raised.
                 # Stop activation here so the existing build-error unwind owns
                 # the incoming leg before any later producer can start.
-                if not element.sync_state_with_parent():
+                if element.set_state(activation_state) == Gst.StateChangeReturn.FAILURE:
                     raise RuntimeError(
-                        f"failed to sync incoming element {element.get_name()!r} "
-                        "with the playing pipeline"
+                        f"failed to activate incoming element {element.get_name()!r} "
+                        f"in state {activation_state}"
                     )
         except Exception:  # ENG-008: a preroll/arm failure must not wedge
             self._abort_pending_reload("build-error")
