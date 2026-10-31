@@ -161,6 +161,31 @@ describe('HlsPlayer hls.js captions', () => {
     expect(Object.hasOwn(video, 'currentTime')).toBe(false)
   })
 
+  it('keeps already playable startup data ready when a tiny gap seek was deferred', async () => {
+    const nativeTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!
+    let readyState = 1
+    const seek = vi.spyOn(HTMLMediaElement.prototype, 'currentTime', 'set').mockImplementation(function (this: HTMLMediaElement, target) {
+      nativeTime.set!.call(this, target)
+      // A native seek can discard the ready state before queued playing events.
+      readyState = 1
+    })
+    render(<HlsPlayer manifestUrl="/short-vod/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const video = (lastInstance as FakeHls).media!
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0.021333, end: () => 2 },
+    })
+    Object.defineProperty(video, 'readyState', { configurable: true, get: () => readyState })
+    video.currentTime = 0.1
+    expect(seek).not.toHaveBeenCalled()
+    readyState = 4
+    fireEvent.loadedData(video)
+    expect(video.readyState).toBe(4)
+    expect(seek).not.toHaveBeenCalled()
+    expect(video.currentTime).toBe(0)
+    expect(Object.hasOwn(video, 'currentTime')).toBe(false)
+  })
+
   it.each([
     { start: 0.2, target: 0.3 },
     { start: 0.021333, target: 0.5 },
@@ -209,6 +234,72 @@ describe('HlsPlayer hls.js captions', () => {
     else rerender(<HlsPlayer manifestUrl="/vod/playlist.m3u8" handleRef={handleRef} startSeconds={0.1} />)
     expect(video.currentTime).toBe(0.1)
     expect(Object.hasOwn(video, 'currentTime')).toBe(false)
+  })
+
+  it('waits for a paused chapter seek to finish before resuming playback', async () => {
+    const handleRef = { current: null as HlsPlayerHandle | null }
+    const nativeTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!
+    let seeking = false
+    vi.spyOn(HTMLMediaElement.prototype, 'currentTime', 'set').mockImplementation(function (this: HTMLMediaElement, target) {
+      nativeTime.set!.call(this, target)
+      seeking = true
+    })
+    render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" handleRef={handleRef} />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const video = (lastInstance as FakeHls).media!
+    const play = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(video, 'play', { configurable: true, value: play })
+    Object.defineProperty(video, 'seeking', { configurable: true, get: () => seeking })
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+    handleRef.current!.seekTo(0.5)
+    expect(video.currentTime).toBe(0.5)
+    expect(play).not.toHaveBeenCalled()
+    seeking = false
+    fireEvent.seeked(video)
+    expect(play).toHaveBeenCalledOnce()
+    fireEvent.seeked(video)
+    expect(play).toHaveBeenCalledOnce()
+  })
+
+  it.each(['new seek', 'source change', 'fatal error', 'unmount'])('cancels a pending chapter resume on %s', async (ending) => {
+    const handleRef = { current: null as HlsPlayerHandle | null }
+    const nativeTime = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!
+    let seeking = false
+    vi.spyOn(HTMLMediaElement.prototype, 'currentTime', 'set').mockImplementation(function (this: HTMLMediaElement, target) {
+      nativeTime.set!.call(this, target)
+      seeking = true
+    })
+    const { rerender, unmount } = render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" handleRef={handleRef} />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    const video = hls.media!
+    const play = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(video, 'play', { configurable: true, value: play })
+    Object.defineProperty(video, 'seeking', { configurable: true, get: () => seeking })
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+    handleRef.current!.seekTo(0.5)
+    if (ending === 'new seek') handleRef.current!.seekTo(0.75)
+    else if (ending === 'source change') rerender(<HlsPlayer manifestUrl="/other/playlist.m3u8" handleRef={handleRef} />)
+    else if (ending === 'fatal error') hls.trigger(Events.ERROR, { fatal: true, type: ErrorTypes.NETWORK_ERROR })
+    else unmount()
+    seeking = false
+    fireEvent.seeked(video)
+    expect(play).toHaveBeenCalledTimes(ending === 'new seek' ? 1 : 0)
+    if (ending === 'new seek') expect(video.currentTime).toBe(0.75)
+  })
+
+  it.each([false, true])('preserves immediate chapter behavior when paused=%s and no native seek is pending', async (paused) => {
+    const handleRef = { current: null as HlsPlayerHandle | null }
+    render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" handleRef={handleRef} />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const video = (lastInstance as FakeHls).media!
+    const play = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(video, 'play', { configurable: true, value: play })
+    Object.defineProperty(video, 'paused', { configurable: true, value: paused })
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+    handleRef.current!.seekTo(0)
+    expect(video.currentTime).toBe(0)
+    expect(play).toHaveBeenCalledTimes(paused ? 1 : 0)
   })
 
   it('preserves an existing nonconfigurable currentTime accessor', async () => {

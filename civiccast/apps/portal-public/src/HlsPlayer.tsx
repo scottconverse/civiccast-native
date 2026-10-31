@@ -66,6 +66,7 @@ export function HlsPlayer({
   const resumeAfterSourceChangeRef = useRef(false)
   const sourceReadyRef = useRef(false)
   const restoreNativeSeekRef = useRef<() => void>(() => {})
+  const cancelSeekResumeRef = useRef<() => void>(() => {})
   const programTimelineRef = useRef(programTimeline)
   const syncPlaybackTitleRef = useRef<() => void>(() => {})
   const [state, setState] = useState<PlayerState>('idle')
@@ -76,6 +77,7 @@ export function HlsPlayer({
     const seek = () => {
       if (applied || video.readyState < 1) return
       applied = true
+      cancelSeekResumeRef.current()
       restoreNativeSeekRef.current()
       video.currentTime = Number.isFinite(video.duration)
         ? Math.min(Math.max(0, startSeconds), video.duration) : Math.max(0, startSeconds)
@@ -97,16 +99,39 @@ export function HlsPlayer({
         if (!video) return
         const duration = Number.isFinite(video.duration) ? video.duration : null
         const target = duration !== null ? Math.min(Math.max(0, seconds), duration) : Math.max(0, seconds)
+        cancelSeekResumeRef.current()
+        const shouldResume = video.paused
         restoreNativeSeekRef.current()
         video.currentTime = target
-        if (video.paused) {
+        if (!shouldResume) return
+        const resume = () => {
           void video.play().catch(() => {
             // Autoplay can be blocked; the seek still landed, leave UI as-is.
           })
         }
+        if (!video.seeking) {
+          resume()
+          return
+        }
+        // Keep paused chapter seeks paused through their native completion.
+        // In the failing trace, resuming early reached EOS before DOM seeked.
+        const cancelResume = () => {
+          video.removeEventListener('seeked', onSeeked)
+          if (cancelSeekResumeRef.current === cancelResume) {
+            cancelSeekResumeRef.current = () => {}
+          }
+        }
+        const onSeeked = () => {
+          if (video.seeking) return
+          cancelResume()
+          resume()
+        }
+        cancelSeekResumeRef.current = cancelResume
+        video.addEventListener('seeked', onSeeked)
       },
     }
     return () => {
+      cancelSeekResumeRef.current()
       handleRef.current = null
     }
   }, [handleRef])
@@ -284,6 +309,7 @@ export function HlsPlayer({
             )
           }
           const onError = () => {
+            cancelSeekResumeRef.current()
             setState('error')
             setErrorMessage('The video could not be loaded. Please try again.')
           }
@@ -393,7 +419,9 @@ export function HlsPlayer({
         const releaseStartupSeek = () => {
           if (video.readyState < 2) return
           cleanupHlsStartup?.()
-          if (deferredSeek !== undefined && deferredSeek > video.currentTime) {
+          // Once native playback is ready, the recovery jump is obsolete. A
+          // fresh seek can drop readiness before a queued play promise resolves.
+          if (video.readyState === 2 && deferredSeek !== undefined && deferredSeek > video.currentTime) {
             video.currentTime = deferredSeek
           }
         }
@@ -442,6 +470,7 @@ export function HlsPlayer({
       })
       hls.on(HlsCtor.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          cancelSeekResumeRef.current()
           cleanupHlsStartup?.()
           setState('error')
           setErrorMessage(
@@ -455,6 +484,7 @@ export function HlsPlayer({
 
     return () => {
       cancelled = true
+      cancelSeekResumeRef.current()
       // A live source can switch between the station origin and its CDN while
       // the resident is watching. Capture playback before tearing down the
       // old HLS attachment, which may itself pause the media element.
