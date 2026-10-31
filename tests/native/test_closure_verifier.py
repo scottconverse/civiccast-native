@@ -1037,6 +1037,7 @@ def test_desktop_app_installer_resource_access_is_reported_without_failing(
         "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
         "Microsoft.SecHealthUI_1000.26100.33438.0_x64__8wekyb3d8bbwe",
         "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+        "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.3.0_x64__8wekyb3d8bbwe",
     ),
 )
 @pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
@@ -1274,6 +1275,7 @@ def test_desktop_app_installer_resource_exception_rejects_near_misses(
         "Microsoft.SecHealthUI_1000.26100.33648.0_x64__8wekyb3d8bbwe",
         "Microsoft.SecHealthUI_1000.26100.33438.0_x64__8wekyb3d8bbwe",
         "Microsoft.WindowsFeedbackHub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+        "MicrosoftCorporationII.WindowsSubsystemForLinux_3.0.3.0_x64__8wekyb3d8bbwe",
     ),
 )
 @pytest.mark.parametrize(

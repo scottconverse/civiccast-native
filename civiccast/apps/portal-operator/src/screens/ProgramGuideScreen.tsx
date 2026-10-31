@@ -1,3 +1,5 @@
+import { formatHms } from './reports-format'
+
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -70,6 +72,7 @@ function fmtTime(iso: string, timeZone: string): string {
   return formatStationInstant(new Date(iso), timeZone, {
     hour: 'numeric',
     minute: '2-digit',
+    second: '2-digit',
   })
 }
 
@@ -91,6 +94,7 @@ function fmtRecurrenceTime(
   const time = formatStationInstant(wallClock, 'UTC', {
     hour: 'numeric',
     minute: '2-digit',
+    second: '2-digit',
   })
   const cadence =
     recurrence === 'weekly' ? `${weekday} ` : recurrence === 'weekdays' ? 'weekdays ' : 'daily '
@@ -99,11 +103,7 @@ function fmtRecurrenceTime(
 
 function fmtDuration(seconds: number | null | undefined): string {
   if (!seconds) return 'recording length'
-  const mins = Math.round(seconds / 60)
-  if (mins < 60) return `${mins} min`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return m > 0 ? `${h} h ${m} min` : `${h} h`
+  return formatHms(seconds)
 }
 
 export type LogDayGroup = {
@@ -247,6 +247,7 @@ function SlotList({ slots, timeZone, onDisable, disabling }: SlotListProps) {
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
+                second: '2-digit',
               })}
               {fmtRecurrenceTime(slot.recurrence_anchor_local, slot.recurrence) &&
                 ` · ${fmtRecurrenceTime(slot.recurrence_anchor_local, slot.recurrence)}`}

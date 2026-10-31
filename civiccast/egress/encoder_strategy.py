@@ -49,6 +49,9 @@ class EncoderStartRequest:
     # truncated. Ignored by ``start()`` (nothing is "outgoing" at a fresh start)
     # and by ``ConcatEncoderStrategy`` (ffmpeg reload is always terminate+restart).
     switch_at_end_of_current: bool = False
+    # Automatic starts from an indefinite slate can preroll before the slot.
+    # The worker keeps the incoming first buffers held until this UTC epoch.
+    switch_at_unix: float | None = None
     # A failed session reset must not expose old sidecars/audio. This is a
     # session safety gate, independent of the operator's caption preference.
     captions_allowed: bool = True

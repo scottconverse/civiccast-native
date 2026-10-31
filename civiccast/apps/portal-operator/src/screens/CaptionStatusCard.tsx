@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { ApiError, getCaptionProofs, getCaptionStatus } from '../api/client'
 import type { CaptionStatusResponse, EgressCaptionProofSample } from '../types/api.generated'
+import { freshReading } from './status-language'
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? error.message
@@ -11,11 +12,6 @@ function apiMessage(error: unknown, fallback: string): string {
 function fmtTime(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
-}
-
-function isStale(iso: string): boolean {
-  const sampled = new Date(iso).getTime()
-  return Number.isFinite(sampled) && Date.now() - sampled > 120_000
 }
 
 // Presentational only (no data fetching) so it unit-tests without a network.
@@ -35,10 +31,10 @@ export function CaptionStatusView({
   // failure waiting to clear when nothing is being checked at all.
   liveCaptionsEnabled?: boolean
 }) {
-  const on = status?.caption_status === 'on'
   const latest = status?.latest ?? proofs?.[0]
   const failed = latest?.status === 'FAIL'
-  const stale = latest ? isStale(latest.sampled_at) : false
+  const stale = latest ? !freshReading(latest.sampled_at) : false
+  const on = !error && !stale && latest?.status === 'PASS' && status?.caption_status === 'on'
   const switchedOff = !on && liveCaptionsEnabled === false
   return (
     <section
@@ -61,6 +57,10 @@ export function CaptionStatusView({
         >
           {loading
             ? 'Checking…'
+            : error
+              ? 'Caption status unavailable'
+            : stale
+              ? 'Caption proof stale'
             : failed
               ? 'Caption proof failed'
               : on
@@ -79,7 +79,7 @@ export function CaptionStatusView({
             <strong>{failed ? 'Caption proof failed' : `Latest proof: ${latest.status}`}</strong>
             <span>{latest.matched_cue_count}/{latest.expected_cue_count} cues matched</span>
             <span>Sampled {fmtTime(latest.sampled_at)}</span>
-            {stale && <span className="font-semibold">Stale (older than 120 seconds)</span>}
+            {stale && <span className="font-semibold">Stale (older than 120 seconds or invalid sample time)</span>}
           </div>
           {latest.blocker && <div>Blocker: {latest.blocker}</div>}
           {failed && <div>Check the caption source and the decode-back proof details below.</div>}
@@ -97,6 +97,11 @@ export function CaptionStatusView({
         Captions show as <strong>on</strong> only after CivicCast decodes them back from the
         emitted stream and they match. This proves carriage at the egress boundary; it is not a
         claim of FCC Part&nbsp;79 compliance.
+      </p>
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        Speech generation, embedded-stream delivery and captions visible in the resident player are separate observations.
+        An absent decode-back proof means delivery is unverified; it does not by itself prove speech recognition failed.
+        Check the resident preview for captions matching the current program.
       </p>
       {Boolean(error) && (
         <div

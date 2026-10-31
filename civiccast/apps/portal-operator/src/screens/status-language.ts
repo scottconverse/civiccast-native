@@ -29,6 +29,12 @@
 
 /** The five phrases from the guide's Readiness States table. Nothing else. */
 export const READINESS_READY = 'Ready'
+
+/** Match the existing two-minute telemetry freshness window across screens. */
+export function freshReading(iso: string | undefined): boolean {
+  const age = Date.now() - new Date(iso ?? '').getTime()
+  return Number.isFinite(age) && age >= 0 && age <= 120_000
+}
 export const READINESS_CHECK_BEFORE_MEETING = 'Check before meeting'
 export const READINESS_DO_NOT_BROADCAST_YET = 'Do not broadcast yet'
 export const READINESS_NOT_SET_UP_YET = 'Not set up yet'

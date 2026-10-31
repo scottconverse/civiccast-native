@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -16,6 +17,35 @@ from civiccast.paywall.router import get_paywall_service
 from civiccast.vod.models import AssetMetadata
 from civiccast.vod.router import get_store
 from civiccast.vod.store import InMemoryAssetStore
+
+
+def test_channel_embed_preserves_resident_safe_actual_program_timeline(client, monkeypatch):
+    import civiccast.vod.router as router_module
+
+    egress = Mock()
+    egress.get_config.return_value = object()
+    client.app.dependency_overrides[router_module.get_egress_store] = lambda: egress
+    monkeypatch.setattr(
+        router_module,
+        "get_current_live_session",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            title="Current program",
+            manifest_url="/live/gov/playlist.m3u8",
+            program_timeline=[
+                {"title": "Earlier program", "started_at": "2026-10-12T18:00:00Z"},
+                {"title": "Current program", "started_at": "2026-10-12T18:01:00Z"},
+            ],
+        ),
+    )
+    response = client.get("/api/public/embed/channel/gov")
+    assert response.status_code == 200
+    assert response.json()["program_timeline"][0] == {
+        "title": "Earlier program",
+        "started_at": "2026-10-12T18:00:00Z",
+    }
+    assert all(
+        set(event) == {"title", "started_at"} for event in response.json()["program_timeline"]
+    )
 
 
 @pytest.fixture

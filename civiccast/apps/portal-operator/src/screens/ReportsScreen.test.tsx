@@ -281,3 +281,13 @@ describe('ReportsScreen hours-by-category', () => {
     )
   })
 })
+
+
+it('labels provisional show airtime while preserving seconds', async () => {
+  vi.mocked(getShowsReport).mockResolvedValue(shows([{
+    asset_id: 'asset-running', play_count: 1, in_progress_count: 1, total_airtime_s: 38,
+    first_aired: '2026-06-01T12:00:00Z', last_aired: '2026-06-01T12:00:00Z',
+  }]))
+  const { findByText } = renderScreen()
+  expect(await findByText('38s (in progress)')).toBeTruthy()
+})

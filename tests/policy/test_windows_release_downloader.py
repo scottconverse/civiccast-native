@@ -95,7 +95,9 @@ def test_windows_release_downloader_verifies_manifest_hashes() -> None:
     source = DOWNLOADER.read_text(encoding="utf-8")
 
     assert f'$Tag = "{PUBLISHED_RELEASE_TAG}"' in source
-    assert f'$Version = "{PUBLISHED_RELEASE_VERSION}"' in source
+    assert '$Version = ""' in source
+    assert "$Version = $Tag -replace" in source
+    assert '$Tag -ne "v$Version"' in source
     assert 'release-artifacts-manifest.json"' in source
     assert 'clean-windows-proof-kit.zip"' in source
     assert 'windows-tester-package.zip"' in source
@@ -109,6 +111,7 @@ def test_windows_install_doc_matches_current_release_posture() -> None:
     source = INSTALL_DOC.read_text(encoding="utf-8")
     assert f"`{PUBLISHED_RELEASE_TAG}`" in source
     assert f"civiccast-native/releases/tag/{PUBLISHED_RELEASE_TAG}" in source
+    assert f"-Tag {PUBLISHED_RELEASE_TAG} -Version {PUBLISHED_RELEASE_VERSION} -Install" in source
 
 
 def test_downloader_falls_back_to_release_asset_digest_when_unlisted() -> None:
@@ -163,7 +166,8 @@ def test_native_candidate_mode_asset_names_match_the_publisher() -> None:
 
 
 @pytest.mark.parametrize(
-    "scenario", ["complete", "legacy-models", "traversal", "conflict", "index-mismatch"]
+    "scenario",
+    ["complete", "complete-reuse", "legacy-models", "traversal", "conflict", "index-mismatch"],
 )
 def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenario: str) -> None:
     """Execute the actual PS5.1 extraction path using a small six-pack ZIP."""
@@ -246,19 +250,42 @@ def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenar
     )
     if scenario == "legacy-models":
         body = body.replace("-Manifest $m\n", "-Manifest $m -ExpectedVersion '1.0.0-beta.20'\n")
+    # PowerShell Core can pass a module path that omits Windows PowerShell's
+    # built-in Utility module. Bind the PS5.1 fixture to its own built-in module.
+    body = body.replace(
+        "$m = Get-Content",
+        "Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility')\n$m = Get-Content",
+        1,
+    )
+    if scenario == "complete-reuse":
+        # After a successful extraction, remove the archive and make any archive
+        # fetch fail. The complete station must be verified and reused locally.
+        body += (
+            "\nRemove-Item -LiteralPath '" + str(archive).replace("'", "''") + "'\n"
+            "function Get-ReleaseAsset { return [pscustomobject]@{name='station-models.json'} }\n"
+            "function Save-ReleaseAsset { param($Asset, $Target) "
+            "Copy-Item -LiteralPath '"
+            + str(manifest_path).replace("'", "''")
+            + "' -Destination $Target }\n"
+            "function Assert-AssetDigest {}\n"
+            "Save-StationBundle -Release ([pscustomobject]@{}) -Root '"
+            + str(root).replace("'", "''")
+            + "'\n"
+        )
     runner.write_text(body, encoding="utf-8")
     result = subprocess.run(
         [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
         text=True,
         capture_output=True,
         timeout=30,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
-    if scenario in {"complete", "legacy-models"}:
+    if scenario in {"complete", "complete-reuse", "legacy-models"}:
         assert result.returncode == 0, result.stdout + result.stderr
         assert {
             str(p.relative_to(root)).replace("\\", "/"): p.read_bytes()
             for p in root.rglob("*")
-            if p.is_file()
+            if p.is_file() and p.name != "station-models.json"
         } == files
     else:
         assert result.returncode != 0, result.stdout + result.stderr

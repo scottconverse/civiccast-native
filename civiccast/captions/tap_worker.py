@@ -95,7 +95,7 @@ from civiccast.captions.tap_batch_diagnostic import (
     batch_diagnostic_from_env,
 )
 from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker, ReviewPersistenceMode
-from civiccast.egress.gst.audio_tap import read_program_boundary
+from civiccast.egress.gst.audio_tap import read_program_boundary, read_segment_start_seconds
 
 if TYPE_CHECKING:
     from civiccast.translate.service import TranslationProvider
@@ -2533,11 +2533,13 @@ class CaptionTapWorker:
                 raise ValueError(f"expected mono s16le tap audio, got {channels}ch/{width * 8}-bit")
             if not frames:
                 raise ValueError("segment contains no audio frames")
+            start = read_segment_start_seconds(path)
         except Exception:
             _LOG.exception("Unreadable caption tap segment for channel %s: %s", channel_id, path)
             return None
         duration = len(frames) / 2 / rate
-        start = index * self._segment_seconds
+        if start is None:  # Legacy audio, created before explicit running-time metadata.
+            start = index * self._segment_seconds
         return AudioChunk(
             chunk_id=f"{channel_id}-tap-{index:06d}",
             start_seconds=start,

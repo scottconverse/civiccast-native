@@ -201,3 +201,44 @@ def test_horizon_continuation_is_one_play_but_repeat_is_another(
     rows = reporting_store.list_as_run("civiccast-station")
     assert len(rows) == 2
     assert [row.duration_s for row in rows] == [90, 30]
+
+
+def test_repeated_short_program_with_increasing_late_offsets_is_separate_airings(reporting_store):
+    recorder = StoreAsRunRecorder(reporting_store)
+    start = datetime(2026, 10, 30, tzinfo=UTC)
+    # R7's increasing join offsets previously merged the first three repeats.
+    for index, offset in enumerate((3.583484, 3.614415, 6.251983, 0.410173)):
+        occurrence = start + timedelta(seconds=38 * index)
+        actual = occurrence + timedelta(seconds=offset)
+        recorder.record_transition(
+            channel_id="education",
+            source_kind="program",
+            asset_id="asset-a",
+            source_label="Short program",
+            actual_start=actual,
+            proof_event_id=f"repeat-{index}",
+            schedule_item_id="same-schedule-row",
+            source_offset_seconds=offset,
+            schedule_occurrence_start=occurrence,
+        )
+        # A conform-horizon event within this repeat must not invent another airing.
+        recorder.record_transition(
+            channel_id="education",
+            source_kind="program",
+            asset_id="asset-a",
+            source_label="Short program",
+            actual_start=actual + timedelta(seconds=10),
+            proof_event_id=f"horizon-{index}",
+            schedule_item_id="same-schedule-row",
+            source_offset_seconds=offset + 10,
+            schedule_occurrence_start=occurrence,
+        )
+    recorder.close_open(channel_id="education", actual_end=start + timedelta(seconds=152))
+    rows = sorted(
+        reporting_store.list_as_run("civiccast-station"), key=lambda row: row.actual_start
+    )
+    assert len(rows) == 4
+    assert [row.scheduled_start for row in rows] == [
+        start + timedelta(seconds=38 * i) for i in range(4)
+    ]
+    assert [row.duration_s for row in rows] == [38, 40, 32, 37]

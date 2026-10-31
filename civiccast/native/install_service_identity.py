@@ -235,6 +235,26 @@ def _grant_tree_native_sid(
             handle.Close()
 
 
+def prepare_model_store_permissions(install_root: Path) -> None:
+    """Make only model DATA writable before D3 first starts the upgraded service.
+
+    This does not register/start/stop a service or migrate credentials. D4 still
+    owns the full identity migration; an existing virtual account needs these
+    permissions earlier to migrate Ollama's manifests-v2 during its health gate.
+    """
+    from civiccast.native.admin_recovery import _require_elevation
+
+    _require_elevation()
+    root = install_root.absolute()
+    if not (root / "runtime" / "python.exe").is_file():
+        raise RuntimeError("Model permission preparation requires the installed runtime root.")
+    for model_store in (
+        root / "models" / "ollama",
+        root / "packs" / "local-ai-model" / "models",
+    ):
+        _grant_tree(model_store, "M")
+
+
 def configure_service_identity(install_root: Path) -> None:
     """Run elevated after registration, before any normal service startup.
 
@@ -350,11 +370,7 @@ def configure_service_identity(install_root: Path) -> None:
                 # maintains this model DATA store thereafter. Keep executable
                 # runtimes read/execute; grant Modify only inside the two staged
                 # model-store locations (including the legacy pack fallback).
-                for model_store in (
-                    root / "models" / "ollama",
-                    root / "packs" / "local-ai-model" / "models",
-                ):
-                    _grant_tree(model_store, "M")
+                prepare_model_store_permissions(root)
                 _grant_database_key_read()
                 _grant_service_environment_read()
                 # Explicit station-state overrides keep their location and contents.

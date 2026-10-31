@@ -104,7 +104,8 @@ def test_virtual_account_configuration_uses_null_password(installed, monkeypatch
     assert calls[0][9] is None
 
 
-def test_model_data_is_writable_but_runtime_stays_read_only(installed, monkeypatch):
+@pytest.mark.parametrize("phase", ["pre-upgrade", "registration"])
+def test_model_data_is_writable_but_runtime_stays_read_only(installed, monkeypatch, phase):
     import win32security
 
     from civiccast.native.service_identity import SERVICE_SID, restrict_data_directory
@@ -119,7 +120,13 @@ def test_model_data_is_writable_but_runtime_stays_read_only(installed, monkeypat
     monkeypatch.setattr(migration, "restrict_data_directory", restrict_data_directory)
     monkeypatch.setattr(migration, "_grant_tree", grant_windows_tree)
 
-    migration.configure_service_identity(root)
+    if phase == "pre-upgrade":
+        restrict_data_directory(root, writable=False)
+        grant_windows_tree(root, "RX")
+        migration.prepare_model_store_permissions(root)
+        assert state["starts"] == 0
+    else:
+        migration.configure_service_identity(root)
 
     def service_mask(path):
         acl = win32security.GetFileSecurity(

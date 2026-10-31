@@ -20,10 +20,14 @@ constructs an actual ``Gst.Element``.
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import types
+from unittest.mock import Mock
 
 import pytest
+
+from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter, read_program_boundary
 
 _ENGINE_MODULE_NAME = "civiccast.egress.gst.engine"
 
@@ -121,3 +125,156 @@ def test_audio_tap_caps_unchanged_mono_16k_s16le(engine_module) -> None:
     assert caps_spec.props["caps"] == (
         "audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved"
     )
+
+
+def test_internal_occurrence_fences_before_deferred_publication(engine_module, tmp_path) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._caption_source_identity = ("slate", None, None, "startup")
+    writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    engine.audio_tap_writer = writer
+    callbacks = []
+    engine_module.GLib.idle_add = lambda *args: callbacks.append(args)
+    source = {
+        "kind": "program",
+        "asset_id": "a",
+        "schedule_item_id": "row",
+        "schedule_occurrence_start": "2026-10-30T00:00:00Z",
+        "event_id": "first",
+    }
+    try:
+        engine._select_caption_source(source, 100)
+        outgoing = engine._caption_program_token
+        assert engine._caption_fence_pending is True
+        assert not (tmp_path / "program-boundary.json").exists()
+        # A continuation may have a new event marker, but retains its occurrence.
+        engine._select_caption_source({**source, "event_id": "horizon"}, 200)
+        assert len(callbacks) == 1
+        # A repeat is a new owner even with the same asset and schedule row.
+        engine._select_caption_source(
+            {**source, "schedule_occurrence_start": "2026-10-30T00:00:38Z"}, 300
+        )
+        incoming = engine._caption_program_token
+        assert outgoing != incoming
+        writer.write_pcm_s16le(b"\x01\x00" * 10, program_token=outgoing)
+        # An older deferred callback cannot publish/reinstall the superseded owner.
+        first, *args = callbacks[0]
+        assert first(*args) is False
+        assert not (tmp_path / "program-boundary.json").exists()
+        last, *args = callbacks[1]
+        assert last(*args) is False
+        assert read_program_boundary(tmp_path) == (incoming, 0)
+        assert engine._caption_fence_pending is False
+        engine._select_caption_source({"kind": "slate", "event_id": "role-slate"}, 400)
+        assert engine._caption_program_token != incoming
+        assert len(callbacks) == 3
+    finally:
+        assert writer.close() == "drained"
+    assert not list(tmp_path.glob("chunk-*.wav")), "outgoing callback crossed the occurrence fence"
+
+
+def test_reload_fence_is_adopted_once_even_for_same_occurrence(engine_module) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._finish_caption_program = Mock()
+    engine._begin_caption_program(100)
+    token = engine._caption_program_token
+    source = {"kind": "program", "asset_id": "a", "schedule_occurrence_start": "same"}
+    engine._caption_source_identity = ("program", "a", None, "same")
+    engine._select_caption_source(source, 101)
+    assert engine._caption_program_token == token
+    assert engine._caption_adopt_next_source is False
+    engine_module.GLib.idle_add = Mock()
+    engine._select_caption_source({**source, "schedule_occurrence_start": "next"}, 200)
+    assert engine._caption_program_token != token
+    assert engine_module.GLib.idle_add.call_count == 1
+
+
+def test_audio_ownership_pair_publishes_only_after_writer_fence(engine_module) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._caption_audio_state = ("outgoing", 100)
+    observed = []
+    engine.audio_tap_writer = types.SimpleNamespace(
+        fence_program=lambda token: observed.append((token, engine._caption_audio_state)) or 7,
+    )
+    token, first = engine._fence_caption_program(200)
+    assert observed == [(token, ("outgoing", 100))]
+    assert engine._caption_audio_state == (token, 200)
+    assert first == 7
+
+
+def test_initial_selected_source_adopts_startup_caption_token(engine_module) -> None:
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._caption_program_token = ""
+    engine._fence_caption_program = Mock(return_value=("next", None))
+    engine_module.GLib.idle_add = Mock()
+    source = {"kind": "src0", "event_id": "startup"}
+    engine._select_caption_source(source, 100)
+    assert engine._caption_program_token == ""
+    engine._fence_caption_program.assert_not_called()
+    engine_module.GLib.idle_add.assert_not_called()
+    engine._select_caption_source({"kind": "slate", "event_id": "slate"}, 200)
+    engine._fence_caption_program.assert_called_once_with(200)
+
+
+def test_selected_frame_uses_serialized_identity_without_selector_read(engine_module) -> None:
+    gst = engine_module.Gst
+    gst.PadProbeType = types.SimpleNamespace(EVENT_DOWNSTREAM=1, BUFFER=2)
+    gst.PadProbeReturn = types.SimpleNamespace(OK=0)
+    pad = Mock()
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine.selector = Mock()
+    engine.selector.get_static_pad.return_value = pad
+    engine.selector.get_property.side_effect = AssertionError("streaming selector lock read")
+    engine._measure_first_buffer = Mock(return_value=(None, 123, None))
+    engine._select_caption_source = Mock()
+    engine._install_source_output_observer()
+    observe = pad.add_probe.call_args.args[1]
+    source = {"kind": "program", "event_id": "actual", "asset_id": "a"}
+    structure = Mock()
+    structure.get_name.return_value = "civiccast-source"
+    structure.get_string.return_value = json.dumps(source)
+    event = Mock()
+    event.get_structure.return_value = structure
+    observe(pad, types.SimpleNamespace(type=1, get_event=lambda: event))
+    engine._select_caption_source.assert_not_called()
+    observe(pad, types.SimpleNamespace(type=2))
+    engine.selector.get_property.assert_not_called()
+    engine._select_caption_source.assert_called_once_with(source, 123)
+    assert engine._source_output_pending == [(123, source)]
+    # A sticky source identity replayed after switching away and back must
+    # describe the returned program, rather than the last selected role.
+    for selected in ({"kind": "slate", "event_id": "slate"}, source):
+        structure.get_string.return_value = json.dumps(selected)
+        observe(pad, types.SimpleNamespace(type=1, get_event=lambda: event))
+        observe(pad, types.SimpleNamespace(type=2))
+        assert engine._select_caption_source.call_args.args == (selected, 123)
+    assert engine._select_caption_source.call_count == 3
+    engine.selector.get_property.assert_not_called()
+
+
+def test_source_role_marker_yields_to_rich_identity_before_same_frame(engine_module) -> None:
+    gst = engine_module.Gst
+    gst.PadProbeType = types.SimpleNamespace(EVENT_DOWNSTREAM=1, BUFFER=2)
+    gst.PadProbeReturn = types.SimpleNamespace(OK=0)
+    gst.EventType = types.SimpleNamespace(SEGMENT=3, CUSTOM_DOWNSTREAM_STICKY=4)
+    structure = Mock()
+    gst.Structure = types.SimpleNamespace(new_empty=Mock(return_value=structure))
+    gst.Event = types.SimpleNamespace(new_custom=Mock(return_value="role-event"))
+    pad = Mock()
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+    engine._install_source_role_marker(pad, "slate")
+    mark = pad.add_probe.call_args.args[1]
+    segment = types.SimpleNamespace(type=3, get_structure=lambda: None)
+    mark(pad, types.SimpleNamespace(type=1, get_event=lambda: segment))
+    mark(pad, types.SimpleNamespace(type=2))
+    pad.push_event.assert_called_once_with("role-event")
+    gst.Event.new_custom.assert_called_once_with(4, structure)
+    source = json.loads(structure.set_value.call_args.args[1])
+    assert source["kind"] == "slate"
+    assert source["event_id"]
+    pad.push_event.reset_mock()
+    mark(pad, types.SimpleNamespace(type=1, get_event=lambda: segment))
+    rich = types.SimpleNamespace(get_name=lambda: "civiccast-source")
+    event = types.SimpleNamespace(type=4, get_structure=lambda: rich)
+    mark(pad, types.SimpleNamespace(type=1, get_event=lambda: event))
+    mark(pad, types.SimpleNamespace(type=2))
+    pad.push_event.assert_not_called()

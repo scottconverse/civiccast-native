@@ -130,7 +130,9 @@ The **Source** column uses these words:
 - `slate`: the safety card the station shows in place of video, for example when a feed fails.
 - `spot`: a sponsor message. In beta.11 this word never appears. See Underwriting below.
 
-**Output start observed** identifies an engine observation, not a physical receiver check. An open row shows **Awaiting end** and **Not finalized** until the next source or stop closes it. Continuations of one scheduled program across preparation windows stay one play; a new rotation counts as another play. Shows and category totals clip airtime to the requested report window. Historical Beta20 rows are retained unchanged and are not retroactively repaired.
+**Output start observed** identifies an engine observation, not a physical receiver check. An open row shows **Awaiting end** with provisional elapsed airtime labelled **in progress** until the next source or stop closes it. Continuations of one scheduled program across preparation windows stay one play; a new rotation counts as another play. Shows and category totals clip airtime to the requested report window. Historical Beta20 rows are retained unchanged and are not retroactively repaired.
+
+Report durations and aggregate airtime count only the part of each airing within the selected date range. An ongoing airing contributes provisional elapsed airtime through the report request time, labelled **in progress**. Its end remains **Awaiting end**. CSV and XML use the same window durations while retaining the original recorded start/end timestamps; the stored ledger is unchanged. Repeat occurrences count separately when distinct output starts were recorded.
 
 ### Download a report file
 

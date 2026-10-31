@@ -15,8 +15,11 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import pytest
+
 from civiccast.egress.hls_relay import (
     HlsRelaySupervisor,
+    _claim_playlist_snapshot,
     _clear_hls_window,
     _ManifestPublisher,
     _relay_hls_output_args,
@@ -25,6 +28,24 @@ from civiccast.egress.hls_relay import (
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.sinks import HlsSink
 from civiccast.stream._ffmpeg import FfmpegNotFoundError
+
+
+def test_private_mux_playlist_replacement_with_held_publisher_snapshot(tmp_path: Path) -> None:
+    staging = tmp_path / "playlist.mux.m3u8"
+    pending = tmp_path / "playlist.mux.m3u8.tmp"
+    staging.write_bytes(b"old playlist")
+    snapshot = _claim_playlist_snapshot(staging)
+    with snapshot.open("rb") as reader:
+        pending.write_bytes(b"new playlist")
+        pending.replace(staging)
+        # Exercise replacement of an existing destination too, while the
+        # publisher still holds its reader. Windows MoveFileEx denied this
+        # operation when that reader held staging itself, even with share=7.
+        pending.write_bytes(b"newest playlist")
+        pending.replace(staging)
+        assert reader.read() == b"old playlist"
+        assert staging.read_bytes() == b"newest playlist"
+    snapshot.unlink()
 
 
 def _config(*sinks: EgressSinkSpec, channel_id: str = "gov") -> EgressConfig:
@@ -226,6 +247,116 @@ def test_publisher_does_not_publish_a_playlist_with_a_missing_segment(
     publisher._publish_once()
 
     assert manifest.read_bytes() == original
+
+    # A delayed segment can arrive after staging has been consumed, with no
+    # further muxer window. Retry the retained bytes without a private file.
+    assert not staging.exists()
+    (directory / "seg000000002.ts").write_bytes(b"late segment")
+    publisher._publish_once()
+    assert manifest.read_bytes() == _playlist([(2.0, "seg000000002.ts")])
+
+
+def test_publisher_retries_public_write_without_a_new_private_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "playlist.m3u8"
+    staging = tmp_path / "playlist.mux.m3u8"
+    old_segment = "seg000000001.ts"
+    (tmp_path / old_segment).write_bytes(b"old segment")
+    original = _playlist([(2.0, old_segment)])
+    manifest.write_bytes(original)
+    segment = "seg000000002.ts"
+    (tmp_path / segment).write_bytes(b"segment")
+    publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging)
+    window = _playlist([(2.0, segment)])
+    staging.write_bytes(window)
+    write_manifest = publisher._write_manifest
+    monkeypatch.setattr(publisher, "_write_manifest", lambda _data: False)
+
+    publisher._publish_once()
+    assert manifest.read_bytes() == original
+    assert not staging.exists()
+
+    monkeypatch.setattr(publisher, "_write_manifest", write_manifest)
+    publisher._publish_once()
+    assert manifest.read_bytes() == window
+    assert not list(tmp_path.glob("*.snapshot"))
+
+
+@pytest.mark.parametrize("pending", [b"partial playlist", _playlist([(2.0, "seg000000003.ts")])])
+def test_publisher_invalid_pending_preserves_publication_and_segments(
+    tmp_path: Path,
+    pending: bytes,
+) -> None:
+    manifest = tmp_path / "playlist.m3u8"
+    staging = tmp_path / "playlist.mux.m3u8"
+    old = "seg000000001.ts"
+    active = "seg000000002.ts"
+    ahead = "seg000000004.ts"
+    for name in (old, active, ahead):
+        (tmp_path / name).write_bytes(b"segment")
+    working = _playlist([(2.0, active)])
+    manifest.write_bytes(working)
+    staging.write_bytes(working)
+    clock = _Clock()
+    publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging, clock=clock)
+    staging.write_bytes(pending)
+
+    clock.now += 10.0
+    publisher._publish_once()
+    publisher._publish_once()  # No new private file, still must not prune.
+    assert manifest.read_bytes() == working
+    assert (tmp_path / old).exists()
+    assert (tmp_path / ahead).exists()
+    assert not staging.exists()
+
+    # A later complete window supersedes the invalid snapshot.
+    replacement = _playlist([(2.0, ahead)])
+    staging.write_bytes(replacement)
+    publisher._publish_once()
+    assert manifest.read_bytes() == replacement
+
+
+@pytest.mark.parametrize("initial", [False, True])
+def test_publisher_retries_owned_snapshot_read_without_advertising_initial_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    initial: bool,
+) -> None:
+    manifest = tmp_path / "playlist.m3u8"
+    staging = tmp_path / "playlist.mux.m3u8"
+    segment = "seg000000001.ts"
+    (tmp_path / segment).write_bytes(b"segment")
+    window = _playlist([(2.0, segment)])
+    if initial:
+        staging.write_bytes(window)
+    read_bytes = Path.read_bytes
+
+    def blocked_snapshot_read(path: Path) -> bytes:
+        if path.suffix == ".snapshot":
+            raise PermissionError("busy snapshot")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", blocked_snapshot_read)
+    publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging)
+    if not initial:
+        staging.write_bytes(window)
+        publisher._publish_once()
+    assert not staging.exists()
+    assert len(list(tmp_path.glob("*.snapshot"))) == 1
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    publisher._publish_once()
+    if initial:
+        assert not manifest.exists()  # Prior-session windows stay unadvertised.
+    else:
+        assert manifest.read_bytes() == window
+    assert not list(tmp_path.glob("*.snapshot"))
+
+    staging.write_bytes(window)
+    publisher._publish_once()
+    assert manifest.read_bytes() == window
 
 
 def test_fresh_restart_withdraws_old_playlist_and_retains_its_segments_until_expiry(

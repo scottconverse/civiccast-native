@@ -218,6 +218,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Lock, RLock, Thread
 from typing import IO, Protocol
+from uuid import uuid4
 
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.relay_reclaim import (
@@ -1186,6 +1187,18 @@ def _close_quietly(handle: IO[str] | None) -> None:
         handle.close()
 
 
+def _claim_playlist_snapshot(path: Path) -> Path:
+    """Detach a completed playlist before opening it for the publisher.
+
+    FFmpeg's ordinary Windows replacement fails while its destination has an
+    open reader, even with delete sharing. Moving to a unique absent name first
+    leaves that destination free for the next muxer publication.
+    """
+    snapshot = path.with_name(f".{path.name}.{uuid4().hex}.snapshot")
+    path.rename(snapshot)
+    return snapshot
+
+
 class _ManifestPublisher:
     """Mirrors a relay's private staging playlist onto the advertised manifest.
 
@@ -1217,11 +1230,12 @@ class _ManifestPublisher:
     serve (no advertised file yet, or a share mode that denies write), and it
     is no worse than the pre-U51 behaviour it replaces.
 
-    Reading the staging file costs this design nothing, because ffmpeg's write
-    of it is atomic on this build -- measured over one 14 s replay: 7 file ids
-    for 7 updates, the size never shrinking under a single id, and the file
-    never absent between updates -- so what this thread reads is always a WHOLE
-    window, never a half-written one.
+    The publisher first renames each completed staging file to a unique owned
+    snapshot, then reads that snapshot. It never opens the muxer's destination,
+    so its own reader cannot deny the next Windows replacement. FFmpeg writes
+    complete windows atomically and retains its rolling list in memory; taking
+    the completed staging name does not change its next window. Cached snapshot
+    bytes permit publication retries while the muxer has no new window.
 
     Contract, modeled on :class:`_RelayLogWriter`:
 
@@ -1255,6 +1269,12 @@ class _ManifestPublisher:
         self._thread: Thread | None = None
         self._clock: Callable[[], float] = clock or time.monotonic
         self._published_segments = self._read_published_segments()
+        self._staging_segments: dict[str, float] | None = {}
+        self._pending_data: bytes | None = None
+        self._snapshot_path: Path | None = None
+        self._snapshot_loaded = False
+        self._snapshot_publish = False
+        self._failing = False
         self._retired_until: dict[str, float] = {}
         now = self._clock()
         if previous_window is not None:
@@ -1264,12 +1284,10 @@ class _ManifestPublisher:
                     self._retired_until.get(name, 0.0),
                     now + previous_window.retired_grace_s,
                 )
+        # Retain a surviving initial window for pruning, but never advertise it
+        # as a new session's output. This also applies if its first read fails.
+        self._capture_staging_window(publish=False)
         self._remember_existing_orphans()
-        #: What the staging file looked like when this publisher started. A
-        #: surviving prior-session staging window is never advertised as the
-        #: new session's window -- only what changes from now on is.
-        self._last = self._signature()
-        self._failing = False
 
     # --- lifecycle -------------------------------------------------------------------
 
@@ -1309,19 +1327,14 @@ class _ManifestPublisher:
                 self._warn_once()
 
     def _publish_once(self) -> None:
-        signature = self._signature()
-        if signature is None or signature == self._last:
-            # No staging window yet (the muxer's first cut is a segment away) or
-            # nothing changed -- publish NOTHING, and never un-publish.
+        self._capture_staging_window()
+        data = self._pending_data
+        if data is None:
+            # Quiet muxers need no rewrite. Cached segment ownership still
+            # allows expired files to be pruned after staging was consumed.
             self._prune_segments()
             return
-        try:
-            data = self._staging_path.read_bytes()
-        except OSError:
-            # The muxer replaced it between the stat and the read, or the file
-            # is not readable right now. Retried next tick; never fatal.
-            return
-        segments = _playlist_segment_durations(data)
+        segments = self._staging_segments
         if segments is None or any(
             not (self._manifest_path.parent / name).is_file() for name in segments
         ):
@@ -1336,9 +1349,46 @@ class _ManifestPublisher:
             return
         self._remember_retired_segments(segments)
         self._published_segments = segments
-        self._last = signature
+        self._pending_data = None
         self._failing = False
         self._prune_segments()
+
+    def _release_staging_snapshot(self) -> bool:
+        snapshot = self._snapshot_path
+        if snapshot is None:
+            return True
+        try:
+            snapshot.unlink(missing_ok=True)
+        except OSError:
+            self._warn_once()
+            return False
+        self._snapshot_path = None
+        return True
+
+    def _capture_staging_window(self, *, publish: bool = True) -> None:
+        if self._snapshot_loaded and not self._release_staging_snapshot():
+            return  # Keep at most one owned snapshot when cleanup is blocked.
+        if self._snapshot_path is None:
+            try:
+                self._snapshot_path = _claim_playlist_snapshot(self._staging_path)
+            except FileNotFoundError:
+                return
+            except OSError:
+                self._warn_once()
+                return
+            self._snapshot_loaded = False
+            self._snapshot_publish = publish
+            self._staging_segments = None  # No pruning before this window is read.
+        try:
+            data = self._snapshot_path.read_bytes()
+        except OSError:
+            self._warn_once()
+            return  # Retry the same detached snapshot, even if the muxer stops.
+        self._staging_segments = _playlist_segment_durations(data)
+        if self._snapshot_publish:
+            self._pending_data = data
+        self._snapshot_loaded = True
+        self._release_staging_snapshot()
 
     def _read_published_segments(self) -> dict[str, float] | None:
         try:
@@ -1362,17 +1412,10 @@ class _ManifestPublisher:
             return
         now = self._clock()
         grace = sum(published.values()) + max(published.values(), default=0.0)
-        if not self._staging_path.is_file():
-            active_staging: dict[str, float] = {}
-        else:
-            try:
-                staging = _playlist_segment_durations(self._staging_path.read_bytes())
-            except OSError:
-                staging = None
-            if staging is None:
-                return
-            active_staging = staging
-            grace = max(grace, sum(staging.values()) + max(staging.values(), default=0.0))
+        active_staging = self._staging_segments
+        if active_staging is None:
+            return
+        grace = max(grace, sum(active_staging.values()) + max(active_staging.values(), default=0.0))
         active = set(published) | set(active_staging)
         try:
             candidates = self._manifest_path.parent.glob("seg*.ts")
@@ -1428,10 +1471,7 @@ class _ManifestPublisher:
         published = self._published_segments
         if published is None:
             return
-        try:
-            staging = _playlist_segment_durations(self._staging_path.read_bytes())
-        except OSError:
-            return
+        staging = self._staging_segments
         if staging is None or any(
             not (self._manifest_path.parent / name).is_file() for name in staging
         ):
@@ -1469,14 +1509,6 @@ class _ManifestPublisher:
             self._warn_once()
 
     # --- the write -------------------------------------------------------------------
-
-    def _signature(self) -> tuple[int, int] | None:
-        """The staging file's identity, or None when it is absent/unreadable."""
-        try:
-            stat = self._staging_path.stat()
-        except OSError:
-            return None
-        return (stat.st_mtime_ns, stat.st_size)
 
     def _write_manifest(self, data: bytes) -> bool:
         """Publish ``data`` as the advertised manifest. False means it did not land."""

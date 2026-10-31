@@ -1,10 +1,14 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 
 import type { CaptionStatusResponse, EgressCaptionProofSample } from '../types/api.generated'
 import { CaptionStatusView } from './CaptionStatusCard'
 
-afterEach(cleanup)
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-01-01T12:00:00Z'))
+})
+afterEach(() => { cleanup(); vi.useRealTimers() })
 
 function proof(overrides: Partial<EgressCaptionProofSample> = {}): EgressCaptionProofSample {
   return {
@@ -66,7 +70,8 @@ describe('CaptionStatusView', () => {
     vi.setSystemTime(new Date('2026-01-01T12:05:00Z'))
     try {
       const { container } = render(<CaptionStatusView status={ON} proofs={[proof()]} />)
-      expect(container.textContent).toContain('Stale (older than 120 seconds)')
+      expect(container.textContent).toContain('Stale (older than 120 seconds or invalid sample time)')
+      expect(container.textContent).not.toContain('Captions on')
       expect(container.textContent).toContain('Sampled')
     } finally {
       vi.useRealTimers()
@@ -78,6 +83,20 @@ describe('CaptionStatusView', () => {
       <CaptionStatusView status={undefined} proofs={undefined} error={new Error('boom')} />,
     )
     expect(getByRole('alert').textContent).toContain('boom')
+  })
+
+  it.each(['invalid', '2026-01-01T12:05:00Z'])('never treats a %s proof time as current delivery', (sampled_at) => {
+    const latest = proof({ sampled_at })
+    const { container } = render(<CaptionStatusView status={{ ...ON, latest }} proofs={[latest]} />)
+    expect(container.textContent).toContain('Caption proof stale')
+    expect(container.textContent).not.toContain('Captions on')
+  })
+
+  it('does not retain a green caption claim after a refresh fails', () => {
+    const { container } = render(<CaptionStatusView status={ON} proofs={[proof()]} error={new Error('Connection lost')} />)
+    expect(container.textContent).toContain('Caption status unavailable')
+    expect(container.textContent).not.toContain('Captions on')
+    expect(container.textContent).toContain('Speech generation, embedded-stream delivery')
   })
 })
 

@@ -211,6 +211,25 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
 
 
+def test_tap_worker_uses_embedded_audio_clock_instead_of_persistent_index(tmp_path: Path) -> None:
+    from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter
+
+    tap_root = tmp_path / "tap"
+    channel = tap_root / "education"
+    channel.mkdir(parents=True)
+    worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    _write_wav(channel / "chunk-000050.wav")
+    writer = RollingWavSegmentWriter(channel, segment_seconds=0.01, sample_rate_hz=1000)
+    writer.write_pcm_s16le(b"\x01\x00" * 10, running_time_seconds=1.375)
+    assert writer.close() == "drained"
+    chunk = worker._read_chunk("education", 51, channel / "chunk-000051.wav")
+    assert chunk is not None
+    assert chunk.start_seconds == 1.375
+    assert chunk.end_seconds == pytest.approx(1.385)
+    legacy = worker._read_chunk("education", 50, channel / "chunk-000050.wav")
+    assert legacy is not None and legacy.start_seconds == 50.0
+
+
 def test_program_boundary_refuses_delayed_asr_and_feeds_only_incoming_captions(
     tmp_path: Path,
 ) -> None:

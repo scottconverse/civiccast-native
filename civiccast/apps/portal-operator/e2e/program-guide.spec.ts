@@ -214,7 +214,7 @@ test.describe('program guide screen', () => {
     await expect(page.getByText('City Council (Replay)').first()).toBeVisible()
     await expect(page.getByText('Weekly').first()).toBeVisible()
     await expect(
-      page.getByText(/first Jun 12, 9:00 PM · recurs Fri at 7:00 PM station time/),
+      page.getByText(/first Jun 12, 9:00:00 PM · recurs Fri at 7:00:00 PM station time/),
     ).toBeVisible()
     await expect(page.getByRole('button', { name: 'Disable' })).toBeVisible()
 

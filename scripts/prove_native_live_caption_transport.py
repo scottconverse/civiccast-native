@@ -33,8 +33,12 @@ sys.path.insert(0, str(ROOT))
 from civiccast.captions.models import CaptionCue  # noqa: E402
 from civiccast.egress.caption_embed import load_caption_cues_from_timed_text  # noqa: E402
 from civiccast.egress.caption_feed import CaptionFeedWorker  # noqa: E402
+from civiccast.egress.gst.audio_tap import read_program_boundary  # noqa: E402
 from civiccast.egress.gst.graph import (  # noqa: E402
+    AudioTapLeg,
+    ElementSpec,
     PlayoutGraph,
+    audio_encode_specs,
     caption_embed_leg_live,
     demo_test_graph,
     graph_to_json,
@@ -64,14 +68,48 @@ WORKER_EXIT_SECONDS: Final[float] = 15.0
 def build_live_caption_graph(output_ts: Path) -> PlayoutGraph:
     """Return a self-contained live graph using the production caption leg."""
 
+    graph = demo_test_graph(
+        out=str(output_ts.resolve()),
+        nsrc=1,
+        bitrate_kbps=750,
+    )
     return replace(
-        demo_test_graph(
-            out=str(output_ts.resolve()),
-            nsrc=1,
-            bitrate_kbps=750,
+        graph,
+        sources=(
+            replace(
+                graph.sources[0],
+                label="program",
+                audio=(
+                    ElementSpec("audiotestsrc", props={"is-live": True, "volume": 0.0}),
+                    ElementSpec("audioconvert"),
+                    ElementSpec("audioresample"),
+                    ElementSpec(
+                        "capsfilter",
+                        props={"caps": "audio/x-raw,format=F32LE,rate=48000,channels=2"},
+                    ),
+                ),
+            ),
         ),
+        audio_encoder=audio_encode_specs(codec="avenc_aac", bitrate_kbps=192, sample_rate=48000),
+        audio_tap=AudioTapLeg(tap_dir=str(output_ts.parent / "tap")),
         captions=caption_embed_leg_live(),
     )
+
+
+def _owned_cues(output_dir: Path, channel_id: str, cues: list[CaptionCue]) -> list[CaptionCue]:
+    """Assign saved speech to this proof's selected program, after its fence exists.
+
+    Production ASR assigns these IDs when processing the program's audio. This
+    transport proof replays already-produced sidecars, while still exercising the
+    same writer-published ownership token and the engine's unchanged rejection.
+    """
+    token, _ = read_program_boundary(output_dir / channel_id / "tap")
+    if not token:
+        return []
+    return [
+        cue.model_copy(update={"cue_id": f"{channel_id}-{token}-{index}"})
+        for index, cue in enumerate(cues)
+    ]
 
 
 def current_process_pipe_sddl() -> str:
@@ -315,8 +353,13 @@ def run_transport_proof(
         feed = CaptionFeedWorker(
             work_dir=sidecar_root,
             on_air_channels=lambda: list(REQUIRED_CHANNELS),
-            caption_cue_provider=lambda channel_id: cues_by_channel[channel_id],
+            caption_cue_provider=lambda channel_id: _owned_cues(
+                output_dir, channel_id, cues_by_channel[channel_id]
+            ),
             send_caption_cue=strategy.send_caption_cue,
+            program_token_provider=lambda channel_id: read_program_boundary(
+                output_dir / channel_id / "tap"
+            )[0],
         )
         deadline = time.monotonic() + FEED_DEADLINE_SECONDS
         feed_result = feed.run_once()

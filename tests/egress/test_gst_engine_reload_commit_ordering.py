@@ -49,6 +49,9 @@ class _Recorder:
 
 class _FakeState:
     NULL = "NULL"
+    PAUSED = "PAUSED"
+    PLAYING = "PLAYING"
+    VOID_PENDING = "VOID_PENDING"
 
 
 class _FakeStateChangeReturn:
@@ -105,6 +108,11 @@ class _FakeElementIterator:
 class _FakePipeline:
     def __init__(self, recorder: _Recorder) -> None:
         self.recorder = recorder
+        self.state = _FakeState.PLAYING
+        self.pending_state = _FakeState.VOID_PENDING
+
+    def get_state(self, _timeout: int) -> tuple[str, str, str]:
+        return _FakeStateChangeReturn.SUCCESS, self.state, self.pending_state
 
     def remove(self, element: _FakeOldElement) -> None:
         self.recorder.calls.append(f"pipeline.remove:{element.name}")
@@ -275,6 +283,9 @@ class _FakeOldPad:
 
     def get_name(self) -> str:
         return self.name
+
+    def get_parent_element(self) -> Any:
+        return getattr(self, "parent_element", None)
 
     def add_probe(self, mask: Any, callback: Any, *_args: Any) -> str:
         self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
@@ -752,6 +763,48 @@ def test_f1_unheld_video_cannot_commit_before_audio_prerolls(engine_module, defe
     engine._on_reload_first_buffer(audio, None, pending["txn_id"])
     assert pending["new_leg_ready"] is True
     assert commits == ["commit"]
+
+
+@pytest.mark.parametrize("old_eos", [False, True])
+def test_scheduled_start_waits_for_time_and_current_preroll(engine_module, monkeypatch, old_eos):
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    pending.update(switch_at_unix=105.0, old_leg_eos=old_eos)
+    engine._pending_reload = pending
+    clock, timers, commits = {"now": 100.0}, [], []
+    monkeypatch.setattr(engine_module.time, "time", lambda: clock["now"])
+    monkeypatch.setattr(
+        engine_module.GLib,
+        "timeout_add",
+        lambda *args: timers.append(args) or len(timers),
+        raising=False,
+    )
+    engine._commit_reload = lambda: commits.append("commit")
+    video, audio = pending["new_src_pads"]
+    engine._on_new_leg_hold(video, None, pending["txn_id"])
+    assert not pending["new_leg_ready"] and not timers
+    engine._on_new_leg_hold(audio, None, pending["txn_id"])
+    assert pending["new_leg_ready"] and timers[0][0] >= 5000
+    assert not commits
+    engine._on_scheduled_start(pending["txn_id"] - 1)
+    assert not commits
+    clock["now"] = 105.0
+    engine._on_scheduled_start(pending["txn_id"])
+    assert commits == ["commit"]
+
+
+def test_outgoing_eos_cannot_commit_scheduled_program_early(engine_module, monkeypatch):
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    pending.update(switch_at_unix=105.0, new_leg_ready=True, holds_awaited=0)
+    engine._pending_reload = pending
+    monkeypatch.setattr(engine_module.time, "time", lambda: 100.0)
+    engine._begin_reload_commit = lambda _: pytest.fail("scheduled source selected early")
+    assert engine._commit_reload() is False
+    assert engine._force_deferred_boundary(pending["txn_id"], reason="stall") is False
+    assert not pending.get("boundary_forced", False)
 
 
 def test_f1_duplicate_hold_cannot_substitute_for_unprerolled_audio(engine_module) -> None:
@@ -4652,10 +4705,11 @@ class _StubLeg:
     audio: tuple[Any, ...] = ()
 
 
+@pytest.mark.parametrize("refusal", ["failure", "raise"])
 def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
-    engine_module, monkeypatch: pytest.MonkeyPatch
+    engine_module, monkeypatch: pytest.MonkeyPatch, refusal: str
 ) -> None:
-    """A boolean state refusal must unwind the incoming leg immediately."""
+    """A failed or raising state change must unwind the incoming leg immediately."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     engine._reload_txn_counter = count(1)
@@ -4676,10 +4730,17 @@ def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
 
     class _IncomingElement(_FakeOldElement):
         def sync_state_with_parent(self) -> bool:
-            recorder.calls.append(f"sync:{self.name}")
-            return self.name != "refused"
+            return self.set_state(engine.pipeline.state) != _FakeStateChangeReturn.FAILURE
 
-    incoming = [_IncomingElement(name, recorder) for name in ("started", "refused", "later")]
+        def set_state(self, _state: Any) -> str:
+            recorder.calls.append(f"sync:{self.name}")
+            if self.name == "refused":
+                if refusal == "raise":
+                    raise RuntimeError("refused")
+                return _FakeStateChangeReturn.FAILURE
+            return _FakeStateChangeReturn.SUCCESS
+
+    incoming = [_IncomingElement(name, recorder) for name in ("later", "refused", "started")]
     monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
     monkeypatch.setattr(engine, "_link_leg_to_selectors", lambda *_args: (video, audio))
     retired: list[list[Any]] = []
@@ -4710,6 +4771,93 @@ def test_reload_state_sync_failure_aborts_without_starting_remaining_elements(
     assert not any(call.startswith("set_state:outgoing:") for call in recorder.calls)
     assert any(call.startswith("remove_probe:incoming-video:") for call in recorder.calls)
     assert any(call.startswith("remove_probe:incoming-audio:") for call in recorder.calls)
+
+
+@pytest.mark.parametrize("playlist", [False, True], ids=["source-leg", "playlist-concats"])
+@pytest.mark.parametrize("decoder_async", [False, True], ids=["immediate", "decoder-async"])
+def test_reload_activates_downstream_before_immediate_producers(
+    engine_module, monkeypatch: pytest.MonkeyPatch, playlist: bool, decoder_async: bool
+) -> None:
+    """A producer can start inside sync, before the next element is activated.
+
+    Model the resulting FLUSHING as a stopped producer, despite successful state
+    sync. Playlist concats are constructed before their feeder chains, so merely
+    reversing the complete construction list would still fail that shape. Async
+    decoder preroll must not change the target applied to its live upstream source.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    engine._plan_eos_held = False
+    engine.reload_timeout_s = 10
+    monkeypatch.setattr(engine_module.Gst.PadProbeType, "BLOCK", 16, raising=False)
+    monkeypatch.setattr(
+        engine_module.GLib, "timeout_add_seconds", lambda *_args: 123, raising=False
+    )
+    engine.selector_sink_pads = [_FakeOldPad("old-video", recorder, None)]
+    engine.audio_sink_pads = [_FakeOldPad("old-audio", recorder, None)]
+    engine._source_leg_elements = [[]]
+
+    class _IncomingElement(_FakeOldElement):
+        def __init__(self, name: str, downstream: Any = None, *, producer: bool = False):
+            super().__init__(name, recorder)
+            self.downstream = downstream
+            self.producer = producer
+            self.active = False
+            self.first_buffer_delivered = False
+
+        def sync_state_with_parent(self) -> bool:
+            # decodebin can put the parent into PAUSED/PAUSED while it awaits
+            # input. Sampling it again strands a live upstream source there.
+            state = engine.pipeline.pending_state
+            if state == _FakeState.VOID_PENDING:
+                state = engine.pipeline.state
+            return self.set_state(state) != _FakeStateChangeReturn.FAILURE
+
+        def set_state(self, state: Any) -> str:
+            self.active = True
+            recorder.calls.append(f"sync:{self.name}")
+            if self.name == "decodebin" and decoder_async:
+                engine.pipeline.state = _FakeState.PAUSED
+                engine.pipeline.pending_state = _FakeState.PAUSED
+            if self.producer:
+                if state != _FakeState.PLAYING:
+                    recorder.calls.append(f"waiting-for-playing:{self.name}")
+                    return _FakeStateChangeReturn.NO_PREROLL
+                downstream = self.downstream
+                while downstream is not None:
+                    if not downstream.active:
+                        recorder.calls.append(f"flushing:{self.name}")
+                        return _FakeStateChangeReturn.SUCCESS
+                    downstream = downstream.downstream
+                self.first_buffer_delivered = True
+            return _FakeStateChangeReturn.SUCCESS
+
+    video_concat = _IncomingElement("video-concat") if playlist else None
+    audio_concat = _IncomingElement("audio-concat") if playlist else None
+    video_tail = _IncomingElement("video-caps", video_concat)
+    audio_tail = _IncomingElement("audio-caps", audio_concat)
+    audio_convert = _IncomingElement("audio-convert", audio_tail)
+    decoder = _IncomingElement("decodebin", video_tail)
+    video_source = _IncomingElement("video-source", decoder, producer=True)
+    audio_source = _IncomingElement("audio-source", audio_convert, producer=True)
+    incoming = [video_source, decoder, video_tail, audio_source, audio_convert, audio_tail]
+    if playlist:
+        incoming = [video_concat, audio_concat, *incoming]
+    video = _FakeOldPad("incoming-video", recorder, None)
+    audio = _FakeOldPad("incoming-audio", recorder, None)
+    video.parent_element = video_concat if playlist else video_tail
+    audio.parent_element = audio_concat if playlist else audio_tail
+    monkeypatch.setattr(engine, "_instantiate_source_leg", lambda _leg: (video, audio, incoming))
+    monkeypatch.setattr(engine, "_link_leg_to_selectors", lambda *_args: (video, audio))
+
+    engine.reload_program(_StubLeg(), switch_at_end_of_current=True)
+
+    assert video_source.first_buffer_delivered
+    assert audio_source.first_buffer_delivered
+    assert not any(call.startswith("flushing:") for call in recorder.calls)
+    assert all(element.active for element in incoming)
+    assert len(engine._pending_reload["hold_probes"]) == 2
 
 
 def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(

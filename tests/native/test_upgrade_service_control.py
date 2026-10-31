@@ -331,6 +331,56 @@ def test_resolve_returns_three_real_callables() -> None:
     assert drain is not health and health is not stop
 
 
+def test_upgraded_service_permissions_are_prepared_before_first_health_start(monkeypatch):
+    from pathlib import Path
+
+    from civiccast.native import install_service_identity
+    from civiccast.native.upgrade import service_control
+
+    events = []
+    starters = []
+    monkeypatch.setattr(
+        install_service_identity,
+        "prepare_model_store_permissions",
+        lambda root: events.append(("model-permissions", root)),
+    )
+    monkeypatch.setattr(service_control, "_real_scm_start", lambda: events.append("start"))
+
+    def gate(**kwargs):
+        starters.append(kwargs["ensure_started"])
+        return lambda: True
+
+    monkeypatch.setattr(service_control, "build_health_gate_seam", gate)
+    context = _ctx()
+    resolve_service_control_seams(context)
+    assert events == []
+    starters[0]()
+    assert events == [("model-permissions", Path(context.install_root)), "start"]
+
+
+def test_failed_model_permission_preparation_prevents_service_start(monkeypatch):
+    from civiccast.native import install_service_identity
+    from civiccast.native.upgrade import service_control
+
+    events = []
+    starters = []
+
+    def denied(_root):
+        raise PermissionError("model permissions denied")
+
+    monkeypatch.setattr(install_service_identity, "prepare_model_store_permissions", denied)
+    monkeypatch.setattr(service_control, "_real_scm_start", lambda: events.append("start"))
+    monkeypatch.setattr(
+        service_control,
+        "build_health_gate_seam",
+        lambda **kwargs: starters.append(kwargs["ensure_started"]) or (lambda: True),
+    )
+    resolve_service_control_seams(_ctx())
+    with pytest.raises(PermissionError, match="model permissions"):
+        starters[0]()
+    assert events == []
+
+
 # ---------------------------------------------------------------------------
 # _real_service_registered_probe (install-only-refusal WP, 2026-07-30):
 # distinguishes "definitely not registered" (False, provably no writers can

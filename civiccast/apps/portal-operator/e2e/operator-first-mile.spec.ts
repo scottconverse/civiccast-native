@@ -481,7 +481,7 @@ async function mockHealth(
     state: 'ON_AIR',
     current_source_label: 'Public meeting live',
     current_proof_event_id: 'proof-live-public',
-    updated_at: '2026-05-22T18:09:00Z',
+    updated_at: new Date().toISOString(),
     pid: 4321,
     last_error: null,
   }
@@ -524,7 +524,7 @@ async function mockHealth(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(HEALTH_REPORT),
+      body: JSON.stringify({ ...HEALTH_REPORT, generated_at: new Date().toISOString() }),
     })
   })
   await page.route('**/api/staff/installer/rehearsal', async (route) => {
@@ -637,7 +637,7 @@ async function mockHealth(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([EGRESS_HEALTH_SAMPLE]),
+      body: JSON.stringify([{ ...EGRESS_HEALTH_SAMPLE, sampled_at: new Date().toISOString() }]),
     })
   })
   await page.route('**/api/staff/egress/channels/public/commands', async (route) => {
@@ -647,7 +647,7 @@ async function mockHealth(
       ...egressState,
       state: payload.action === 'stop' ? 'STOPPED' : egressState.state,
       current_source_label: payload.action === 'stop' ? null : egressState.current_source_label,
-      updated_at: '2026-05-22T18:10:00Z',
+      updated_at: new Date().toISOString(),
     }
     await route.fulfill({
       status: 202,
@@ -725,20 +725,20 @@ test.describe('operator first mile', () => {
     await page.getByLabel('Client ID').fill('youtube-client-id')
     await page.getByLabel('Client secret').fill('youtube-client-secret')
     await page.getByRole('button', { name: 'Save details' }).click()
-    await expect(page.getByText('Details saved. Run live proof before marking this provider ready.')).toBeVisible()
+    await expect(page.getByText('Provider details were saved locally. Secret values will not be shown again. Run provider readiness again, then run live proof before claiming this provider is ready.')).toBeVisible()
     await expect(page.getByText('youtube-client-secret')).toHaveCount(0)
     await expect(
       page.evaluate(() => window.localStorage.getItem('civiccast.staffToken')),
     ).resolves.toBe('ccst_mock_operator_console_token')
   })
 
-  test('system health shows safe-to-broadcast and runs private rehearsal', async ({ page }) => {
+  test('system health separates readiness from live health and runs private rehearsal', async ({ page }) => {
     const requests = await mockHealth(page)
     await page.goto('/')
     await page.getByLabel('Show System Health navigation').click()
     await page.getByRole('button', { name: 'Readiness' }).click()
 
-    await expect(page.getByRole('heading', { name: 'Safe to broadcast' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Station health and readiness' })).toBeVisible()
     await expect(page.getByText('Ready with optional items')).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Camera or meeting source' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Backup and restore readiness' })).toBeVisible()
@@ -803,12 +803,12 @@ test.describe('operator first mile', () => {
   test('route survives refresh on system health', async ({ page }) => {
     await mockHealth(page)
     await page.goto('/#/health')
-    await expect(page.getByRole('heading', { name: 'Safe to broadcast' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Station health and readiness' })).toBeVisible()
 
     await page.reload()
 
     await expect(page).toHaveURL(/#\/health/)
-    await expect(page.getByRole('heading', { name: 'Safe to broadcast' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Station health and readiness' })).toBeVisible()
   })
 
   test('system health keeps mutations read-only for records clerk', async ({ page }) => {

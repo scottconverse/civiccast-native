@@ -97,6 +97,43 @@ _SERVICE_PATH_ENVIRONMENT = frozenset(
 _PORTABLE_ENVIRONMENT_MEMBER = "station-service-environment.json"
 
 
+def _installed_station_service_present() -> bool:
+    if os.name != "nt":
+        return False
+    import winreg
+
+    from civiccast.native.supervisor.config import SERVICE_NAME
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            rf"SYSTEM\CurrentControlSet\Services\{SERVICE_NAME}",
+            0,
+            winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+        ):
+            return True
+    except FileNotFoundError:
+        return False
+    except PermissionError:
+        # An inaccessible installed-service key is not a portable environment.
+        return True
+
+
+def preflight_station_backup_cli() -> None:
+    """Reject unelevated installed-station commands before loading protected state."""
+    if not _installed_station_service_present():
+        return
+    from civiccast.native.admin_recovery import RecoveryError, _require_elevation
+
+    try:
+        _require_elevation()
+    except RecoveryError:
+        raise PermissionError(
+            "Installed-station backup commands require an elevated PowerShell. "
+            "Use Run as administrator, then retry the command; no backup work has started."
+        ) from None
+
+
 def build_station_backup_service() -> StationBackupService:
     from civiccast.native.supervisor.install_layout import resolve_install_layout
     from civiccast.native.supervisor.service_env import ensure_database_url_env
@@ -141,6 +178,18 @@ def build_station_backup_service() -> StationBackupService:
             or state.with_name("network-settings.json")
         )
         files = {state, network_path}
+        # The effective app-platform location is independent of a station-state
+        # override. Looking only beside that override omits branding/settings.
+        storage_root = Path(
+            environment.get("CIVICCAST_MANAGED_STORAGE_DIR")
+            or Path(environment.get("LOCALAPPDATA", str(profile_root))) / "CivicCast"
+        )
+        files.add(
+            Path(
+                environment.get("CIVICCAST_APP_PLATFORM_CONFIG_PATH")
+                or storage_root / "app-platform-config.json"
+            ).expanduser()
+        )
         for directory in (config_root, cert_root, root / "config"):
             if directory.is_dir():
                 files.update(p for p in directory.rglob("*") if p.is_file())
@@ -197,6 +246,7 @@ def build_station_backup_service() -> StationBackupService:
         credential_exporter=export_credentials,
         credential_importer=import_credentials,
         credential_validator=validate_credentials,
+        credential_destination="this machine's CivicCast credential vault and service settings",
         scheduled_passphrase_setter=write_passphrase,
         scheduled_passphrase_provider=read_passphrase,
         scheduled_passphrase_available=passphrase_path.is_file,

@@ -75,6 +75,7 @@ from civiccast.egress.hls_relay import (
 from civiccast.egress.models import (
     MAX_PLAYLIST_SUBCHAINS,
     RESTART_RECOVERY_COMMAND_PREFIX,
+    SCHEDULED_SLATE_START_COMMAND_PREFIX,
     SLATE_RESTART_COMMAND_PREFIX,
     CaptionStatus,
     EgressCommand,
@@ -544,6 +545,8 @@ class _PendingReloadSettlement(NamedTuple):
     #: ``chained_slate_program_end`` -- and so channel automation's
     #: slate-replan suppression -- describe THIS plan and no other.
     chained_program_end_at: datetime | None = None
+    switch_at_unix: float | None = None
+    scheduled_wait_seconds: float = 0.0
 
 
 class _TailFloorOutcome(NamedTuple):
@@ -1928,6 +1931,17 @@ class EgressDaemon:
         freeze = self._freeze_escalation.get(channel_id)
         if freeze is not None:
             freeze.escalated_for_pid = None
+
+    def has_pending_scheduled_start(self, channel_id: str) -> bool:
+        pending = self._pending_reload_settle.get(channel_id)
+        return pending is not None and pending.switch_at_unix is not None
+
+    def can_prearm_slate_program(self, channel_id: str) -> bool:
+        return bool(
+            getattr(self._encoder_strategy, "supports_scheduled_start", False)
+            and getattr(self._encoder_strategy, "supports_content_reload", False)
+            and not self.has_manual_override(channel_id)
+        )
 
     def dispatched_plan_horizon(
         self, channel_id: str
@@ -4184,6 +4198,19 @@ class EgressDaemon:
                     observed = datetime.fromtimestamp(source["observed_at"], UTC)
                     label = db_safe_text(source["label"])
                     proof_id = "source-" + source["event_id"]
+                    self._store.append_proof_event(
+                        EgressProofEvent(
+                            event_id=proof_id,
+                            observed_at=observed,
+                            channel_id=channel_id,
+                            state="FALLBACK_SLATE" if source["kind"] == "slate" else "ON_AIR",
+                            source_label=label,
+                            source_path="selected-output",
+                            source_ref=source.get("asset_id"),
+                            proof_boundary="civiccast-egress-selected-source-output",
+                            machine_summary="Source observed at selected output; not a pipeline reload receipt.",
+                        )
+                    )
                     self._source_output_labels[channel_id] = (pid, label)
                     state = self._store.read_state(channel_id)
                     self._write_state(
@@ -4205,6 +4232,15 @@ class EgressDaemon:
                             proof_event_id=proof_id,
                             schedule_item_id=source["schedule_item_id"],
                             source_offset_seconds=float(source.get("source_offset_seconds", 0)),
+                            **(
+                                {
+                                    "schedule_occurrence_start": datetime.fromisoformat(
+                                        source["schedule_occurrence_start"]
+                                    )
+                                }
+                                if source.get("schedule_occurrence_start")
+                                else {}
+                            ),
                         )
                 except AsRunCaptureSchemaError:
                     self._as_run_schema_drift = True
@@ -5361,6 +5397,7 @@ class EgressDaemon:
         rollover_plan_min_seconds: float | None = None,
         force_fallback: bool = False,
         slate_first: bool = False,
+        scheduled_start_at: datetime | None = None,
     ) -> bool | _PreparationState:
         self._cancel_preparation(channel_id)
         result = self._drive_preparation(
@@ -5372,6 +5409,7 @@ class EgressDaemon:
                 rollover_plan_end_at=rollover_plan_end_at,
                 rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
+                scheduled_start_at=scheduled_start_at,
             ),
             kind="reload",
             slate_first=slate_first,
@@ -5708,6 +5746,7 @@ class EgressDaemon:
         rollover_plan_end_at: datetime | None,
         rollover_plan_min_seconds: float | None = None,
         force_fallback: bool = False,
+        scheduled_start_at: datetime | None = None,
     ) -> _PreparationSteps:
         """Seamless program content-reload for a content-reload-capable strategy.
 
@@ -6044,6 +6083,11 @@ class EgressDaemon:
                 time.monotonic() - prepare_started,
                 len(source_plan.segments),
             )
+        if scheduled_start_at is not None and datetime.now(UTC) >= scheduled_start_at:
+            # A cold preparation missed its slot. Leave the existing slate live;
+            # the ordinary due-item path will resolve a fresh recovery offset.
+            self._release_prepared_plan_dir(prepared_plan_dir)
+            return False
         request = EncoderStartRequest(
             channel_id=channel_id,
             source_plan=source_plan,
@@ -6106,6 +6150,7 @@ class EgressDaemon:
                 plan_end_at=rollover_plan_end_at,
                 now=datetime.now(UTC),
             ),
+            switch_at_unix=scheduled_start_at.timestamp() if scheduled_start_at else None,
         )
         # F3(b), owner-authorized 2026-09-24: an IMMEDIATE (non-deferred) reload
         # out of FALLBACK_SLATE must not attempt the in-place selector swap.
@@ -6266,6 +6311,12 @@ class EgressDaemon:
             plan_dir=prepared_plan_dir,
             rollover_plan_end_at=rollover_plan_end_at,
             chained_program_end_at=chained_program_end_at,
+            switch_at_unix=request.switch_at_unix,
+            scheduled_wait_seconds=(
+                max(0.0, request.switch_at_unix - time.time())
+                if request.switch_at_unix is not None
+                else 0.0
+            ),
         )
         _LOG.info(
             "Seamless content-reload accepted for %s (reload_id=%s, switch_at_end_of_current=%s); "
@@ -6511,6 +6562,10 @@ class EgressDaemon:
                 self._commit_reload_settlement(channel_id, pending)
                 return
             if isinstance(result, str) and result.startswith("aborted:"):
+                if pending.switch_at_unix is not None and time.time() < pending.switch_at_unix:
+                    self._discard_pending_reload_settlement(channel_id, reason=result)
+                    self._keep_slate_after_failed_hand_off(channel_id)
+                    return
                 # U36 item 7: a boundary reload gets a bounded retry (and, when
                 # that is exhausted, the slate AT the boundary) before this
                 # channel is handed the restart fallback.
@@ -6543,16 +6598,17 @@ class EgressDaemon:
             )
             self._fall_back_to_restart_reload(channel_id, plan_end_at=pending.rollover_plan_end_at)
             return
-        if self._monotonic() - pending.since >= _PENDING_RELOAD_SETTLE_DEADLINE_S:
+        settle_deadline = _PENDING_RELOAD_SETTLE_DEADLINE_S + pending.scheduled_wait_seconds
+        if self._monotonic() - pending.since >= settle_deadline:
             _LOG.warning(
                 "Seamless content-reload for %s reported no settlement within %.0fs "
                 "(reload_id=%s); falling back to restart.",
                 channel_id,
-                _PENDING_RELOAD_SETTLE_DEADLINE_S,
+                settle_deadline,
                 pending.reload_id,
             )
             self._discard_pending_reload_settlement(
-                channel_id, reason=f"no settlement within {_PENDING_RELOAD_SETTLE_DEADLINE_S:.0f}s"
+                channel_id, reason=f"no settlement within {settle_deadline:.0f}s"
             )
             self._fall_back_to_restart_reload(channel_id, plan_end_at=pending.rollover_plan_end_at)
 
@@ -6916,6 +6972,16 @@ class EgressDaemon:
         # handle falls through to the terminate+restart reload below (which already
         # handles slate fallback, interruptible filler, and the graceful drain).
         if state is not None and getattr(self._encoder_strategy, "supports_content_reload", False):
+            scheduled_start_at = (
+                rollover_plan_end_at
+                if command_id is not None
+                and command_id.startswith(SCHEDULED_SLATE_START_COMMAND_PREFIX)
+                and state.state == "FALLBACK_SLATE"
+                and rollover_plan_end_at is not None
+                and rollover_plan_end_at > datetime.now(UTC)
+                and self.can_prearm_slate_program(channel_id)
+                else None
+            )
             if self._try_content_reload(
                 channel_id,
                 state,
@@ -6923,7 +6989,8 @@ class EgressDaemon:
                 rollover_plan_end_at=rollover_plan_end_at,
                 rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
-                slate_first=slate_first,
+                slate_first=slate_first or scheduled_start_at is not None,
+                **({"scheduled_start_at": scheduled_start_at} if scheduled_start_at else {}),
             ):
                 # Preparing/accepted work is pending; it is not on-air proof.
                 # _poll_reload_settlement (in process_once's poll tuple) finishes
@@ -6931,7 +6998,7 @@ class EgressDaemon:
                 # _fall_back_to_restart_reload) once reload-status.json actually
                 # reports an outcome.
                 return
-            if slate_first:
+            if slate_first or scheduled_start_at is not None:
                 if channel_id in self._prepared_restart_plans:
                     # Already routed: the F3(b) branch above stashed a plan and
                     # queued this channel's terminate+restart, so the exit that

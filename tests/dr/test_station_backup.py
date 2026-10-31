@@ -15,9 +15,16 @@ from fastapi import HTTPException
 
 from civiccast.dr import backup as backup_module
 from civiccast.dr import station_backup as station_backup_module
-from civiccast.dr.station_backup import BackupSchedule, StationBackupService, _restore_postgres
+from civiccast.dr.station_backup import (
+    BackupCreationError,
+    BackupSchedule,
+    StationBackupService,
+    _restore_postgres,
+)
 from civiccast.dr.station_backup_router import (
+    CreateBackupRequest,
     ScheduledPassphraseRequest,
+    create_station_backup,
     set_scheduled_passphrase,
     station_backup_status,
 )
@@ -649,11 +656,79 @@ def test_failed_destination_setup_releases_backup_job_lock(tmp_path: Path) -> No
         state_path=tmp_path / "backup-state.json",
     )
 
-    with pytest.raises(OSError):
+    with pytest.raises(BackupCreationError, match="preparing"):
         service.create_backup("recovery passphrase")
 
     service.destination = tmp_path / "backups"
     assert service.create_backup("recovery passphrase").path.is_file()
+
+
+@pytest.mark.parametrize("failure", [PermissionError, FileNotFoundError, RuntimeError])
+def test_backup_database_failure_is_actionable_safe_and_keeps_failed_progress(
+    tmp_path, monkeypatch, failure
+):
+    service = StationBackupService(
+        database_url="sqlite:///unused.sqlite3",
+        destination=tmp_path / "backups",
+    )
+    service._state["last_error"] = "obsolete failure"
+    observed = []
+
+    def fail(**kwargs):
+        observed.append(service.status())
+        raise failure("postgresql://user:private-password@host/db token=private-token")
+
+    monkeypatch.setattr(station_backup_module, "run_full_backup", fail)
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(station_backup_service=service))
+    )
+    with pytest.raises(HTTPException) as raised:
+        create_station_backup(CreateBackupRequest(passphrase="test-recovery-passphrase"), request)
+    detail = raised.value.detail
+    assert "failed during database" in detail
+    assert "PostgreSQL backup tools" in detail
+    assert "private-password" not in detail and "private-token" not in detail
+    assert observed[0]["last_error"] is None
+    status = service.status()
+    assert status["last_error"] == detail
+    assert status["job"]["phase"] == "failed"
+    assert status["job"]["failed_phase"] == "database"
+    assert status["job"]["percent"] == 5
+    assert status["job"]["operation_id"] in detail
+    assert service.list_backups() == []
+
+
+@pytest.mark.parametrize(
+    ("phase", "target"),
+    [
+        ("copying-config", "config_paths_provider"),
+        ("exporting-credentials", "credential_exporter"),
+        ("encrypting", "_encrypt_file"),
+        ("retention", "_prune"),
+    ],
+)
+def test_backup_failures_distinguish_copy_credentials_encryption_and_retention(
+    tmp_path, monkeypatch, phase, target
+):
+    database = tmp_path / "station.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("CREATE TABLE station (name TEXT)")
+    service = StationBackupService(
+        database_url=f"sqlite:///{database.as_posix()}",
+        destination=tmp_path / "backups",
+    )
+
+    def denied(*args, **kwargs):
+        raise PermissionError("passphrase=private-secret")
+
+    monkeypatch.setattr(
+        station_backup_module if target == "_encrypt_file" else service, target, denied
+    )
+    with pytest.raises(BackupCreationError, match=phase) as raised:
+        service.create_backup("test-recovery-passphrase")
+    assert "private-secret" not in str(raised.value)
+    assert service.status()["job"]["failed_phase"] == phase
+    assert bool(service.list_backups()) is (phase == "retention")
 
 
 def test_unattended_passphrase_is_delegated_and_media_roots_persist(tmp_path: Path) -> None:

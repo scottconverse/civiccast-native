@@ -910,6 +910,72 @@ class TestAutoStart:
 
 
 class TestSlateReplan:
+    def test_upcoming_slate_program_is_prearmed_once_without_a_parallel_warm(self):
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        start = _NOW + timedelta(seconds=180)
+        recorded, warmed = [], []
+        clock = {"t": 0.0}
+
+        class Provider:
+            due = False
+
+            def __call__(self, _channel_id):
+                return _plan(_channel_id) if self.due else None
+
+            def next_item_start_at(self, _channel_id, _after):
+                return start
+
+        class Daemon(_FakeDaemon):
+            pending_scheduled = False
+
+            def has_pending_scheduled_start(self, _channel_id):
+                return self.pending_scheduled
+
+            def can_prearm_slate_program(self, _channel_id):
+                return True
+
+            def record_rollover_plan_end(self, channel_id, at, **kwargs):
+                recorded.append((channel_id, at, kwargs["command_id"]))
+
+            def warm_source_plan(self, _channel_id, plan):
+                warmed.append(plan)
+
+        daemon = Daemon(live_channels={"public"})
+        provider = Provider()
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=lambda cid, at: _plan(cid) if at == start else None,
+            monotonic=lambda: clock["t"],
+        )
+        service.run_once(now=_NOW)
+        assert len(recorded) == 1
+        assert recorded[0][:2] == ("public", start)
+        assert recorded[0][2].startswith("auto-slate-start-")
+        assert _pending_actions(store, "public") == ["reload"]
+        assert warmed == []
+        service.run_once(now=_NOW + timedelta(seconds=1))
+        assert len(recorded) == 1
+        assert _pending_actions(store, "public") == []
+        daemon.pending_scheduled = True
+        clock["t"] = 31.0
+        service.run_once(now=_NOW + timedelta(seconds=31))
+        assert len(recorded) == 1
+        assert _pending_actions(store, "public") == []
+        provider.due = True
+        clock["t"] = 180.0
+        service.run_once(now=start)
+        assert _pending_actions(store, "public") == []
+        # A terminal abort clears the daemon's pending entry. The due action
+        # must then be allowed without having consumed an automation latch.
+        daemon.pending_scheduled = False
+        service.run_once(now=start)
+        assert _pending_actions(store, "public") == ["reload"]
+
     def _slate_state(self, store: InMemoryEgressStore, channel_id: str) -> None:
         store.write_state(
             EgressStateRow(channel_id=channel_id, state="FALLBACK_SLATE", updated_at=_NOW)

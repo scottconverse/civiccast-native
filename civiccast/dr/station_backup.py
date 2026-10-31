@@ -134,6 +134,10 @@ class RestoreResult:
     finished_at: datetime
 
 
+class BackupCreationError(RuntimeError):
+    """An operator-safe creation failure without underlying exception text."""
+
+
 CredentialExporter = Callable[[], Mapping[str, str | bytes]]
 CredentialImporter = Callable[[Mapping[str, bytes]], None]
 CredentialValidator = Callable[[Mapping[str, bytes]], None]
@@ -170,6 +174,7 @@ class StationBackupService:
         credential_exporter: CredentialExporter | None = None,
         credential_importer: CredentialImporter | None = None,
         credential_validator: CredentialValidator | None = None,
+        credential_destination: str | None = None,
         scheduled_passphrase_setter: ScheduledPassphraseSetter | None = None,
         scheduled_passphrase_provider: ScheduledPassphraseProvider | None = None,
         scheduled_passphrase_available: ScheduledPassphraseAvailable | None = None,
@@ -198,6 +203,7 @@ class StationBackupService:
         self.credential_exporter = credential_exporter
         self.credential_importer = credential_importer
         self.credential_validator = credential_validator
+        self.credential_destination = credential_destination
         self._scheduled_passphrase_setter = scheduled_passphrase_setter
         self._scheduled_passphrase_provider = scheduled_passphrase_provider
         self._scheduled_passphrase_available = scheduled_passphrase_available
@@ -254,6 +260,8 @@ class StationBackupService:
         clamped_percent = max(0, min(100, percent))
         status = {"phase": phase, "percent": clamped_percent, "updated_at": _now()}
         with self._lock:
+            if operation_id := self._state.get("job", {}).get("operation_id"):
+                status["operation_id"] = operation_id
             progress_value = (phase, clamped_percent)
             now = time.monotonic()
             if progress_value != self._last_progress or now - self._last_progress_write >= 1.0:
@@ -281,7 +289,12 @@ class StationBackupService:
         _validate_destination_media_overlap(self.destination, tuple(self.managed_roots.values()))
         if not self._job_lock.acquire(blocking=False):
             raise RuntimeError("another station backup operation is already running")
+        operation_id = uuid4().hex[:12]
         try:
+            with self._lock:
+                self._state["last_error"] = None
+                self._state["job"] = {"operation_id": operation_id}
+            self._progress("preparing", 0, progress)
             self.destination.mkdir(parents=True, exist_ok=True)
             effective_retention = (
                 schedule.retention_count if retention_count is None else retention_count
@@ -304,13 +317,16 @@ class StationBackupService:
                         dest_dir=database_dir,
                         pg_dump_command=self.pg_dump_command,
                         pg_dumpall_command=self.pg_dumpall_command,
+                        require_quiescent=False,
                     )
+                    self._progress("copying-managed-data", 20, progress)
                     managed_payload = self._copy_managed_payload(bundle_dir)
                 payload = self._copy_payload(
                     bundle_dir,
                     lambda phase, percent: self._progress(phase, percent, progress),
                 )
                 payload.extend(managed_payload)
+                self._progress("exporting-credentials", 76, progress)
                 credentials = self.credential_exporter() if self.credential_exporter else {}
                 if credentials:
                     credential_payload = {
@@ -354,9 +370,11 @@ class StationBackupService:
                 _write_zip(bundle_dir, zip_path)
                 try:
                     _encrypt_file(zip_path, partial_path, passphrase)
+                    self._progress("publishing", 95, progress)
                     partial_path.replace(final_path)
                 finally:
                     partial_path.unlink(missing_ok=True)
+            self._progress("retention", 98, progress)
             self._prune(effective_retention)
             artifact = BackupArtifact(
                 backup_id=backup_id,
@@ -379,10 +397,19 @@ class StationBackupService:
             return artifact
         except Exception as exc:
             with self._lock:
-                self._state["last_error"] = _safe_error(exc)
-                self._state["job"] = {"phase": "failed", "percent": 0, "updated_at": _now()}
+                job = self._state.get("job", {})
+                phase = job.get("phase", "preparing")
+                message = _creation_failure(exc, phase, operation_id)
+                self._state["last_error"] = message
+                self._state["job"] = {
+                    "phase": "failed",
+                    "failed_phase": phase,
+                    "operation_id": operation_id,
+                    "percent": job.get("percent", 0),
+                    "updated_at": _now(),
+                }
                 self._save_state()
-            raise
+            raise BackupCreationError(message) from None
         finally:
             self._job_lock.release()
 
@@ -442,6 +469,8 @@ class StationBackupService:
         self, bundle_dir: Path, progress: ProgressCallback | None
     ) -> list[dict[str, Any]]:
         payload: list[dict[str, Any]] = []
+        if progress is not None:
+            progress("copying-media", 25)
         media_files = [
             (index, source, child)
             for index, source in enumerate(self.media_roots)
@@ -451,6 +480,8 @@ class StationBackupService:
         ]
         media_total = sum(path.stat().st_size for _, _, path in media_files)
         media_done = 0
+        if progress is not None:
+            progress("copying-config", 25)
         for kind, configured, provider in (
             ("config", self.config_paths, self.config_paths_provider),
             ("credential-file", self.credential_paths, self.credential_paths_provider),
@@ -466,6 +497,8 @@ class StationBackupService:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 payload.append({**_file_record(target, kind, member), "source_path": str(source)})
+        if progress is not None:
+            progress("copying-media", 30)
         for index, source in enumerate(self.media_roots):
             if not source.exists():
                 continue
@@ -560,6 +593,7 @@ class StationBackupService:
         target_database_url: str,
         target_paths: Mapping[str, Path] | None = None,
         writers_stopped: bool = False,
+        restore_local_station_settings: bool = False,
         progress: ProgressCallback | None = None,
     ) -> RestoreResult:
         """Restore actual database contents and mapped files to a stopped station.
@@ -572,6 +606,11 @@ class StationBackupService:
         """
 
         _require_passphrase(passphrase)
+        if self.credential_destination and not restore_local_station_settings:
+            raise RuntimeError(
+                "Full station restore also replaces local credentials and service settings; "
+                "explicit acknowledgement is required on the replacement host."
+            )
         if not writers_stopped:
             raise RuntimeError(
                 "restore is offline-only; confirm that CivicCast writers are stopped"
@@ -894,9 +933,35 @@ def _protect_staging_directory(path: Path) -> None:
     restrict_data_directory(path)
 
 
+def _creation_failure(exc: Exception, phase: str, operation_id: str) -> str:
+    remedies = {
+        "preparing": "Check backup destination and temporary storage space and permissions.",
+        "database": "Check database availability, the station account's access, and bundled PostgreSQL backup tools.",
+        "copying-managed-data": "Check access to the station's managed agenda files and temporary storage.",
+        "copying-config": "Check access to station configuration files and temporary storage.",
+        "copying-media": "Check selected media folders are available to the station account and staging has enough space.",
+        "exporting-credentials": "Check the station account can read its protected credential storage.",
+        "encrypting": "Check temporary and destination storage space and write permissions.",
+        "publishing": "Check destination write permissions, free space, and whether security software is locking the archive.",
+        "retention": "Check access to older backup files. A new archive may already exist; verify it before retrying.",
+    }
+    if phase not in remedies:
+        phase = "preparing"
+    category = (
+        "access denied"
+        if isinstance(exc, PermissionError)
+        else "file or tool unavailable"
+        if isinstance(exc, FileNotFoundError)
+        else "operation failed"
+    )
+    return f"Backup {operation_id} failed during {phase} ({category}). {remedies[phase]}"
+
+
 def _safe_error(exc: Exception) -> str:
     """Store a diagnostic label without risking credentials in exception text."""
 
+    if isinstance(exc, BackupCreationError):
+        return str(exc)
     return f"{type(exc).__name__}: station backup operation failed"
 
 

@@ -700,8 +700,17 @@ def resolve_service_control_seams(
         writers_active_probe=_real_writers_active_probe,
         snapshot_digest=lambda: _real_snapshot_digest(context.database_url),
     )
+
+    def start_upgraded_service() -> None:
+        from pathlib import Path
+
+        from civiccast.native.install_service_identity import prepare_model_store_permissions
+
+        prepare_model_store_permissions(Path(context.install_root))
+        _real_scm_start()
+
     health = build_health_gate_seam(
-        ensure_started=_real_scm_start,
+        ensure_started=start_upgraded_service,
         maintenance_ready_probe=build_maintenance_ready_probe(_real_health_check),
         # <installer-path-audit BL-04> The attester must be the NEW code on the
         # NEW schema, not merely A process in maintenance mode.

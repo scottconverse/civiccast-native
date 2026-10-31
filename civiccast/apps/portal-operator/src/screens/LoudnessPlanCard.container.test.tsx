@@ -69,6 +69,6 @@ describe('LoudnessPlanCard container', () => {
       sample('2026-01-01T12:03:00Z', null),
     ])
     const { findByText } = renderCard()
-    expect(await findByText(/Measured -16\.4 LUFS/)).toBeTruthy()
+    expect(await findByText(/Prepared media: -16\.4 LUFS/)).toBeTruthy()
   })
 })

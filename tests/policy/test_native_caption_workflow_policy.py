@@ -1215,7 +1215,10 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # arithmetic: (2084, 2326) -> (2085, 2327).
     # RC2 model-data permissions adds one Windows-only case: actual collection
     # is 2145 pure, 2388 total. Keep the maximum 50-test floor margin.
-    assert (collect("not windows_only"), collect()) == (2145, 2388)
+    # Operator safety/transport regressions: fresh collection retained in CURRENT.
+    # Five WSL manifest access/mapping cases: measured 2153 pure/2397 total.
+    # Pinned HTTP parser backport: 2177 pure / 2422 total, measured collect-only.
+    assert (collect("not windows_only"), collect()) == (2177, 2422)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

@@ -402,10 +402,12 @@ Var CIVICCAST_TRANSACTION_RESULT
 !macroend
 
 !macro CIVICCAST_TRANSACTION_SNAPSHOT
+  !insertmacro CIVICCAST_STEP "preinstall: saving recovery snapshot (size check and copy; application files not replaced yet)"
   !insertmacro CIVICCAST_TRANSACTION_CALL Snapshot
   ${If} $CIVICCAST_TRANSACTION_RESULT != 0
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_INSTALL_RECOVERY} "Setup could not save the prior station for automatic recovery. See $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${EndIf}
+  !insertmacro CIVICCAST_STEP "preinstall: recovery snapshot saved"
 !macroend
 
 !macro CIVICCAST_TRANSACTION_RESTORE

@@ -23,7 +23,7 @@ from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from civiccast.ai_models.models import detect_summary_model_default
 from civiccast.auth.models import (
@@ -54,6 +54,7 @@ from civiccast.installer.models import (
     StationRuntimePaths,
     StationSetupState,
     StationStorageLocations,
+    normalize_resident_portal_url,
 )
 
 if TYPE_CHECKING:
@@ -462,6 +463,10 @@ class StationProfileUpdateRequest(BaseModel):
     storage_locations: StationStorageLocations | None = None
     live_captions_enabled: bool | None = None
 
+    _validate_portal = field_validator("public_base_url", mode="before")(
+        normalize_resident_portal_url
+    )
+
 
 def update_station_profile_fields(update: StationProfileUpdateRequest) -> StationProfile:
     """Validate and persist an operator edit to the mutable profile subset.
@@ -482,8 +487,8 @@ def update_station_profile_fields(update: StationProfileUpdateRequest) -> Statio
         station["station_name"] = update.station_name.strip()
     if update.station_timezone is not None:
         station["station_timezone"] = update.station_timezone.strip()
-    if update.public_base_url is not None:
-        station["public_base_url"] = update.public_base_url.strip()
+    if "public_base_url" in update.model_fields_set:
+        station["public_base_url"] = update.public_base_url
     if update.default_channel_id is not None:
         station["default_channel_id"] = update.default_channel_id.strip()
     if update.storage_locations is not None:

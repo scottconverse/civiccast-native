@@ -502,9 +502,17 @@ def _recent_public_program_events(egress_store: Any, channel_id: str) -> list[An
     return [
         event
         for event in recent(channel_id, 120)
-        if event.event_id.startswith("egress-proof-")
-        and event.state in {"ON_AIR", "FALLBACK_SLATE"}
-        and event.proof_boundary == "civiccast-egress-handoff-boundary"
+        if event.state in {"ON_AIR", "FALLBACK_SLATE"}
+        and (
+            (
+                event.event_id.startswith("egress-proof-")
+                and event.proof_boundary == "civiccast-egress-handoff-boundary"
+            )
+            or (
+                event.event_id.startswith("source-")
+                and event.proof_boundary == "civiccast-egress-selected-source-output"
+            )
+        )
     ]
 
 

@@ -923,6 +923,7 @@ class GstPlayoutStrategy:
     # ``_SEAMLESS_RELOAD_ENV_VAR``/``_seamless_content_reload_default`` above for
     # why this defaults True and how to opt out for diagnosis.
     supports_content_reload = True
+    supports_scheduled_start = True
     # selector index per source role — matches graph_from_config leg order
     # (program leg = pad 0, always-hot black slate = pad 1). There is deliberately
     # NO 'live' pad: CivicCast airs a single pre-switched live feed (S16 delegates
@@ -1595,7 +1596,12 @@ class GstPlayoutStrategy:
         # read by ``engine._dispatch_control``).
         suffix = reload_sidecar_suffix(switch_at_end_of_current=request.switch_at_end_of_current)
         reload_path = channel_dir / f"playout-graph.reload.{command_id or uuid.uuid4().hex}{suffix}"
-        _write_graph_file(reload_path, graph_to_json(graph))
+        payload = graph_to_json(graph)
+        if request.switch_at_unix is not None:
+            document = json.loads(payload)
+            document["switch_at_unix"] = request.switch_at_unix
+            payload = json.dumps(document)
+        _write_graph_file(reload_path, payload)
         return self.send_command(
             work_dir, channel_id, f"reload {reload_path}", command_id=command_id
         )

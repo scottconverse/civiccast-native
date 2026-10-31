@@ -69,7 +69,7 @@ import type {
   StationAppConfig,
   StationAppConfigUpdate,
 } from '../types/api.generated'
-import { captionsRowLabel, stateLabel, toneForEgressState } from './status-language'
+import { captionsRowLabel, freshReading, stateLabel, toneForEgressState } from './status-language'
 
 const POLL_MS = 30_000
 
@@ -154,11 +154,6 @@ function ErrorPanel({ error }: { error: unknown }) {
   )
 }
 
-function freshReading(iso: string | undefined): boolean {
-  const age = Date.now() - new Date(iso ?? '').getTime()
-  return Number.isFinite(age) && age >= 0 && age <= 120_000
-}
-
 export function ChannelConfidence({ channelId }: { channelId: string }) {
   const state = useQuery({ queryKey: ['egress-state', channelId], queryFn: () => getEgressState(channelId), retry: false, refetchInterval: POLL_MS })
   const health = useQuery({ queryKey: ['egress-health', channelId], queryFn: () => getEgressHealth(channelId), retry: false, refetchInterval: POLL_MS })
@@ -174,8 +169,8 @@ export function ChannelConfidence({ channelId }: { channelId: string }) {
     <div>Output: {state.isPending || health.isPending ? 'Checking…' : outputUnavailable ? 'Unavailable'
       : !fresh ? `Stale — last ${stateLabel(state.data!.state)}` : stateLabel(state.data!.state)}</div>
     <div>Program: {state.isError ? 'Unavailable' : state.data?.current_source_label ?? 'Unavailable'}{!fresh && state.data?.current_source_label ? ' (last observed)' : ''}</div>
-    <div>Audio: {health.isError || !sample ? 'Unavailable' : !fresh ? 'Stale'
-      : sample.last_loudness_lufs == null ? 'Not measured' : `${sample.last_loudness_lufs.toFixed(1)} LUFS measured`}</div>
+    <div>Prepared audio: {health.isError || !sample ? 'Unavailable' : !fresh ? 'Stale'
+      : sample.last_loudness_lufs == null ? 'Not measured' : `${sample.last_loudness_lufs.toFixed(1)} LUFS last recorded (not live output)`}</div>
     <div>Captions: {captions.isPending ? 'Checking…' : captionLabel}</div>
     <div style={{ color: 'var(--cc-ink-3)' }}>Health sampled {sample ? new Date(sample.sampled_at).toLocaleTimeString() : 'never'} · checked {health.dataUpdatedAt ? new Date(health.dataUpdatedAt).toLocaleTimeString() : 'never'}</div>
   </div>
@@ -774,7 +769,7 @@ export function EgressControlPanel({
               <dd className="m-0">{latestHealth.dropped_frames}</dd>
             </div>
             <div>
-              <dt className="font-semibold">Loudness</dt>
+              <dt className="font-semibold">Prepared media loudness</dt>
               <dd className="m-0">{formatMeasured(latestHealth.last_loudness_lufs, 'LUFS')}</dd>
             </div>
             <div>
@@ -930,7 +925,7 @@ function EgressConfigPanel({
       <h2 className="m-0 text-lg font-semibold">Channel startup and repeat</h2>
       <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
         {channelId
-          ? `Automation settings for ${channelId}. Saved settings survive restarts.`
+          ? `Applies only to selected channel ${channelId}. Other channels are unchanged. Saved settings survive restarts.`
           : 'Select a channel to edit its automation settings.'}
       </div>
 
@@ -1659,8 +1654,10 @@ export function PlayoutPlanPanel({ plan }: { plan: ChannelPlayoutPlan | undefine
       </div>
       <div className="mt-3 grid gap-2">
         {plan && <div className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          {plan.repeat_schedule ? 'Repeat is on. Only programs marked “In repeat sequence” repeat; earlier groups are excluded.'
+          {plan.repeat_schedule ? 'Repeat is on. Only programs marked “In repeat sequence” repeat: the last published group with no gap greater than one second. Earlier groups are excluded. After its final program, this group starts again.'
             : 'Repeat is off. Published programs air at their scheduled times; gaps use the configured filler.'}
+          {' '}Gaps keep their scheduled space and use the configured filler; repeat does not pull later programs forward.
+          {' '}Starting a channel late joins the current scheduled program at its elapsed position; it does not restart that program from the beginning. Guide times are planned times, not proof of actual output.
           {' '}Drafts require approval and Commit to Air before they can play.
         </div>}
         {plan && blocks.length === 0 && (

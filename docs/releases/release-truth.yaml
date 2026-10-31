@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-rc.1
+current: v1.0.0-rc.2
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,15 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-rc.1
+  - tag: v1.0.0-rc.2
     status: current
+    notes: >-
+      Published October 30, 2026 at 20:22:55 UTC. Existing public release,
+      verified against GitHub release metadata; this reconciliation does not replace assets.
+      See docs/releases/v1.0.0-rc.2-verification.md for package evidence and limitations.
+  - tag: v1.0.0-rc.1
+    status: superseded
+    superseded_by: v1.0.0-rc.2
     notes: >-
       Published October 30, 2026 at 05:38:49 UTC by explicit owner direction.
       Signed source 6571f84186ea5a9373be31f92b8f3fb883fa3863, build 41000622174 attempt 2.

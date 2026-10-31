@@ -33,7 +33,7 @@ const RESIDENT_PORTAL_URL: &str = "http://127.0.0.1:8000/";
 const SERVICE_URL: &str = "http://127.0.0.1:8000";
 const SERVICE_HEALTH_ADDR: &str = "127.0.0.1:8000";
 const RUNTIME_HOST_MUTEX_ADDR: &str = "127.0.0.1:38474";
-const CIVICCAST_VERSION: &str = "1.0.0-rc.2";
+const CIVICCAST_VERSION: &str = "1.0.0-rc.3";
 // Must match the reviewed runtime pack, not the older model acquisition version.
 const NATIVE_OLLAMA_VERSION: &str = "0.40.13";
 const INSTALLER_SHUTDOWN_MARKER: &str = "shutdown-request";
@@ -1725,6 +1725,22 @@ try {{
             text.contains("ubuntu-bounded-ok"),
             "echo output missing: {text}"
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_ollama_probe_overrides_ambient_server_for_child_only() {
+        let before = std::env::var_os("OLLAMA_HOST");
+        let (exit, output) = run_bounded_command(
+            "cmd.exe",
+            "native-ollama",
+            &["/c", "echo %OLLAMA_HOST%"],
+            10,
+        )
+        .expect("isolated probe child should run");
+        assert_eq!(exit, 0);
+        assert_eq!(output.trim(), "http://127.0.0.1:0");
+        assert_eq!(std::env::var_os("OLLAMA_HOST"), before);
     }
 
     // rc10 cleanroom: the WSL health probe's UTF-8 stdout (no "ubuntu" marker) was
@@ -4040,7 +4056,15 @@ where
         .map_err(|error| format!("Could not create temp output for {name}: {error}"))?;
     let err_file = fs::File::create(&err_path)
         .map_err(|error| format!("Could not create temp error for {name}: {error}"))?;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    if name == "native-ollama" {
+        // `ollama --version` asks OLLAMA_HOST for its SERVER version first.
+        // Port zero cannot identify a listening server; this child must report
+        // its own pinned client version via the exact no-daemon response.
+        // Do not mutate the parent environment or disturb another application.
+        command.env("OLLAMA_HOST", "http://127.0.0.1:0");
+    }
+    let mut child = command
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
         .stdout(out_file)

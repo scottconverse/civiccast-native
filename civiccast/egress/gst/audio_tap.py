@@ -59,9 +59,11 @@ the caption side-channel to take the channel off air.
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import re
+import struct
 import sys
 import threading
 import time
@@ -113,6 +115,29 @@ _DEFAULT_STOP_TIMEOUT_S: Final[float] = 5.0
 DrainStatus = Literal["drained", "abandoned"]
 
 
+def read_segment_start_seconds(path: Path) -> float | None:
+    """Read the audio running-time origin stored inside an atomic WAV.
+
+    Legacy WAVs have no ccTS chunk. Numbering remains a storage identity only;
+    metadata travels with the WAV through retention, quarantine and restore.
+    """
+    with path.open("rb") as source:
+        header = source.read(12)
+        if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
+            raise ValueError("invalid caption WAV header")
+        end = min(path.stat().st_size, struct.unpack("<I", header[4:8])[0] + 8)
+        while source.tell() + 8 <= end:
+            name, size = struct.unpack("<4sI", source.read(8))
+            if source.tell() + size > end:
+                raise ValueError("truncated caption WAV chunk")
+            if name == b"ccTS":
+                if size != 8:
+                    raise ValueError("invalid caption WAV timestamp")
+                return float(struct.unpack("<Q", source.read(8))[0]) / 1_000_000_000
+            source.seek(size + size % 2, 1)
+    return None
+
+
 def read_program_boundary(tap_dir: Path) -> tuple[str, int]:
     """Read the selected-audio writer's atomic program fence (legacy: no fence)."""
     try:
@@ -158,7 +183,7 @@ class SegmentWriterThread(threading.Thread):
         self.sample_rate_hz = sample_rate_hz
         self._fsync = fsync
         self._monotonic = monotonic
-        self._queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=maxsize)
+        self._queue: queue.Queue[tuple[int, bytes, float | None]] = queue.Queue(maxsize=maxsize)
         self._stop_event = threading.Event()
 
         self._drop_lock = threading.Lock()
@@ -182,11 +207,11 @@ class SegmentWriterThread(threading.Thread):
         self.last_publish_error: str | None = None
         self._last_failure_log_t = 0.0
 
-    def submit(self, index: int, pcm: bytes) -> None:
+    def submit(self, index: int, pcm: bytes, start_seconds: float | None = None) -> None:
         """Non-blocking hand-off of one finished segment's PCM bytes."""
 
         try:
-            self._queue.put_nowait((index, pcm))
+            self._queue.put_nowait((index, pcm, start_seconds))
             return
         except queue.Full:
             pass
@@ -196,7 +221,7 @@ class SegmentWriterThread(threading.Thread):
         except queue.Empty:
             dropped = False  # a consumer drained it first; no drop needed
         try:
-            self._queue.put_nowait((index, pcm))
+            self._queue.put_nowait((index, pcm, start_seconds))
         except queue.Full:
             # A consumer refilled the freed slot before we could -- drop
             # THIS segment rather than ever retrying/blocking.
@@ -238,13 +263,13 @@ class SegmentWriterThread(threading.Thread):
         while True:
             self._maybe_log_drop()
             try:
-                index, pcm = self._queue.get(timeout=0.5)
+                index, pcm, start_seconds = self._queue.get(timeout=0.5)
             except queue.Empty:
                 if self._stop_event.is_set():
                     return
                 continue
             try:
-                self._publish(index, pcm)
+                self._publish(index, pcm, start_seconds)
                 with self._failure_lock:
                     self.consecutive_publish_failures = 0
             except Exception as exc:  # never let the writer thread die silently
@@ -268,7 +293,7 @@ class SegmentWriterThread(threading.Thread):
             flush=True,
         )
 
-    def _publish(self, index: int, pcm: bytes) -> None:
+    def _publish(self, index: int, pcm: bytes, start_seconds: float | None = None) -> None:
         if index > _MAX_SEGMENT_INDEX:
             raise RuntimeError("caption audio tap exhausted its six-digit segment sequence")
         target = self.tap_dir / f"chunk-{index:06d}.wav"
@@ -283,6 +308,15 @@ class SegmentWriterThread(threading.Thread):
             wave_file.setframerate(self.sample_rate_hz)
             wave_file.writeframesraw(pcm)
             wave_file.close()
+            if start_seconds is not None:
+                # RIFF permits extension chunks. Write before the final atomic
+                # rename, so readers never see PCM without its clock origin.
+                raw_file.write(
+                    b"ccTS" + struct.pack("<IQ", 8, round(start_seconds * 1_000_000_000))
+                )
+                size = raw_file.tell()
+                raw_file.seek(4)
+                raw_file.write(struct.pack("<I", size - 8))
             raw_file.flush()
             self._fsync(raw_file.fileno())
             raw_file.close()
@@ -349,6 +383,7 @@ class RollingWavSegmentWriter:
         self._segment_bytes = frames * 2
         self._next_index = self._discover_next_index()
         self._buffer = bytearray()
+        self._buffer_start_seconds: float | None = None
         self._program_token: str | None = None
         self._closed = False
         self._lock = threading.Lock()  # guards ONLY the in-memory buffer/index bookkeeping
@@ -388,7 +423,9 @@ class RollingWavSegmentWriter:
             raise RuntimeError("caption audio tap exhausted its six-digit segment sequence")
         index = self._next_index
         self._next_index += 1
-        self._writer_thread.submit(index, segment)
+        self._writer_thread.submit(index, segment, self._buffer_start_seconds)
+        if self._buffer_start_seconds is not None:
+            self._buffer_start_seconds += len(segment) / 2 / self.sample_rate_hz
 
     def begin_program(self, token: str) -> None:
         """Fence old queued WAVs and discard audio straddling a program change.
@@ -398,17 +435,30 @@ class RollingWavSegmentWriter:
         remain below this fence. The token also rejects an already-mapped sample
         whose callback races this reset before taking the buffer lock.
         """
+        first_segment = self.fence_program(token)
+        self.publish_program_boundary(token, first_segment)
+
+    def fence_program(self, token: str) -> int:
+        """Streaming-safe ownership change; publication happens off this thread."""
         with self._lock:
             self._buffer.clear()
+            self._buffer_start_seconds = None
             self._program_token = token
-            first_segment = self._next_index
+            return self._next_index
+
+    def publish_program_boundary(self, token: str, first_segment: int) -> None:
+        """Publish a previously fenced boundary from the engine main loop."""
         target = self.tap_dir / "program-boundary.json"
         temporary = target.with_suffix(".tmp")
         temporary.write_text(json.dumps({"token": token, "first_segment": first_segment}))
         temporary.replace(target)
 
     def write_pcm_s16le(
-        self, pcm: bytes | bytearray | memoryview, *, program_token: str | None = None
+        self,
+        pcm: bytes | bytearray | memoryview,
+        *,
+        program_token: str | None = None,
+        running_time_seconds: float | None = None,
     ) -> None:
         """Append whole mono s16le samples, rotating at the configured duration.
 
@@ -421,11 +471,26 @@ class RollingWavSegmentWriter:
             raise ValueError("caption audio tap accepts only whole 16-bit samples")
         if not body:
             return
+        if running_time_seconds is not None and (
+            not math.isfinite(running_time_seconds) or running_time_seconds < 0
+        ):
+            raise ValueError("caption audio running time must be finite and nonnegative")
         with self._lock:
             if program_token != self._program_token:
                 return
             if self._closed:
                 raise RuntimeError("caption audio tap writer is closed")
+            if running_time_seconds is not None:
+                if self._buffer_start_seconds is not None:
+                    expected = (
+                        self._buffer_start_seconds + len(self._buffer) / 2 / self.sample_rate_hz
+                    )
+                    if abs(running_time_seconds - expected) > 1 / self.sample_rate_hz:
+                        # A dropped buffer/discontinuity must not be stitched
+                        # into a fabricated continuous audio window.
+                        self._buffer.clear()
+                if not self._buffer:
+                    self._buffer_start_seconds = running_time_seconds
             self._buffer.extend(body)
             while len(self._buffer) >= self._segment_bytes:
                 # Check the sequence guard BEFORE consuming from the buffer --

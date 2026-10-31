@@ -1803,6 +1803,22 @@
         "civiccast/egress/gst/worker.py",
         "civiccast/egress/gst/graph.py"
       ]
+    },
+    {
+      "package": "cpython",
+      "version": "3.12.16",
+      "id": "CVE-2026-103995",
+      "reviewed": "2026-10-31",
+      "review_by": "2026-11-30",
+      "reason": "The original CPython 3.12.16 http.client parser is affected. CivicCast applies only upstream commit 2eb2af805c156ca52b316bb4ced5e0ab3971d0ae's Content-Length/chunk-size correction to the exact 3.12.16 source when assembling the app runtime. The original interpreter archive and independent provenance are verified before patching; installed verification requires the corrected stdlib ZIP SHA256 65551fbece52b878bf1bc9187b8bb4d2518767de4d3a4f9a6a64d4a79016681b and size 9030959. Every other stdlib member, native binary and PSF license remains unchanged. An isolated actual cached 3.12.16 interpreter proved the original accepted malformed framing, the backport rejects malformed chunks/ignores invalid Content-Length, and valid framing still works. The CPE-only version match does not recognize this pinned backport; this is not an exception for unpatched 3.12.16.",
+      "evidence": [
+        "https://github.com/python/cpython/commit/2eb2af805c156ca52b316bb4ced5e0ab3971d0ae",
+        "https://github.com/psf/advisory-database/blob/main/advisories/python/PSF-2026-47.json",
+        "civiccast/native/python_runtime.py",
+        "scripts/build_native_app_payload.py",
+        "scripts/resources/cpython-3.12.16-http-client-security1.py.txt",
+        "tests/native/test_python_runtime_provenance.py"
+      ]
     }
   ]
 }

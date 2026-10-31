@@ -42,6 +42,7 @@ export function BackupScreen() {
   const [formOverride, setFormOverride] = useState<ScheduleForm | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
+  const [downloadPending, setDownloadPending] = useState(false)
 
   const persistedSchedule = statusQuery.data?.schedule
   const form = formOverride ?? (persistedSchedule ? {
@@ -60,23 +61,29 @@ export function BackupScreen() {
   const setForm = (next: ScheduleForm) => setFormOverride(next)
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['station-backups'] })
+  const beginOperation = () => {
+    setOperationError(null)
+    setMessage(null)
+  }
   const createMutation = useMutation({
     mutationFn: createStationBackup,
+    onMutate: beginOperation,
     onSuccess: (backup) => {
       setMessage(`Encrypted backup created: ${backup.file_name}`)
       setPassphrase('')
       setConfirmPassphrase('')
       setOperationError(null)
-      void refresh()
+      return refresh()
     },
     onError: (error) => setOperationError(errorMessage(error)),
   })
   const scheduleMutation = useMutation({
     mutationFn: updateStationBackupSchedule,
+    onMutate: beginOperation,
     onSuccess: () => {
       setMessage('Daily backup schedule saved.')
       setOperationError(null)
-      void refresh()
+      return refresh()
     },
     onError: (error) => setOperationError(errorMessage(error)),
   })
@@ -84,16 +91,18 @@ export function BackupScreen() {
   const [confirmScheduledPassphrase, setConfirmScheduledPassphrase] = useState('')
   const scheduledPassphraseMutation = useMutation({
     mutationFn: setScheduledBackupPassphrase,
+    onMutate: beginOperation,
     onSuccess: () => {
       setScheduledPassphrase('')
       setConfirmScheduledPassphrase('')
       setMessage('OS-protected recovery passphrase saved for unattended backups.')
       setOperationError(null)
-      void refresh()
+      return refresh()
     },
     onError: (error) => setOperationError(errorMessage(error)),
   })
   const verifyMutation = useMutation({
+    onMutate: beginOperation,
     mutationFn: ({ backupId, recoveryPassphrase }: { backupId: string; recoveryPassphrase: string }) =>
       verifyStationBackup(backupId, recoveryPassphrase),
     onSuccess: (result) => {
@@ -108,6 +117,8 @@ export function BackupScreen() {
   const job = status?.job
   const passphrasesMatch = passphrase === confirmPassphrase
   const canCreate = passphrase.length >= 12 && passphrasesMatch && !createMutation.isPending
+  const operationPending = createMutation.isPending || scheduleMutation.isPending
+    || scheduledPassphraseMutation.isPending || verifyMutation.isPending || downloadPending
 
   return (
     <main className="mx-auto grid max-w-5xl gap-6 p-6" aria-labelledby="backup-title">
@@ -128,7 +139,7 @@ export function BackupScreen() {
           Backup status could not be loaded. {errorMessage(statusQuery.error)}
         </p>
       )}
-      {(operationError || status?.last_error) && (
+      {!operationPending && (operationError || status?.last_error) && (
         <p role="alert" className="rounded-md p-3" style={{ background: 'var(--cc-err-soft)' }}>
           {operationError ?? status?.last_error}
         </p>
@@ -157,7 +168,7 @@ export function BackupScreen() {
           <button type="button" disabled={!canCreate} onClick={() => createMutation.mutate(passphrase)}>
             {createMutation.isPending ? 'Creating encrypted backup…' : 'Create backup'}
           </button>
-          {job && job.phase !== 'idle' && (
+          {job && job.phase !== 'idle' && !(operationPending && job.phase === 'failed') && (
             <div className="min-w-52 flex-1" aria-live="polite">
               <div className="mb-1 flex justify-between text-xs"><span>{job.phase.replaceAll('-', ' ')}</span><span>{job.percent}%</span></div>
               <progress className="w-full" max={100} value={job.percent} aria-label="Backup progress" />
@@ -252,12 +263,16 @@ export function BackupScreen() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button type="button" disabled={passphrase.length < 12 || verifyMutation.isPending} onClick={() => verifyMutation.mutate({ backupId: backup.backup_id, recoveryPassphrase: passphrase })}>Verify</button>
-                  <button type="button" onClick={async () => {
+                  <button type="button" disabled={downloadPending} onClick={async () => {
+                    beginOperation()
+                    setDownloadPending(true)
                     try {
                       downloadBlob(await downloadStationBackup(backup.backup_id), backup.file_name)
                       setOperationError(null)
                     } catch (error) {
                       setOperationError(errorMessage(error))
+                    } finally {
+                      setDownloadPending(false)
                     }
                   }}>Download</button>
                 </div>
@@ -270,7 +285,7 @@ export function BackupScreen() {
       <aside className="rounded-lg p-4 text-sm" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}>
         <h2 className="m-0 text-base font-semibold">Replacing a station computer?</h2>
         <p className="mb-0 mt-1">
-          Stop CivicCast and its database before restoring. Use the offline <code>civiccast backup restore</code> workflow to map the old configuration and media folders to their new locations. PostgreSQL restore requires a newly provisioned empty CivicCast database. See the Station Backup and Restore operator guide.
+          Restore on the replacement computer with CivicCast stopped. The offline <code>civiccast backup restore</code> workflow requires an explicit target database, mapped file destinations and acknowledgement that this computer’s station credentials and service settings will also be replaced. Review the destination preview before confirming. PostgreSQL may be newly provisioned or already contain replacement-station objects; preserve existing data first. This is a full station restore, not an isolated database clone. See the Station Backup and Restore operator guide.
         </p>
       </aside>
     </main>

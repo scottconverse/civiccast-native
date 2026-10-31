@@ -58,6 +58,7 @@ from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_eng
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.gst.reload_policy import rollover_trigger_at
 from civiccast.egress.models import (
+    SCHEDULED_SLATE_START_COMMAND_PREFIX,
     ChannelAutomationRollup,
     EgressCommand,
     EgressProofEvent,
@@ -1541,6 +1542,11 @@ class ChannelAutomationService:
             # FAILS, the channel stays FALLBACK_SLATE with no preparation
             # registered and the next tick issues the reload exactly as before.
             return
+        pending_start = getattr(self._daemon, "has_pending_scheduled_start", None)
+        if callable(pending_start) and pending_start(channel_id):
+            # The worker already holds this program's preroll. Leave it armed
+            # through the due instant until its applied/aborted receipt arrives.
+            return
         chained_program_end = self._daemon_chained_slate_program_end(channel_id)
         if chained_program_end is not None and now < chained_program_end:
             # U53 item 1: this row does not mean "the channel is on the slate
@@ -1607,7 +1613,6 @@ class ChannelAutomationService:
         tick = self._monotonic()
         if tick < self._slate_warm_retry_at.get(channel_id, 0.0):
             return
-        self._slate_warm_retry_at[channel_id] = tick + self._RELOAD_RETRY_COOLDOWN_SECONDS
         try:
             start = next_start(channel_id, now)
             lead_seconds = self._rollover_lead_seconds()
@@ -1616,7 +1621,14 @@ class ChannelAutomationService:
             plan = self._resolve_boundary_plan_at(channel_id, start)
             if plan is None or not plan.segments:
                 return
-            warmer(channel_id, plan)
+            self._slate_warm_retry_at[channel_id] = tick + self._RELOAD_RETRY_COOLDOWN_SECONDS
+            prearm = getattr(self._daemon, "can_prearm_slate_program", None)
+            if callable(prearm) and prearm(channel_id):
+                command_id = f"{SCHEDULED_SLATE_START_COMMAND_PREFIX}{uuid.uuid4().hex[:12]}"
+                self._daemon.record_rollover_plan_end(channel_id, start, command_id=command_id)
+                self._enqueue(channel_id, "reload", now=now, command_id=command_id)
+            else:
+                warmer(channel_id, plan)
             duration = sum(segment.duration_seconds for segment in plan.segments)
             if duration > 0:
                 self._warm_upcoming_plan(

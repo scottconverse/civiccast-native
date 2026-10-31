@@ -127,3 +127,10 @@ describe('groupByDay ordering', () => {
     ])
   })
 })
+
+
+it('displays a saved 38-second range with distinct second-level endpoints and duration', async () => {
+  const { fmtRangeLabel } = await import('./schedule-format')
+  expect(fmtRangeLabel({ ...item('short', '2026-10-30T23:00:00Z'), duration_seconds: 38 }, 'UTC'))
+    .toBe('11:00:00 PM – 11:00:38 PM (38s)')
+})

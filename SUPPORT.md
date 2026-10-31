@@ -25,10 +25,10 @@ community-driven; there is no commercial support contract or SLA.
    repository). Examples: whether CivicCast is a fit for an HOA,
    public-access station, school board, or nonprofit workflow.
 
-The RC2 source manual and built-in Help describe station operation, scheduling,
+The RC3 source manual describes candidate station operation, scheduling,
 output and recorded-caption settings. For an installed station, use the Help
 bundled with its release or the matching manual assets from that release page.
-Source changes do not update an installed station.
+RC3 is unpublished and its installed acceptance remains pending. Source changes do not update an installed station.
 
 ## Retired WSL2 Support History
 
@@ -60,13 +60,13 @@ enabled throwaway development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is a public beta. The current published package is `v1.0.0-rc.1`, available
-from its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.1).
-Its [package verification record](docs/releases/v1.0.0-rc.1-verification.md)
+is a public beta. The current published package is `v1.0.0-rc.2`, available
+from its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.2).
+Its [package verification record](docs/releases/v1.0.0-rc.2-verification.md)
 identifies the signed installer and scoped results.
 Package and installation claims must name the exact published version; source
 changes do not update an installed station. The
-[RC1 verification record](docs/releases/v1.0.0-rc.1-verification.md)
+[RC2 verification record](docs/releases/v1.0.0-rc.2-verification.md)
 contains package-specific results and boundaries. There is no dedicated,
 SLA-backed support intake for the native beta.
 

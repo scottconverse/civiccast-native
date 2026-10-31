@@ -96,7 +96,12 @@ class _FakeEngine:
         self.reload_program_should_raise: Exception | None = None
 
     def reload_program(
-        self, new_leg: Any, *, switch_at_end_of_current: bool, on_settled: Any
+        self,
+        new_leg: Any,
+        *,
+        switch_at_end_of_current: bool,
+        on_settled: Any,
+        switch_at_unix: float | None = None,
     ) -> None:
         if self.reload_program_should_raise is not None:
             raise self.reload_program_should_raise
@@ -105,6 +110,7 @@ class _FakeEngine:
                 "new_leg": new_leg,
                 "switch_at_end_of_current": switch_at_end_of_current,
                 "on_settled": on_settled,
+                "switch_at_unix": switch_at_unix,
             }
         )
 
@@ -149,6 +155,22 @@ def test_accepted_reload_applies_later_and_settles_out_of_band(
     assert not graph_path.exists()  # one-shot graph file consumed after read
     # Not settled yet -- no status file until on_settled fires.
     assert not (graph_path.parent / "reload-status.json").exists()
+
+
+def test_scheduled_reload_forwards_utc_target(worker_module, tmp_path: Path) -> None:
+    graph_path = _write_graph(tmp_path)
+    deferred_path = graph_path.with_name("scheduled.defer-eos.json")
+    graph_path.rename(deferred_path)
+    graph_path = deferred_path
+    payload = json.loads(graph_path.read_text(encoding="utf-8"))
+    payload["switch_at_unix"] = 2_000_000_000.5
+    graph_path.write_text(json.dumps(payload), encoding="utf-8")
+    engine = _FakeEngine()
+    worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="scheduled", stop_requested=threading.Event()
+    )
+    assert engine.reload_calls[0]["switch_at_unix"] == 2_000_000_000.5
+    assert engine.reload_calls[0]["switch_at_end_of_current"] is True
 
 
 def test_reload_settle_applied_is_written_out_of_band(worker_module, tmp_path: Path) -> None:

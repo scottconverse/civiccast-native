@@ -2,7 +2,20 @@
 
 ## [Unreleased]
 
-Unpublished candidate `v1.0.0-rc.2` addresses the R9 Beta20 operator report.
+Unpublished candidate `v1.0.0-rc.3` incorporates the 31 R7/R9 operator findings.
+
+- Close malformed credential logging/response paths and isolate installer identity probes.
+- Prepare model permissions before upgrade startup; preserve explicit restore targets, local secrets and effective configuration.
+- Preserve caption/program ownership and three-channel CPU delivery while limiting background preparation.
+- Prepare automatic scheduled starts, retain separate repeat airings, and align guide/report windows and current-program labels.
+- Correct HLS snapshot ownership, stale health presentation, actionable setup/backup/install errors, and download reuse/accounting.
+- Update the manual and built-in Help for the changed operator actions and measurement limits.
+
+This is source development, not a signed or installed RC3 acceptance claim.
+
+## [1.0.0-rc.2] - 2026-10-30
+
+Published signed RC2 for R7/R9 operator testing. Its failed operator findings are the basis of RC3; they are not retrospectively marked passed.
 
 - Redact submitted credentials and custom validator context from 422 responses.
 - Reduce repeated live-caption inference work while retaining new audio input.

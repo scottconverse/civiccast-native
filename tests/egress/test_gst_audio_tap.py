@@ -28,7 +28,11 @@ from pathlib import Path
 
 import pytest
 
-from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter, SegmentWriterThread
+from civiccast.egress.gst.audio_tap import (
+    RollingWavSegmentWriter,
+    SegmentWriterThread,
+    read_segment_start_seconds,
+)
 
 
 def _read_pcm(path: Path) -> tuple[tuple[int, int, int], bytes]:
@@ -107,6 +111,40 @@ def test_writer_rejects_non_s16le_frame_alignment(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="whole 16-bit samples"):
         writer.write_pcm_s16le(b"\x00")
     writer.close()
+
+
+def test_audio_clock_survives_partial_boundaries_and_restart(tmp_path: Path) -> None:
+    writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    writer.write_pcm_s16le(b"\x01\x00" * 15, running_time_seconds=4.0)
+    writer.begin_program("second")
+    writer.write_pcm_s16le(b"\x02\x00" * 15, program_token="second", running_time_seconds=4.015)
+    writer.begin_program("third")
+    writer.write_pcm_s16le(b"\x03\x00" * 20, program_token="third", running_time_seconds=4.030)
+    assert writer.close() == "drained"
+    paths = sorted(tmp_path.glob("chunk-*.wav"))
+    assert [read_segment_start_seconds(p) for p in paths] == pytest.approx([4, 4.015, 4.030, 4.040])
+    restarted = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    restarted.write_pcm_s16le(b"\x04\x00" * 10, running_time_seconds=0.0)
+    assert restarted.close() == "drained"
+    assert read_segment_start_seconds(tmp_path / "chunk-000004.wav") == 0.0
+    assert _read_pcm(tmp_path / "chunk-000004.wav")[1] == b"\x04\x00" * 10
+
+
+def test_audio_clock_does_not_stitch_across_dropped_input(tmp_path: Path) -> None:
+    writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    writer.write_pcm_s16le(b"\x01\x00" * 5, running_time_seconds=1.0)
+    writer.write_pcm_s16le(b"\x02\x00" * 10, running_time_seconds=2.0)
+    assert writer.close() == "drained"
+    path = tmp_path / "chunk-000000.wav"
+    assert read_segment_start_seconds(path) == 2.0
+    assert _read_pcm(path)[1] == b"\x02\x00" * 10
+
+
+def test_legacy_wav_has_no_explicit_clock(tmp_path: Path) -> None:
+    writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1000)
+    writer.write_pcm_s16le(b"\x01\x00" * 10)
+    writer.close()
+    assert read_segment_start_seconds(tmp_path / "chunk-000000.wav") is None
 
 
 class TestSegmentWriterThread:

@@ -2,11 +2,11 @@
 
 CivicCast combines native Windows playout, local AI captions, station backup,
 staff administration, and resident publication in one installation. This
-architecture describes the RC2 source candidate; RC2 is not yet published.
+architecture describes the RC3 source candidate; RC3 is not yet published or accepted.
 
-The current published download is signed `v1.0.0-rc.1` ([release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.1)).
-The [RC1 verification record](docs/releases/v1.0.0-rc.1-verification.md)
+The current published download is signed `v1.0.0-rc.2` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-rc.2)).
+The [RC2 verification record](docs/releases/v1.0.0-rc.2-verification.md)
 identifies exact package provenance and scoped acceptance.
 
 This document orients engineers and integrators to the current CivicCast
@@ -267,7 +267,7 @@ supersedes ADR 0001's NATS JetStream choice).
 
 ## Current Source Contracts
 
-These describe current source behavior and test coverage. The [RC1 package record](docs/releases/v1.0.0-rc.1-verification.md) identifies the signed artifacts and scoped verification:
+These describe current source behavior and test coverage. The [RC2 package record](docs/releases/v1.0.0-rc.2-verification.md) identifies the signed artifacts and scoped verification:
 
 Sprint 6 source adds trusted-station catalog browsing and central channel controls
 through `civiccast.federation`. Administrators provision separate public/staff HTTPS
@@ -297,8 +297,8 @@ TownLight: Station, to 2.0; see the
 
 ## Release evidence and history
 
-Beta 20 is the published download. Its package-specific checks are in the
-[RC1 record](docs/releases/v1.0.0-rc.1-verification.md), which identifies exact
+RC2 is the published download. Its package-specific checks are in the
+[RC2 record](docs/releases/v1.0.0-rc.2-verification.md), which identifies exact
 package provenance and scoped acceptance. Historical package results are retained
 in the [Beta 19 record](docs/releases/v1.0.0-beta.19-verification.md) and the
 [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md);

@@ -1477,6 +1477,15 @@ def _child_caption_decode_back(
             return
         caps_name = caps.get_structure(0).get_name()
         if not _pad_caps_name_is_video(caps_name):
+            # Audio can arrive before the video pad exists. Leaving that first
+            # pad unlinked makes tsdemux stop before it can expose the video.
+            # Consume ignored streams while keeping caption extraction video-only.
+            discard = gst.ElementFactory.make("fakesink", None)
+            discard.set_property("sync", False)
+            discard.set_property("async", False)
+            pipeline.add(discard)
+            discard.sync_state_with_parent()
+            pad.link(discard.get_static_pad("sink"))
             return
         sink_pad = queue.get_static_pad("sink")
         if not sink_pad.is_linked():
@@ -1963,6 +1972,7 @@ _OBSERVED_PACKAGE_MANIFEST_COMPONENTS = frozenset(
         "microsoft.sechealthui_1000.26100.33438.0_x64__8wekyb3d8bbwe",
         "microsoft.sechealthui_1000.26100.33648.0_x64__8wekyb3d8bbwe",
         "microsoft.windowsfeedbackhub_1.2512.16303.0_x64__8wekyb3d8bbwe",
+        "microsoftcorporationii.windowssubsystemforlinux_3.0.3.0_x64__8wekyb3d8bbwe",
     }
 )
 _OBSERVED_PACKAGE_METADATA_RESOURCE_COMPONENTS = frozenset(
@@ -2195,7 +2205,7 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             "were observed outside the payload. This narrow reported-data exception "
             "covers only observed DesktopAppInstaller package resource indexes (PRI), "
             "the observed WindowsFeedbackHub microsoft.system.package.metadata PRI "
-            "index, observed SecHealthUI/WindowsFeedbackHub root AppxManifest.xml "
+            "index, observed SecHealthUI/WindowsFeedbackHub/WSL root AppxManifest.xml "
             "manifests, and the observed WSL resources.pri and Windows Terminal "
             "resources.pri at their package roots. It "
             "does not apply to executable or unknown-protection mappings, DLLs, or "

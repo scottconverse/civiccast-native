@@ -18,6 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from civiccast.auth.roles import require_any_role
+from civiccast.egress.router import get_egress_store
+from civiccast.egress.source_plan import schedule_items_in_window
 from civiccast.programlog.models import ProgramSlot, SlotOccurrence, SlotRecurrence
 from civiccast.schedule.router import get_schedule_store
 
@@ -356,6 +358,7 @@ def public_guide(
     store: Any = Depends(get_program_log_store),
     titler: Any = Depends(get_program_log_asset_titler),
     schedule_store: Any = Depends(get_schedule_store),
+    egress_store: Any = Depends(get_egress_store),
 ) -> list[PublicGuideEntry]:
     if store is None:
         raise HTTPException(
@@ -371,6 +374,40 @@ def public_guide(
         if schedule_store is not None
         else []
     )
+    config = egress_store.get_config(channel_id) if egress_store is not None else None
+    if config is not None and config.repeat_schedule:
+        # Slot title overrides remain display metadata. Repeat times are derived
+        # from published rows, exactly as playout derives them, not stored again.
+        slot_titles: dict[str, str | None] = {}
+        for slot in store.list_slots(channel_id=channel_id):
+            for occurrence in store.list_occurrences(slot_id=slot.slot_id):
+                if occurrence.status == "scheduled" and occurrence.schedule_item_id is not None:
+                    slot_titles[str(occurrence.schedule_item_id)] = slot.title_override
+        for item in schedule_items_in_window(
+            channel_id=channel_id,
+            schedule_items=published,
+            starts_at=now,
+            ends_at=horizon,
+            loop_schedule=True,
+        ):
+            title = slot_titles.get(str(item.id)) or item.asset_title
+            duration = item.duration_seconds
+            if (not title or duration is None) and titler is not None:
+                asset = titler(item.asset_id)
+                if asset is not None:
+                    title = title or getattr(asset, "title", None)
+                    if duration is None:
+                        duration = getattr(asset, "duration_seconds", None)
+            entries.append(
+                PublicGuideEntry(
+                    channel_id=channel_id,
+                    title=title or item.asset_id,
+                    starts_at=item.scheduled_at,
+                    duration_seconds=duration,
+                )
+            )
+        entries.sort(key=lambda entry: (entry.starts_at, entry.title))
+        return entries
     published_ids = {str(item.id) for item in published}
     for slot in store.list_slots(channel_id=channel_id):
         title = slot.title_override

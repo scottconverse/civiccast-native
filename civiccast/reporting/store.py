@@ -11,7 +11,7 @@ proof-event ring buffer.
 * ``append_as_run`` — write (or idempotently update by ``entry_id``) one
   as-aired record.
 * ``list_as_run`` — query the ledger by station, with optional channel filter and
-  a half-open ``[from_ts, to_ts)`` window on ``actual_start`` (the engine-verified
+  a half-open ``[from_ts, to_ts)`` window on interval overlap (the engine-verified
   actual time, per the S23 key claim that as-run = what *aired*).
 * ``upsert_config`` / ``get_config`` / ``list_configs`` / ``delete_config`` — CRUD
   for EPG export profiles.
@@ -135,6 +135,7 @@ class ReportingStore:
         source_kind: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
+        now: datetime | None = None,
     ) -> list[AsRunLogEntry]:
         """As-aired records for a station, ordered by ``actual_start``.
 
@@ -142,22 +143,29 @@ class ReportingStore:
         for the affidavit-billing hot path — E-5), and a half-open
         ``[from_ts, to_ts)`` window on interval overlap. All bound parameters
         (index-path scan)."""
+        now = now or _now()
         with self._session() as session:
             stmt = (
                 select(AsRunLogEntryDb)
                 .where(AsRunLogEntryDb.station_id == station_id)
                 .order_by(AsRunLogEntryDb.actual_start, AsRunLogEntryDb.entry_id)
             )
+            open_airing = (AsRunLogEntryDb.duration_s == 0) & (
+                AsRunLogEntryDb.actual_end == AsRunLogEntryDb.actual_start
+            )
+            stmt = stmt.where(~open_airing | (AsRunLogEntryDb.actual_start < now))
             if channel_id is not None:
                 stmt = stmt.where(AsRunLogEntryDb.channel_id == channel_id)
             if source_kind is not None:
                 stmt = stmt.where(AsRunLogEntryDb.source_kind == source_kind)
             if from_ts is not None:
                 stmt = stmt.where(
-                    (AsRunLogEntryDb.actual_end > from_ts)
+                    (~open_airing & (AsRunLogEntryDb.actual_end > from_ts))
                     | (
                         (AsRunLogEntryDb.duration_s == 0)
-                        & (AsRunLogEntryDb.actual_start >= from_ts)
+                        & (AsRunLogEntryDb.actual_end == AsRunLogEntryDb.actual_start)
+                        & (AsRunLogEntryDb.actual_start < now)
+                        & (now > from_ts)
                     )
                 )
             if to_ts is not None:

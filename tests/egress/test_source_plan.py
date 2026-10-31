@@ -29,6 +29,7 @@ from civiccast.egress.source_plan import (
     build_slate_source_args,
     build_source_plan_from_schedule,
     gstreamer_source_segment_seconds_from_env,
+    schedule_items_in_window,
 )
 from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
 from civiccast.stream._ffmpeg import FfmpegResult
@@ -234,6 +235,7 @@ def test_build_source_plan_from_schedule_uses_current_local_media_with_trim(
     assert plan.segments[0].duration_seconds == 110
     assert plan.segments[0].inpoint_seconds == 10
     assert plan.segments[0].outpoint_seconds == 120
+    assert plan.segments[0].schedule_occurrence_start == now
     # D42: the trim window is 110s but the slot is 30 minutes, so this item
     # UNDER-FILLS its slot. The plan stops here -- the rest of the slot belongs
     # to the channel's fill policy (bulletins/slate), reached through the
@@ -721,7 +723,11 @@ def test_looping_provider_repeats_the_published_sequence_after_the_last_item(
     )
 
     assert provider.plan_at("gov", start + timedelta(seconds=30)).segments[0].label == "second"  # type: ignore[union-attr]
-    assert provider.plan_at("gov", start + timedelta(seconds=60)).segments[0].label == "first"  # type: ignore[union-attr]
+    repeated = provider.plan_at("gov", start + timedelta(seconds=60))
+    assert repeated is not None
+    assert repeated.segments[0].label == "first"
+    assert repeated.segments[0].schedule_occurrence_id == str(items[0].id)
+    assert repeated.segments[0].schedule_occurrence_start == start + timedelta(seconds=60)
 
 
 def test_looping_provider_preserves_gaps_between_published_items(tmp_path: Path) -> None:
@@ -742,6 +748,70 @@ def test_looping_provider_preserves_gaps_between_published_items(tmp_path: Path)
     )
 
     assert provider.plan_at("gov", start + timedelta(seconds=45)) is None
+
+
+def test_schedule_window_projects_latest_repeat_run_with_original_ids_and_small_gaps():
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    items = [
+        _schedule_item(asset_id="old", scheduled_at=start - timedelta(days=1), duration_seconds=30),
+        _schedule_item(asset_id="first", scheduled_at=start, duration_seconds=30),
+        _schedule_item(
+            asset_id="second", scheduled_at=start + timedelta(seconds=31), duration_seconds=30
+        ),
+        _schedule_item(asset_id="draft", scheduled_at=start + timedelta(days=1), state="scheduled"),
+    ]
+    original_times = [item.scheduled_at for item in items]
+    projected = schedule_items_in_window(
+        channel_id="gov",
+        schedule_items=items,
+        starts_at=start + timedelta(seconds=122),
+        ends_at=start + timedelta(seconds=214),
+        loop_schedule=True,
+    )
+    assert [(item.asset_id, (item.scheduled_at - start).total_seconds()) for item in projected] == [
+        ("first", 122),
+        ("second", 153),
+        ("first", 183),
+        ("second", 214),
+    ]
+    assert [item.id for item in projected] == [items[1].id, items[2].id] * 2
+    assert [item.scheduled_at for item in items] == original_times
+    assert (projected[1].scheduled_at - projected[0].scheduled_at).total_seconds() == 31
+
+
+def test_schedule_window_in_gap_waits_for_next_item_and_nonrepeat_does_not_project():
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    items = [
+        _schedule_item(scheduled_at=start, duration_seconds=30),
+        _schedule_item(scheduled_at=start + timedelta(seconds=31), duration_seconds=30),
+    ]
+    assert [
+        item.scheduled_at
+        for item in schedule_items_in_window(
+            channel_id="gov",
+            schedule_items=items,
+            starts_at=start + timedelta(seconds=30),
+            ends_at=start + timedelta(seconds=40),
+            loop_schedule=True,
+        )
+    ] == [start + timedelta(seconds=31)]
+    assert (
+        schedule_items_in_window(
+            channel_id="gov",
+            schedule_items=items,
+            starts_at=start + timedelta(hours=1),
+            ends_at=start + timedelta(hours=2),
+            loop_schedule=False,
+        )
+        == []
+    )
+    with pytest.raises(ValueError, match="fourteen days"):
+        schedule_items_in_window(
+            channel_id="gov",
+            schedule_items=items,
+            starts_at=start,
+            ends_at=start + timedelta(days=15),
+        )
 
 
 def test_looping_provider_covers_now_when_history_has_multiple_passes(tmp_path: Path) -> None:

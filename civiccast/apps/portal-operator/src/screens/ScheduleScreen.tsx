@@ -1,3 +1,5 @@
+import { fmtRangeLabel } from './schedule-format'
+
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -67,21 +69,6 @@ function fmtHourLabel(h: number): string {
   if (h === 0) return '12 am'
   if (h === 12) return '12 pm'
   return h < 12 ? `${h} am` : `${h - 12} pm`
-}
-
-function fmtTime(iso: string, timeZone: string): string {
-  return formatStationInstant(new Date(iso), timeZone, {
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
-
-function fmtRangeLabel(item: ScheduleItem, timeZone: string): string {
-  const start = new Date(item.scheduled_at)
-  const startStr = fmtTime(item.scheduled_at, timeZone)
-  if (!item.duration_seconds || item.mode === 'embargo') return startStr
-  const end = new Date(start.getTime() + item.duration_seconds * 1000)
-  return `${startStr} – ${formatStationInstant(end, timeZone, { hour: 'numeric', minute: '2-digit' })}`
 }
 
 function sameDay(a: Date, b: Date): boolean {
@@ -1039,6 +1026,7 @@ export function ScheduleScreen() {
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
+                second: '2-digit',
               })
             toast.push({
               tone: 'success',

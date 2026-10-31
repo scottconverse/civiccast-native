@@ -18,8 +18,8 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The defaults target the published RC1 release and reuse its unchanged Beta20 model packs.
-For a historical release, specify both `-Tag` and `-Version` for that release.
+The defaults target the published RC2 release and reuse its unchanged Beta20 model packs.
+For a historical release, specify `-Tag`; `-Version`, if supplied, must match for that release.
 
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
     release-artifacts manifest plus the tester package and/or proof kit,
@@ -30,8 +30,8 @@ For a historical release, specify both `-Tag` and `-Version` for that release.
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-rc.1",
-  [string]$Version = "1.0.0-rc.1",
+  [string]$Tag = "v1.0.0-rc.2",
+  [string]$Version = "",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,
@@ -42,6 +42,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+if ([string]::IsNullOrWhiteSpace($Version)) { $Version = $Tag -replace '^v', '' }
+if ($Tag -ne "v$Version") { throw 'Tag and Version must identify the same release.' }
 if ($Install) { $IncludePacks = $true }
 
 # Asset naming contract shared with scripts/release/publish_beta_candidate.py
@@ -380,6 +382,22 @@ function Save-StationBundle {
     }
     if ($completeModels) { Write-Step 'Reused all five hash-verified model packs already in this kit.'; return }
   }
+  if (-not $ModelsOnly) {
+    $completeStation = $true
+    foreach ($key in $entries.Keys) {
+      $existing = Join-Path $Root $key
+      if (-not (Test-Path -LiteralPath $existing -PathType Leaf) -or
+          (Get-Item -LiteralPath $existing).Length -ne [long]$entries[$key].size_bytes -or
+          (Get-FileHash -Algorithm SHA256 -LiteralPath $existing).Hash.ToLowerInvariant() -ne $entries[$key].sha256) {
+        $completeStation = $false; break
+      }
+    }
+    if ($completeStation) {
+      Assert-StationDirectory -Root $Root -Manifest $manifest -Entries $entries -ExpectedVersion $ExpectedVersion
+      Write-Step 'Reused the complete hash-verified station folder; no model archive transfer or extraction needed.'
+      return
+    }
+  }
   if (@($manifest.parts).Count -eq 0) { throw 'Station bundle manifest contains no archive parts.' }
   [long]$archiveBytes = ($manifest.parts | Measure-Object -Property size_bytes -Sum).Sum
   [long]$unpackedBytes = ($manifest.unpacked_files | Measure-Object -Property size_bytes -Sum).Sum
@@ -393,6 +411,7 @@ function Save-StationBundle {
   }
   [long]$assemblyBytes = $archiveBytes
   if (Test-Path -LiteralPath (Join-Path $Root 'station-models.zip') -PathType Leaf) { $assemblyBytes = 0 }
+  Write-Step ("Model bundle: {0:N2} GiB remaining transfer, {1:N2} GiB additional archive assembly, {2:N2} GiB temporary extraction. Runtime downloads, installed files and station media are separate." -f ($remainingParts / 1GB), ($assemblyBytes / 1GB), ($unpackedBytes / 1GB))
   Assert-DownloadSpace -Root $Root -RequiredBytes ($remainingParts + $assemblyBytes + $unpackedBytes) -Purpose 'model download, archive assembly and extraction'
   $partPaths = @()
   $number = 1

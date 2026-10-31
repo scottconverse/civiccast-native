@@ -38,7 +38,7 @@ import { canViewEgressStorage, hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { humanizeDuration } from '../format'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
-import { captionsRowLabel, processLabel, readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
+import { captionsRowLabel, freshReading, processLabel, readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
 import { healthCheckAnchorId } from './health-check-anchor'
 import type {
   ChannelRuntimeStatus,
@@ -340,12 +340,15 @@ function udpSinkLabel(
 export function RuntimeSafeToAirBanner({
   status,
   onOpenAlerts,
+  unavailable = false,
 }: {
   status: RuntimeSafeToAirStatus | undefined
   onOpenAlerts?: () => void
+  unavailable?: boolean
 }) {
   if (!status) return null
-  const tone = COLOR_TONE[status.color]
+  const fresh = !unavailable && freshReading(status.generated_at)
+  const tone = COLOR_TONE[fresh ? status.color : 'yellow']
   const critical = status.active_critical_alerts ?? 0
   const warning = status.active_warning_alerts ?? 0
   const channels = status.channels ?? []
@@ -364,15 +367,15 @@ export function RuntimeSafeToAirBanner({
           <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
             On air right now
           </div>
-          <h2 className="m-0 text-xl font-semibold">{status.label}</h2>
+          <h2 className="m-0 text-xl font-semibold">{fresh ? status.label : 'Live status unavailable'}</h2>
           <p className="m-0 mt-1 max-w-2xl text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            {status.operator_message}
+            {fresh ? status.operator_message : 'The last reading is shown below. Current channel health could not be confirmed; check the resident preview.'}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <div className="flex flex-wrap justify-end gap-2">
-            <StatusPill label={`${critical} critical`} tone={critical > 0 ? 'err' : 'ok'} />
-            <StatusPill label={`${warning} warning`} tone={warning > 0 ? 'warn' : 'ok'} />
+            <StatusPill label={`${critical} critical${fresh ? '' : ' (last observed)'}`} tone={fresh && critical === 0 ? 'ok' : 'warn'} />
+            <StatusPill label={`${warning} warning${fresh ? '' : ' (last observed)'}`} tone={fresh && warning === 0 ? 'ok' : 'warn'} />
           </div>
           {onOpenAlerts && (
             <button
@@ -403,7 +406,7 @@ export function RuntimeSafeToAirBanner({
                 <div className="min-w-0">
                   <div className="cc-truncate text-sm font-semibold">{channel.channel_id}</div>
                   <div className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-                    {stateLabel(channel.egress_state)}
+                    {stateLabel(channel.egress_state)}{fresh ? '' : ' (last observed)'}
                     {channel.on_healthy_slate ? ' · on safety slate' : ''}
                     {channel.captions_expected === false ? ' · live captions off' : ''}
                   </div>
@@ -413,7 +416,7 @@ export function RuntimeSafeToAirBanner({
                     </div>
                   )}
                 </div>
-                <StatusPill label={runtimeChannelLabel(channel)} tone={runtimeChannelTone(channel.color)} />
+                <StatusPill label={fresh ? runtimeChannelLabel(channel) : 'Not confirmed'} tone={fresh ? runtimeChannelTone(channel.color) : 'warn'} />
               </div>
             )
           })}
@@ -785,6 +788,8 @@ export function EgressReadinessPanel({
           const state = states.get(channel.channel_id)
           const samples = health.get(channel.channel_id) ?? []
           const latestHealth = samples[0]
+          const fresh = !error && freshReading(latestHealth?.sampled_at)
+          const stateFresh = fresh || (!error && state?.state !== 'ON_AIR' && freshReading(state?.updated_at))
           const captionStatus = latestHealth?.caption_status
           const sinkEntries = latestHealth ? Object.entries(latestHealth.sink_connected) : []
           const schema = currency.get(channel.channel_id)
@@ -802,16 +807,16 @@ export function EgressReadinessPanel({
                     {channel.kind} / {channel.channel_id}
                   </div>
                 </div>
-                <StatusPill label={stateLabel(state?.state, 'Stopped')} tone={toneForEgressState(state?.state)} />
+                <StatusPill label={error ? 'Unavailable' : !state ? 'Not confirmed' : stateFresh ? stateLabel(state.state) : `Stale — last ${stateLabel(state.state)}`} tone={stateFresh ? toneForEgressState(state?.state) : 'warn'} />
               </div>
               <dl className="m-0 grid gap-2 text-xs sm:grid-cols-2" style={{ color: 'var(--cc-ink-3)' }}>
                 <div>
                   <dt className="font-semibold">Source</dt>
-                  <dd className="m-0">{state?.current_source_label ?? 'None on air'}</dd>
+                  <dd className="m-0">{state?.current_source_label ?? 'None on air'}{!fresh && state?.current_source_label ? ' (last observed)' : ''}</dd>
                 </div>
                 <div>
                   <dt className="font-semibold">Captions</dt>
-                  <dd className="m-0">{captionsRowLabel(captionStatus, liveCaptionsEnabled)}</dd>
+                  <dd className="m-0">{liveCaptionsEnabled === false ? captionsRowLabel('not-verified', false) : !fresh ? 'Not confirmed — health reading unavailable or stale' : captionsRowLabel(captionStatus, liveCaptionsEnabled)}</dd>
                 </div>
                 <div>
                   <dt className="font-semibold">On air</dt>
@@ -842,10 +847,15 @@ export function EgressReadinessPanel({
                   <dd className="m-0">{processLabel(state)}</dd>
                 </div>
               </dl>
+              <div className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                Health sampled {latestHealth ? new Date(latestHealth.sampled_at).toLocaleString() : 'never'}.
+                {!fresh && ' Displayed measurements are historical, not current health.'}
+              </div>
               {sinkEntries.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {sinkEntries.map(([sink, connected]) => {
-                      const status = udpSinkLabel(channel, sink, connected, state, latestHealth)
+                      const status = fresh ? udpSinkLabel(channel, sink, connected, state, latestHealth)
+                        : { label: 'local send: not verified (receiver not verified)', tone: 'warn' as const }
                       return (
                     <StatusPill key={sink} label={`${sink}: ${status.label}`} tone={status.tone} />
                       )
@@ -1459,6 +1469,7 @@ export function SystemHealthScreen() {
     },
     enabled: (channelsQuery.data?.length ?? 0) > 0,
     retry: false,
+    refetchInterval: 5000,
   })
   const restoreQuery = useQuery({
     queryKey: ['restore-status'],
@@ -1474,6 +1485,7 @@ export function SystemHealthScreen() {
     queryKey: ['system-health'],
     queryFn: getSystemHealth,
     retry: false,
+    refetchInterval: 30_000,
   })
   // The live "are we on air right now" signal. Server caches it ~4s, so a 5s
   // poll keeps the banner fresh without stampeding the egress store.
@@ -1627,15 +1639,15 @@ export function SystemHealthScreen() {
           <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
             System Health
           </div>
-          <h1 className="m-0 text-2xl font-semibold tracking-tight">Safe to broadcast</h1>
+          <h1 className="m-0 text-2xl font-semibold tracking-tight">Station health and readiness</h1>
           <p className="m-0 mt-1 max-w-2xl text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            One place to see whether the station is ready, what needs setup, and what residents can see.
+            Live channel health, setup readiness and recovery checks are separate. A backup or setup warning does not by itself mean a running channel has stopped.
           </p>
         </div>
-        {report && <HealthPill color={report.safe_to_broadcast} />}
+        {report && <div>Setup readiness: {healthQuery.isError || !freshReading(report.generated_at) ? 'Not current' : <HealthPill color={report.safe_to_broadcast} />}</div>}
       </header>
 
-      <RuntimeSafeToAirBanner status={runtimeQuery.data} onOpenAlerts={() => navigate('/alerts')} />
+      <RuntimeSafeToAirBanner status={runtimeQuery.data} unavailable={runtimeQuery.isError} onOpenAlerts={() => navigate('/alerts')} />
       {runtimeQuery.error && (
         <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           {apiMessage(runtimeQuery.error, 'The live on-air signal could not load.')}
@@ -1664,7 +1676,7 @@ export function SystemHealthScreen() {
             style={{ background: COLOR_TONE[report.safe_to_broadcast].bg, border: `1px solid ${COLOR_TONE[report.safe_to_broadcast].border}` }}
           >
             <div>
-              <h2 className="m-0 text-lg font-semibold">{report.label}</h2>
+              <h2 className="m-0 text-lg font-semibold">Setup and recovery readiness: {report.label}</h2>
               <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
                 {report.operator_message}
               </p>

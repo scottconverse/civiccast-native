@@ -167,10 +167,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Reviewed input or provenance verification failed.' }
 
       - name: Build twice and require byte equality
+        id: repeat-build
         shell: pwsh
         env:
           CIVICCAST_MSVC_INSTALLATION_PATH: ${{ github.workspace }}\msvc-build-tools
+          npm_config_logs_dir: ${{ github.workspace }}\evidence\repro-diagnostics\npm-logs
         run: |
+          $diagnostics = Join-Path '${{ github.workspace }}' 'evidence/repro-diagnostics'
+          New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+          [DateTimeOffset]::UtcNow.ToString('o') | Set-Content -LiteralPath (Join-Path $diagnostics 'started-utc.txt')
+          @{
+            phase = 'First planned snapshot command: portal-operator npm ci'
+            command = @((Join-Path '${{ github.workspace }}' 'toolchain/node/npm.cmd'), 'ci', '--no-audit', '--no-fund')
+            cwd = Join-Path '${{ github.workspace }}' 'scratch-a/build/app-source/civiccast/apps/portal-operator'
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $diagnostics 'first-planned-npm-command.json')
           python -I -B workspace-a/scripts/prove_native_app_reproducible.py `
             --workspace-a workspace-a `
             --workspace-b workspace-b `
@@ -182,6 +192,39 @@ jobs:
             --interpreter-zip "$env:CIVICCAST_INTERPRETER_ZIP" `
             --reviewed-pyav-wheel "$env:CIVICCAST_REVIEWED_PYAV_WHEEL" `
             --receipt evidence/native-app-reproducibility.json
+
+      - name: Retain native npm crash details
+        if: ${{ failure() && steps.repeat-build.outcome == 'failure' }}
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $diagnostics = Join-Path '${{ github.workspace }}' 'evidence/repro-diagnostics'
+          New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+          $result = @{ events = @(); status = 'none' }
+          try {
+            $started = [DateTimeOffset]::Parse((Get-Content -LiteralPath (Join-Path $diagnostics 'started-utc.txt') -Raw)).LocalDateTime
+            $events = @(Get-WinEvent -FilterHashtable @{
+              LogName = 'Application'; Id = @(1000, 1001); StartTime = $started
+            } -MaxEvents 32 -ErrorAction Stop)
+            $result.events = @($events | ForEach-Object { $_.ToXml() })
+            if ($events.Count) { $result.status = 'captured' }
+          } catch {
+            if ($_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {
+              $result.status = 'read-failed'
+              $result.error = $_.Exception.Message
+            }
+          }
+          $result | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $diagnostics 'application-error-wer-events.json')
+
+      - name: Upload native npm crash details
+        if: ${{ failure() && steps.repeat-build.outcome == 'failure' }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-app-repro-crash-diagnostics
+          path: evidence/repro-diagnostics
+          if-no-files-found: warn
+          retention-days: 1
 
       - name: Upload repeat-build proof
         uses: actions/upload-artifact@v4
