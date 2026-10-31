@@ -150,6 +150,9 @@ describe('HlsPlayer hls.js captions', () => {
     const eos = vi.fn()
     hls.on(Events.BUFFER_EOS, eos)
     const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0, end: () => 2 },
+    })
     Object.defineProperty(video, 'readyState', { configurable: true, value: 1 })
     Object.defineProperty(video, 'seeking', { configurable: true, value: true })
 
@@ -169,6 +172,33 @@ describe('HlsPlayer hls.js captions', () => {
     expect(eos).toHaveBeenCalledOnce()
   })
 
+  it.each(['seeked', 'timeupdate'])('defers EOS after out-of-buffer loadeddata until %s inside it', async (event) => {
+    render(<HlsPlayer manifestUrl="/short-vod/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    const eos = vi.fn()
+    hls.on(Events.BUFFER_EOS, eos)
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0.021333, end: () => 2.021333 },
+    })
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+
+    hls.trigger(Events.BUFFERED_TO_END, {})
+    fireEvent.loadedData(video)
+    expect(hls.mediaOverrides?.endOfStream).toBe(false)
+    expect(eos).not.toHaveBeenCalled()
+
+    video.currentTime = 0.5
+    Object.defineProperty(video, 'seeking', { configurable: true, value: true })
+    fireEvent.loadedData(video)
+    expect(eos).not.toHaveBeenCalled()
+    Object.defineProperty(video, 'seeking', { configurable: true, value: false })
+    fireEvent(video, new Event(event))
+    expect(hls.mediaOverrides?.endOfStream).toBe(true)
+    expect(eos).toHaveBeenCalledOnce()
+  })
+
   it('restores normal EOS when preroll finishes before buffering does', async () => {
     render(<HlsPlayer manifestUrl="/vod/playlist.m3u8" />)
     await waitFor(() => expect(lastInstance).toBeDefined())
@@ -176,6 +206,9 @@ describe('HlsPlayer hls.js captions', () => {
     const eos = vi.fn()
     hls.on(Events.BUFFER_EOS, eos)
     const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0, end: () => 2 },
+    })
     Object.defineProperty(video, 'readyState', { configurable: true, value: 2 })
     fireEvent.loadedData(video)
     expect(hls.mediaOverrides?.endOfStream).toBe(true)
@@ -191,6 +224,9 @@ describe('HlsPlayer hls.js captions', () => {
     const eos = vi.fn()
     hls.on(Events.BUFFER_EOS, eos)
     const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'buffered', {
+      configurable: true, value: { length: 1, start: () => 0, end: () => 2 },
+    })
     hls.trigger(Events.BUFFERED_TO_END, {})
     if (ending === 'unmount') unmount()
     else hls.trigger(Events.ERROR, { fatal: true, type: ErrorTypes.NETWORK_ERROR })
@@ -198,6 +234,7 @@ describe('HlsPlayer hls.js captions', () => {
     Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
     fireEvent.loadedData(video)
     fireEvent.seeked(video)
+    fireEvent.timeUpdate(video)
     hls.trigger(Events.BUFFERED_TO_END, {})
     expect(eos).not.toHaveBeenCalled()
   })

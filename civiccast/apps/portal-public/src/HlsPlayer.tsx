@@ -369,11 +369,17 @@ export function HlsPlayer({
       }
       // A short VOD can finish buffering while its initial gap seek is still
       // waiting for the decoder's first frame. Ending MSE during that seek can
-      // strand WebKit at HAVE_METADATA. Preserve normal EOS after real preroll.
+      // strand WebKit at HAVE_METADATA or end playback before the seek lands.
+      // loadeddata can precede the buffered start; wait until preroll is in it.
       const mediaOverrides = { endOfStream: false }
       let bufferedToEnd = false
       const releaseStartupEos = () => {
         if (video.readyState < 2 || video.seeking) return
+        const buffered = video.buffered
+        const withinBuffer = Array.from({ length: buffered.length }, (_, index) =>
+          video.currentTime >= buffered.start(index) && video.currentTime <= buffered.end(index),
+        ).some(Boolean)
+        if (!withinBuffer) return
         cleanupHlsStartup?.()
         if (bufferedToEnd) hls?.trigger(HlsCtor.Events.BUFFER_EOS, {})
       }
@@ -385,10 +391,12 @@ export function HlsPlayer({
         mediaOverrides.endOfStream = true
         video.removeEventListener('loadeddata', releaseStartupEos)
         video.removeEventListener('seeked', releaseStartupEos)
+        video.removeEventListener('timeupdate', releaseStartupEos)
         hls?.off(HlsCtor.Events.BUFFERED_TO_END, onBufferedToEnd)
       }
       video.addEventListener('loadeddata', releaseStartupEos)
       video.addEventListener('seeked', releaseStartupEos)
+      video.addEventListener('timeupdate', releaseStartupEos)
       hls.on(HlsCtor.Events.BUFFERED_TO_END, onBufferedToEnd)
       hls.attachMedia({ media: video, overrides: mediaOverrides })
       hls.on(HlsCtor.Events.MEDIA_ATTACHED, () => {
