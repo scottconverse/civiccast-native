@@ -770,6 +770,8 @@ test('built embed plays captions on an external origin and clears withdrawn play
 
 
 test('published agenda chapters seek the selected recording after a correction', async ({ page }) => {
+  // This recording fixture must never fall through to a developer's backend.
+  await page.route('**/api/**', (route) => route.fulfill({ status: 404, json: { detail: 'Not provided by this fixture' } }))
   await mockPortal(page)
   await mockCaptionedHls(page)
   await page.route('**/api/public/assets/meeting', async (route) => {
@@ -795,9 +797,17 @@ test('published agenda chapters seek the selected recording after a correction',
   await page.goto('/#/watch/meeting')
   const video = page.locator('video')
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(1)
-  await video.evaluate((node: HTMLVideoElement) => { node.muted = true; void node.play() })
-  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.readyState)).toBeGreaterThanOrEqual(3)
-  await video.evaluate((node: HTMLVideoElement) => node.pause())
+  // Await real playback before pausing for the chapter action; a rejected play
+  // promise must fail here. Keep readiness measurement and pause in-browser,
+  // as the embed proof above does for its presentation evidence.
+  const readyState = await video.evaluate(async (node: HTMLVideoElement) => {
+    node.muted = true
+    await node.play()
+    const readyState = node.readyState
+    node.pause()
+    return readyState
+  })
+  expect(readyState).toBeGreaterThanOrEqual(3)
   await page.getByRole('button', { name: 'Jump to Decision' }).press('Enter')
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.currentTime)).toBeCloseTo(0.5, 1)
   await expect(page.getByRole('heading', { name: 'January Council' })).toBeVisible()
