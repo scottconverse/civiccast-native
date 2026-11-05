@@ -180,6 +180,32 @@ function Exit-HarnessError {
 }
 
 Write-Step "Root: $Root"
+
+# ENGINE-SOAK LANE <gate-a-engine-soak>. T6 (In-Sandbox-Report.ps1) drives the
+# station's real GStreamer egress engine for the whole -SoakMinutes window
+# instead of T5's health-only poll once -SoakMinutes > 20 -- that takes real
+# wall-clock time, so the host's own -TimeoutMinutes bound must grow with it
+# too, or the host would give up waiting before the in-sandbox run (which
+# raises ITS OWN bound the same way -- see In-Sandbox-Report.ps1's
+# ENGINE-SOAK-LANE block) ever gets a chance to finish or watchdog-timeout on
+# its own terms. Contract, in the order In-Sandbox-Report.ps1 documents it:
+#   in-sandbox bound = SoakMinutes + 150
+#   host bound        = in-sandbox bound + 20 = SoakMinutes + 170
+# Only computed when the CALLER did not pass -TimeoutMinutes explicitly (so
+# an explicit override -- e.g. the dirty lane's own floor logic inside
+# Host-Launch-Sandbox-Test.ps1 -- is never silently second-guessed here), and
+# only raises the value, never lowers it. Gate A's own CI lanes (SoakMinutes
+# 10/20) are untouched: SoakMinutes -le 20 leaves -TimeoutMinutes exactly as
+# the caller passed it (or the unchanged 170 default).
+if (-not $PSBoundParameters.ContainsKey('TimeoutMinutes') -and ($SoakMinutes -gt 20)) {
+    $desiredInSandboxMinutes = $SoakMinutes + 150
+    $desiredTimeoutMinutes = $desiredInSandboxMinutes + 20
+    if ($TimeoutMinutes -lt $desiredTimeoutMinutes) {
+        Write-Step "SoakMinutes=$SoakMinutes > 20 and -TimeoutMinutes was not explicitly passed -- raising TimeoutMinutes $TimeoutMinutes -> $desiredTimeoutMinutes (in-sandbox bound $desiredInSandboxMinutes + 20)"
+        $TimeoutMinutes = $desiredTimeoutMinutes
+    }
+}
+
 Write-Step "SoakMinutes=$SoakMinutes TimeoutMinutes=$TimeoutMinutes Repo=$Repo"
 
 $hasPreviousKit = -not [string]::IsNullOrWhiteSpace($PreviousKitDir)

@@ -38,6 +38,11 @@ rather than the full acceptance ladder's multi-hour/physical-hardware scope:
                       -- this IS "runs a PEG channel ... TSDuck verify" at
                       Sandbox scale (one channel, offline, no SDI)
   t5_soak         -- the bounded soak stayed healthy for its whole window
+  t6_engine_soak  -- <gate-a-engine-soak> when SOAK_MINUTES.txt > 20: the
+                      real product-engine soak (real assets, scheduled onto
+                      all three PEG channels' real GStreamer egress engines,
+                      TSDuck-verified every beat) passed. A no-op PASS when
+                      SOAK_MINUTES.txt <= 20 (Gate A's own CI lanes, 10/20).
   completion      -- the harness itself reached its own authoritative
                       completion signal (DONE.json, last_completed_step)
 
@@ -453,6 +458,52 @@ def check_t5_soak(output_dir: Path) -> CheckResult:
     if unhealthy != 0:
         return _fail(f"T5 unhealthy={unhealthy} (expected 0) over beats={beats}")
     return _pass(f"T5_RESULT=PASS beats={beats} unhealthy=0")
+
+
+def check_t6_engine_soak(output_dir: Path) -> CheckResult:
+    """The T6 real product-engine soak, gated by SOAK_MINUTES.txt.
+
+    <gate-a-engine-soak> T5's health-only loop only proves ``/api/health``
+    answered every 300s; it says nothing about the station's own GStreamer
+    egress engine. ``In-Sandbox-Report.ps1`` runs T6 instead of T5's
+    health-only loop whenever ``SOAK_MINUTES.txt`` is present and its value
+    is > 20 minutes: real assets scheduled onto all three PEG channels' real
+    egress engines, verified with TSDuck every beat, for the whole window.
+
+    ``SOAK_MINUTES.txt <= 20`` (Gate A's own CI lanes, 10/20) never runs T6
+    at all -- this check is a PASS no-op for them, exactly preserving the
+    pre-T6 verdict for every existing lane. ``> 20`` (the manual/soak-runner
+    lane, e.g. ``-SoakMinutes 480``) requires a real ``T6_RESULT=PASS`` line;
+    anything else -- ``FAIL``, ``FAIL_EARLY``, ``SKIPPED``, or the line being
+    entirely absent -- is a FAIL here, and therefore of the whole verdict.
+    """
+    soak_text, _soak_err = _read_text(output_dir, "SOAK_MINUTES.txt")
+    soak_minutes = 0
+    if soak_text is not None:
+        try:
+            soak_minutes = int(soak_text.strip().splitlines()[0])
+        except (ValueError, IndexError):
+            soak_minutes = 0
+    if soak_minutes <= 20:
+        return _pass(
+            f"SOAK_MINUTES.txt={soak_minutes} (<=20) -- T6 real-engine soak is not required for "
+            "this lane; T5's health-only soak (t5_soak check) covers it"
+        )
+
+    t35_text, err = _read_text(output_dir, "T3T5-RESULT.txt")
+    if err is not None:
+        return _fail(err)
+    assert t35_text is not None
+    match = _line_matching(t35_text, r"^T6_RESULT=(\S+)")
+    if match is None:
+        return _fail(
+            f"SOAK_MINUTES.txt={soak_minutes} (>20) requires a T6_RESULT= line in "
+            "T3T5-RESULT.txt, but none was found"
+        )
+    value = match.group(1)
+    if value != "PASS":
+        return _fail(f"T6_RESULT={value} (expected PASS) -- see T6-SOAK.txt / T6-ENGINE-NOTES.txt")
+    return _pass(f"SOAK_MINUTES.txt={soak_minutes}, T6_RESULT=PASS")
 
 
 def check_install_progress(output_dir: Path) -> CheckResult:
@@ -1139,6 +1190,9 @@ CHECKS: dict[str, Callable[[Path], CheckResult]] = {
     "captions": check_captions,
     "t4_engine": check_t4_engine,
     "t5_soak": check_t5_soak,
+    # <gate-a-engine-soak> Runs in EVERY lane; a no-op PASS when
+    # SOAK_MINUTES.txt <= 20 (see check_t6_engine_soak's docstring).
+    "t6_engine_soak": check_t6_engine_soak,
     # <gate-a-audit-MA-25> Runs in EVERY lane, including clean.
     "install_progress": check_install_progress,
     "completion": check_completion,
